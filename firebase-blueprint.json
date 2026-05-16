@@ -1,0 +1,121 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Base catalog items including raw materials and finished goods",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "sku": { "type": "string" },
+        "type": { "type": "string", "enum": ["RAW", "SUB_ASSEMBLY", "FINISHED"] },
+        "unit": { "type": "string", "enum": ["KG", "UNIT", "METER", "PIECE", "PACKAGE", "CARTON"] },
+        "stock_level": { "type": "number" },
+        "min_stock": { "type": "number" },
+        "cost": { "type": "number" },
+        "image_url": { "type": "string" }
+      },
+      "required": ["name", "sku", "type", "unit"]
+    },
+    "Variant": {
+      "title": "Variant",
+      "description": "Specific variants of a product (e.g., color)",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "color": { "type": "string" },
+        "variantSku": { "type": "string" },
+        "stockLevel": { "type": "number" }
+      },
+      "required": ["productId", "color", "variantSku"]
+    },
+    "Recipe": {
+      "title": "Recipe",
+      "description": "BOM definition for a product or variant",
+      "type": "object",
+      "properties": {
+        "targetId": { "type": "string", "description": "ID of the target Product or Variant" },
+        "targetType": { "type": "string", "enum": ["PRODUCT", "VARIANT"] },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productId": { "type": "string" },
+              "quantity": { "type": "number" },
+              "unit": { "type": "string" }
+            }
+          }
+        }
+      },
+      "required": ["targetId", "targetType", "components"]
+    },
+    "ProductionOrder": {
+      "title": "Production Order",
+      "description": "Manufacturing tasks",
+      "type": "object",
+      "properties": {
+        "targetId": { "type": "string" },
+        "targetType": { "type": "string", "enum": ["PRODUCT", "VARIANT"] },
+        "quantity": { "type": "number" },
+        "status": { "type": "string", "enum": ["PLANNED", "IN_PROGRESS", "COMPLETED", "CANCELLED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "reservedStock": { "type": "boolean" }
+      }
+    },
+    "InventoryMovement": {
+      "title": "Inventory Movement",
+      "description": "Log of all stock changes",
+      "type": "object",
+      "properties": {
+        "itemId": { "type": "string", "description": "Product or Variant ID" },
+        "itemType": { "type": "string", "enum": ["PRODUCT", "VARIANT"] },
+        "quantity": { "type": "number" },
+        "type": { "type": "string", "enum": ["IN", "OUT"] },
+        "reason": { "type": "string", "enum": ["PRODUCTION", "PURCHASE", "SHIPMENT", "ADJUSTMENT", "WASTE", "SALE"] },
+        "referenceId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Finished goods sales records",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "date": { "type": "string", "format": "date-time" },
+        "client": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["productId", "quantity", "client", "date"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Individual product documents"
+    },
+    "/products/{productId}/variants/{variantId}": {
+      "schema": "Variant",
+      "description": "Subcollection for variants"
+    },
+    "/recipes/{recipeId}": {
+      "schema": "Recipe",
+      "description": "Global recipe definitions"
+    },
+    "/production_orders/{orderId}": {
+      "schema": "ProductionOrder",
+      "description": "Log of production tasks"
+    },
+    "/inventory_movements/{movementId}": {
+      "schema": "InventoryMovement",
+      "description": "Global log of inventory changes"
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Sales records"
+    }
+  }
+}
