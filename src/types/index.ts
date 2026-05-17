@@ -7,6 +7,8 @@ export interface Product {
   name: string;
   sku: string;
   type: ProductType;
+  category?: string;
+  sort_order?: number;
   unit: string;
   stock_level: number;
   min_stock: number;
@@ -49,4 +51,21 @@ export interface Sale {
   client: string;
   date: Date;
   totalAmount: number;
+}
+
+export interface SalesOrderLine {
+  productId: string;
+  productName: string;
+  sku: string;
+  boxes: number;
+  qtyPerBox: number;
+  totalQty: number;
+}
+
+export interface SalesOrder {
+  id: string;
+  ref: string;
+  client: string;
+  date: Date;
+  lines: SalesOrderLine[];
 }

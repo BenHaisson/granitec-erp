@@ -1,5 +1,5 @@
 import {
-  collection, addDoc, getDocs, doc, runTransaction, Timestamp,
+  collection, addDoc, getDocs, doc, setDoc, deleteDoc, runTransaction, Timestamp, writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { Product, InventoryMovement } from '@/types';
@@ -11,6 +11,20 @@ export const getProducts = async (): Promise<Product[]> => {
 
 export const addProduct = (product: Omit<Product, 'id'>) =>
   addDoc(collection(db, 'products'), product);
+
+export const upsertProduct = (product: Omit<Product, 'id'>) =>
+  setDoc(doc(db, 'products', product.sku), product);
+
+export const deleteAllProducts = async () => {
+  const snap = await getDocs(collection(db, 'products'));
+  const BATCH_SIZE = 400;
+  const docs = snap.docs;
+  for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+    const batch = writeBatch(db);
+    docs.slice(i, i + BATCH_SIZE).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+};
 
 export const adjustStock = async (
   productId: string,

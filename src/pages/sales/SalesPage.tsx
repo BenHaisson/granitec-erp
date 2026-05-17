@@ -1,147 +1,748 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Plus } from 'lucide-react';
-import { getSales, addSale } from '@/services/sales.service';
+import { Plus, X, ShoppingBag, Download, Eye, Pencil } from 'lucide-react';
+import { getOrders, createOrder, updateOrder, generateOrderRef } from '@/services/orders.service';
 import { getProducts } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
-import type { Sale, Product } from '@/types';
+import type { SalesOrder, SalesOrderLine, Product } from '@/types';
 
-export default function SalesPage() {
-  const [sales, setSales] = useState<Sale[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ productId: '', quantity: '', client: '', totalAmount: '' });
+// ── Color helpers (mirrors WarehousePage) ────────────────────────
+const COLOR_NAMES = ['Black', 'Gray', 'Cream', 'Blue', 'Red'] as const;
+type ColorName = typeof COLOR_NAMES[number];
+
+const COLOR_DOT: Record<ColorName, string> = {
+  Black: 'bg-gray-900',
+  Gray:  'bg-gray-400',
+  Cream: 'bg-amber-100 border border-amber-300',
+  Blue:  'bg-blue-500',
+  Red:   'bg-red-500',
+};
+
+function extractColor(name: string): { base: string; color: ColorName } | null {
+  for (const color of COLOR_NAMES) {
+    if (name.endsWith(color)) {
+      const base = name.slice(0, name.length - color.length).replace(/[\s—\-]+$/, '').trim();
+      return { base, color };
+    }
+  }
+  return null;
+}
+
+// ── Summary card data ─────────────────────────────────────────────
+interface VariantStats {
+  sku: string;
+  color: ColorName | null;
+  orderCount: number;
+  totalQty: number;
+}
+
+interface GroupStats {
+  base: string;
+  variants: VariantStats[];
+  lastDate: Date | null;
+}
+
+function buildGroupStats(orders: SalesOrder[]): GroupStats[] {
+  const map = new Map<string, GroupStats>();
+
+  for (const order of orders) {
+    for (const line of order.lines) {
+      const parsed = extractColor(line.productName);
+      const base = parsed ? parsed.base : line.productName;
+      const color = parsed ? parsed.color : null;
+
+      if (!map.has(base)) map.set(base, { base, variants: [], lastDate: null });
+      const group = map.get(base)!;
+
+      let variant = group.variants.find(v => v.sku === line.sku);
+      if (!variant) {
+        variant = { sku: line.sku, color, orderCount: 0, totalQty: 0 };
+        group.variants.push(variant);
+      }
+      variant.orderCount++;
+      variant.totalQty += line.totalQty;
+
+      const d = order.date instanceof Date ? order.date : new Date(order.date);
+      if (!group.lastDate || d > group.lastDate) group.lastDate = d;
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+// ── Merge orders with same date + client ─────────────────────────
+function mergeByDateClient(orders: SalesOrder[]): SalesOrder[] {
+  const map = new Map<string, SalesOrder>();
+  for (const order of orders) {
+    const d = order.date instanceof Date ? order.date : new Date(order.date);
+    const key = `${d.toISOString().slice(0, 10)}__${order.client.toLowerCase().trim()}`;
+    if (!map.has(key)) {
+      map.set(key, { ...order, lines: [...order.lines] });
+    } else {
+      map.get(key)!.lines.push(...order.lines);
+    }
+  }
+  return Array.from(map.values());
+}
+
+// ── Invoice download ──────────────────────────────────────────────
+function downloadInvoice(order: SalesOrder) {
+  const date = order.date instanceof Date ? order.date : new Date(order.date);
+  const fmt = date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const totalQty = order.lines.reduce((s, l) => s + l.totalQty, 0);
+
+  const rows = order.lines.map((l, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${l.productName}</td>
+      <td class="mono">${l.sku}</td>
+      <td class="num">${l.totalQty}</td>
+    </tr>`).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Bon de commande ${order.ref}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1a1a2e; padding: 40px 60px; font-size: 13px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 36px; border-bottom: 2px solid #1a1a2e; padding-bottom: 20px; }
+  .brand { font-size: 28px; font-weight: 900; letter-spacing: 2px; color: #1a1a2e; }
+  .brand span { color: #e63946; }
+  .doc-info { text-align: right; }
+  .doc-info .ref { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+  .doc-info .date { color: #555; }
+  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+  .meta-block label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #888; display: block; margin-bottom: 4px; }
+  .meta-block span { font-size: 15px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+  thead tr { background: #1a1a2e; color: white; }
+  thead th { padding: 10px 14px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  thead th:last-child { text-align: right; }
+  tbody tr:nth-child(even) { background: #f7f8fc; }
+  tbody td { padding: 10px 14px; border-bottom: 1px solid #eee; }
+  td.mono { font-family: monospace; color: #555; font-size: 12px; }
+  td.num { text-align: right; font-weight: 600; }
+  .footer { display: flex; justify-content: flex-end; }
+  .total-box { background: #1a1a2e; color: white; padding: 14px 24px; border-radius: 6px; min-width: 200px; }
+  .total-box .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7; margin-bottom: 4px; }
+  .total-box .value { font-size: 22px; font-weight: 700; }
+  .stamp { margin-top: 60px; text-align: center; font-size: 10px; color: #ccc; }
+  @media print { body { padding: 20px 40px; } }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">GRANITE<span>C</span></div>
+    <div class="doc-info">
+      <div class="ref">Bon de livraison</div>
+      <div class="ref" style="font-size:14px">${order.ref}</div>
+      <div class="date">${fmt}</div>
+    </div>
+  </div>
+  <div class="meta">
+    <div class="meta-block">
+      <label>Client</label>
+      <span>${order.client}</span>
+    </div>
+    <div class="meta-block">
+      <label>Nombre de références</label>
+      <span>${order.lines.length}</span>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Produit</th>
+        <th>Référence</th>
+        <th style="text-align:right">Quantité</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="footer">
+    <div class="total-box">
+      <div class="label">Total pièces</div>
+      <div class="value">${totalQty.toLocaleString('fr-FR')}</div>
+    </div>
+  </div>
+  <div class="stamp">Document généré par Granitec ERP · ${new Date().toLocaleDateString('fr-FR')}</div>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${order.ref}.html`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Product picker (categories accordion) ────────────────────────
+const CATEGORY_ORDER = ['Sets & Packs', 'Marmite', 'Crepe & Specialty', 'Frypans', 'Saucepots', 'Cake & Molds'];
+
+const COLOR_DOT_PICKER: Record<ColorName, string> = {
+  Black: 'bg-gray-900', Gray: 'bg-gray-400', Cream: 'bg-amber-200',
+  Blue: 'bg-blue-500', Red: 'bg-red-500',
+};
+
+function ProductPicker({ products, onSelect }: { products: Product[]; onSelect: (p: Product) => void }) {
+  const [openCat, setOpenCat] = useState<string | null>(null);
+
+  const byCategory: Record<string, Product[]> = {};
+  for (const p of products) {
+    const cat = p.category ?? 'Other';
+    (byCategory[cat] ??= []).push(p);
+  }
+  const cats = [...CATEGORY_ORDER.filter(c => byCategory[c]), ...Object.keys(byCategory).filter(c => !CATEGORY_ORDER.includes(c))];
+
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+      {cats.map(cat => (
+        <div key={cat}>
+          <button type="button" onClick={() => setOpenCat(openCat === cat ? null : cat)}
+            className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-600 transition-colors border-b border-slate-200">
+            <span>{cat}</span>
+            <span className="text-slate-400">{openCat === cat ? '▲' : '▼'}</span>
+          </button>
+          {openCat === cat && (
+            <div className="bg-white">
+              {byCategory[cat].map(p => {
+                const parsed = extractColor(p.name);
+                const color = parsed?.color ?? null;
+                return (
+                  <button key={p.id} type="button" onClick={() => onSelect(p)}
+                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 text-left transition-colors border-b border-slate-100 last:border-0">
+                    {color && <span className={`w-3 h-3 rounded-full shrink-0 ${COLOR_DOT_PICKER[color]}`} />}
+                    <span className="text-xs text-slate-700 flex-1">{p.name}</span>
+                    <span className="text-xs font-mono text-slate-400">{p.sku}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Draft line type ───────────────────────────────────────────────
+interface DraftLine {
+  productId: string;
+  productName: string;
+  sku: string;
+  boxes: number;
+  qtyPerBox: number;
+  totalQty: number;
+}
+
+// ── New Order Modal ───────────────────────────────────────────────
+function NewOrderModal({ products, onClose, onSaved }: {
+  products: Product[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [ref, setRef] = useState('');
+  const [client, setClient] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [lines, setLines] = useState<DraftLine[]>([]);
+  const [openPicker, setOpenPicker] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const load = () => {
-    setLoading(true);
-    Promise.all([getSales(), getProducts()])
-      .then(([s, p]) => { setSales(s); setProducts(p.filter(p => p.type === 'FINISHED')); })
-      .finally(() => setLoading(false));
+  useEffect(() => {
+    generateOrderRef().then(setRef);
+  }, []);
+
+  const addLine = () => {
+    const idx = lines.length;
+    setLines(prev => [...prev, { productId: '', productName: '', sku: '', boxes: 1, qtyPerBox: 1, totalQty: 1 }]);
+    setOpenPicker(idx);
   };
 
-  useEffect(() => { load(); }, []);
+  const selectProduct = (idx: number, p: Product) => {
+    setLines(prev => prev.map((l, i) => i === idx
+      ? { ...l, productId: p.id, productName: p.name, sku: p.sku }
+      : l));
+    setOpenPicker(null);
+  };
+
+  const updateLine = (idx: number, field: 'boxes' | 'qtyPerBox', val: number) => {
+    setLines(prev => prev.map((l, i) => {
+      if (i !== idx) return l;
+      const boxes = field === 'boxes' ? val : l.boxes;
+      const qtyPerBox = field === 'qtyPerBox' ? val : l.qtyPerBox;
+      return { ...l, boxes, qtyPerBox, totalQty: boxes * qtyPerBox };
+    }));
+  };
+
+  const removeLine = (idx: number) => setLines(prev => prev.filter((_, i) => i !== idx));
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (lines.length === 0) { setError('Add at least one product line'); return; }
+    if (lines.some(l => !l.productId)) { setError('Select a product for each line'); return; }
     setError('');
     setSaving(true);
     try {
-      await addSale({
-        productId: form.productId,
-        quantity: Number(form.quantity),
-        client: form.client,
-        date: new Date(),
-        totalAmount: Number(form.totalAmount),
-      });
-      setShowModal(false);
-      setForm({ productId: '', quantity: '', client: '', totalAmount: '' });
-      load();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to record sale');
+      await createOrder({ ref, client, date: new Date(date), lines: lines as SalesOrderLine[] });
+      onSaved();
+      onClose();
+    } catch {
+      setError('Failed to save order');
     } finally {
       setSaving(false);
     }
   };
 
-  const totalRevenue = sales.reduce((s, sale) => s + (sale.totalAmount ?? 0), 0);
+  return (
+    <Modal title="New Sales Order" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Order Ref</label>
+            <input value={ref} readOnly className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-500 font-mono" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Client</label>
+            <input value={client} onChange={e => setClient(e.target.value)} required
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Date</label>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} required
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {lines.map((line, idx) => (
+            <div key={idx} className="border border-slate-200 rounded-lg p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <button type="button" onClick={() => setOpenPicker(openPicker === idx ? null : idx)}
+                  className="flex-1 text-left text-sm px-2 py-1.5 rounded border border-slate-200 hover:bg-slate-50 transition-colors">
+                  {line.productName
+                    ? <span className="text-slate-700">{line.productName} <span className="text-slate-400 font-mono text-xs">{line.sku}</span></span>
+                    : <span className="text-slate-400">Click to select product…</span>}
+                </button>
+                <button type="button" onClick={() => removeLine(idx)}
+                  className="ml-2 p-1.5 text-slate-400 hover:text-red-500 transition-colors">
+                  <X size={14} />
+                </button>
+              </div>
+              {openPicker === idx && (
+                <ProductPicker products={products} onSelect={p => selectProduct(idx, p)} />
+              )}
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <label className="block text-slate-500 mb-1">Boxes</label>
+                  <input type="number" min="1" value={line.boxes} onChange={e => updateLine(idx, 'boxes', Number(e.target.value))}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-slate-500 mb-1">Qty/Box</label>
+                  <input type="number" min="1" value={line.qtyPerBox} onChange={e => updateLine(idx, 'qtyPerBox', Number(e.target.value))}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-slate-500 mb-1">Total</label>
+                  <div className="px-2 py-1.5 border border-slate-200 rounded text-sm bg-slate-50 text-slate-700 font-semibold tabular-nums">{line.totalQty}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+          <button type="button" onClick={addLine}
+            className="w-full py-2 border-2 border-dashed border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600 rounded-lg text-sm transition-colors flex items-center justify-center gap-1.5">
+            <Plus size={14} /> Add product line
+          </button>
+        </div>
+
+        {error && <p className="text-red-600 text-sm">{error}</p>}
+        <div className="flex gap-3 pt-2">
+          <button type="submit" disabled={saving}
+            className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+            {saving ? 'Saving…' : 'Save Order'}
+          </button>
+          <button type="button" onClick={onClose}
+            className="flex-1 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ── Order detail modal ────────────────────────────────────────────
+function OrderDetailModal({ order, onClose }: { order: SalesOrder; onClose: () => void }) {
+  const date = order.date instanceof Date ? order.date : new Date(order.date);
+  const totalQty = order.lines.reduce((s, l) => s + l.totalQty, 0);
+
+  return (
+    <Modal title={order.ref} onClose={onClose}>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div><span className="text-slate-400">Client</span><p className="font-semibold text-slate-800 mt-0.5">{order.client}</p></div>
+          <div><span className="text-slate-400">Date</span><p className="font-semibold text-slate-800 mt-0.5">{date.toLocaleDateString('fr-FR')}</p></div>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-xs text-slate-400 uppercase tracking-wide">
+              <th className="pb-2">#</th>
+              <th className="pb-2">Product</th>
+              <th className="pb-2">SKU</th>
+              <th className="pb-2 text-right">Qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {order.lines.map((l, i) => (
+              <tr key={i} className="border-b border-slate-100">
+                <td className="py-2 text-slate-400">{i + 1}</td>
+                <td className="py-2 text-slate-700">{l.productName}</td>
+                <td className="py-2 font-mono text-slate-500 text-xs">{l.sku}</td>
+                <td className="py-2 text-right font-semibold text-slate-800">{l.totalQty}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colSpan={3} className="pt-3 text-xs text-slate-400 uppercase tracking-wide font-medium">Total</td>
+              <td className="pt-3 text-right font-bold text-slate-800">{totalQty}</td>
+            </tr>
+          </tfoot>
+        </table>
+        <div className="flex gap-3 pt-1">
+          <button onClick={() => downloadInvoice(order)}
+            className="flex-1 flex items-center justify-center gap-2 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
+            <Download size={14} /> Download
+          </button>
+          <button onClick={onClose}
+            className="flex-1 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
+            Close
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Edit Order Modal ──────────────────────────────────────────────
+function EditOrderModal({ order, products, onClose, onSaved }: {
+  order: SalesOrder;
+  products: Product[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const toDateStr = (d: Date | string) =>
+    (d instanceof Date ? d : new Date(d)).toISOString().slice(0, 10);
+
+  const [ref] = useState(order.ref);
+  const [client, setClient] = useState(order.client);
+  const [date, setDate] = useState(toDateStr(order.date));
+  const [lines, setLines] = useState<DraftLine[]>(
+    order.lines.map(l => ({ ...l }))
+  );
+  const [openPicker, setOpenPicker] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const addLine = () => {
+    const idx = lines.length;
+    setLines(prev => [...prev, { productId: '', productName: '', sku: '', boxes: 1, qtyPerBox: 1, totalQty: 1 }]);
+    setOpenPicker(idx);
+  };
+
+  const selectProduct = (idx: number, p: Product) => {
+    setLines(prev => prev.map((l, i) => i === idx
+      ? { ...l, productId: p.id, productName: p.name, sku: p.sku }
+      : l));
+    setOpenPicker(null);
+  };
+
+  const updateLine = (idx: number, field: 'boxes' | 'qtyPerBox', val: number) => {
+    setLines(prev => prev.map((l, i) => {
+      if (i !== idx) return l;
+      const boxes = field === 'boxes' ? val : l.boxes;
+      const qtyPerBox = field === 'qtyPerBox' ? val : l.qtyPerBox;
+      return { ...l, boxes, qtyPerBox, totalQty: boxes * qtyPerBox };
+    }));
+  };
+
+  const removeLine = (idx: number) => setLines(prev => prev.filter((_, i) => i !== idx));
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (lines.length === 0) { setError('Add at least one product line'); return; }
+    if (lines.some(l => !l.productId)) { setError('Select a product for each line'); return; }
+    setError('');
+    setSaving(true);
+    try {
+      await updateOrder({ ...order, ref, client, date: new Date(date), lines: lines as SalesOrderLine[] });
+      onSaved();
+      onClose();
+    } catch {
+      setError('Failed to save changes');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={`Edit ${ref}`} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Order Ref</label>
+            <input value={ref} readOnly className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-500 font-mono" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Client</label>
+            <input value={client} onChange={e => setClient(e.target.value)} required
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Date</label>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} required
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {lines.map((line, idx) => (
+            <div key={idx} className="border border-slate-200 rounded-lg p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <button type="button" onClick={() => setOpenPicker(openPicker === idx ? null : idx)}
+                  className="flex-1 text-left text-sm px-2 py-1.5 rounded border border-slate-200 hover:bg-slate-50 transition-colors">
+                  {line.productName
+                    ? <span className="text-slate-700">{line.productName} <span className="text-slate-400 font-mono text-xs">{line.sku}</span></span>
+                    : <span className="text-slate-400">Click to select product…</span>}
+                </button>
+                <button type="button" onClick={() => removeLine(idx)}
+                  className="ml-2 p-1.5 text-slate-400 hover:text-red-500 transition-colors">
+                  <X size={14} />
+                </button>
+              </div>
+              {openPicker === idx && (
+                <ProductPicker products={products} onSelect={p => selectProduct(idx, p)} />
+              )}
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <label className="block text-slate-500 mb-1">Boxes</label>
+                  <input type="number" min="1" value={line.boxes} onChange={e => updateLine(idx, 'boxes', Number(e.target.value))}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-slate-500 mb-1">Qty/Box</label>
+                  <input type="number" min="1" value={line.qtyPerBox} onChange={e => updateLine(idx, 'qtyPerBox', Number(e.target.value))}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-slate-500 mb-1">Total</label>
+                  <div className="px-2 py-1.5 border border-slate-200 rounded text-sm bg-slate-50 text-slate-700 font-semibold tabular-nums">{line.totalQty}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+          <button type="button" onClick={addLine}
+            className="w-full py-2 border-2 border-dashed border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600 rounded-lg text-sm transition-colors flex items-center justify-center gap-1.5">
+            <Plus size={14} /> Add product line
+          </button>
+        </div>
+
+        {error && <p className="text-red-600 text-sm">{error}</p>}
+        <div className="flex gap-3 pt-2">
+          <button type="submit" disabled={saving}
+            className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+            {saving ? 'Saving…' : 'Save Changes'}
+          </button>
+          <button type="button" onClick={onClose}
+            className="flex-1 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────
+const isLive = import.meta.env.VITE_APP_MODE === 'live';
+
+export default function SalesPage() {
+  const [orders, setOrders] = useState<SalesOrder[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showNew, setShowNew] = useState(false);
+  const [detail, setDetail] = useState<SalesOrder | null>(null);
+  const [editing, setEditing] = useState<SalesOrder | null>(null);
+  const [filterBase, setFilterBase] = useState<string | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    Promise.all([getOrders(), getProducts()])
+      .then(([o, p]) => { setOrders(o); setProducts(p.filter(x => x.type === 'FINISHED')); })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const groupStats = buildGroupStats(orders);
+
+  const filteredOrders = filterBase
+    ? orders.filter(o => o.lines.some(l => {
+        const parsed = extractColor(l.productName);
+        const base = parsed ? parsed.base : l.productName;
+        return base === filterBase;
+      }))
+    : mergeByDateClient(orders);
+
+  const totalPcs = filteredOrders.reduce((s, o) => s + o.lines.reduce((ls, l) => ls + l.totalQty, 0), 0);
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Sales</h1>
+          <h1 className="text-2xl font-bold text-slate-800">Sales Orders</h1>
           <p className="text-slate-500 text-sm mt-1">
-            {sales.length} sales · Total: ${totalRevenue.toLocaleString()}
+            {orders.length} orders · {totalPcs.toLocaleString('fr-FR')} pcs total
           </p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-        >
-          <Plus size={16} />
-          New Sale
+        <button onClick={() => setShowNew(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+          <Plus size={16} /> New Order
         </button>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100">
-        {loading ? (
-          <div className="p-8 text-center text-slate-400 text-sm">Loading...</div>
-        ) : (
-          <table className="w-full">
+      {/* Summary cards */}
+      {!loading && groupStats.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {groupStats.map(group => {
+            const isActive = filterBase === group.base;
+            const lastFmt = group.lastDate
+              ? (group.lastDate instanceof Date ? group.lastDate : new Date(group.lastDate))
+                  .toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+              : '—';
+            return (
+              <button key={group.base} type="button"
+                onClick={() => setFilterBase(isActive ? null : group.base)}
+                className={`text-left bg-white rounded-xl border shadow-sm p-4 flex flex-col gap-3 hover:shadow-md transition-all ${
+                  isActive ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-100'
+                }`}>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-800 leading-snug">{group.base}</p>
+                  <ShoppingBag size={16} className="text-slate-300 shrink-0 mt-0.5" />
+                </div>
+                <div className="space-y-1.5">
+                  {group.variants.map(v => (
+                    <div key={v.sku} className="flex items-center gap-2 text-xs">
+                      {v.color && <span className={`w-3 h-3 rounded-full shrink-0 ${COLOR_DOT[v.color]}`} />}
+                      <span className="font-mono text-slate-500 flex-1">{v.sku}</span>
+                      <span className="text-slate-400">{v.orderCount} orders</span>
+                      <span className="font-semibold text-slate-700 tabular-nums">{v.totalQty.toLocaleString('fr-FR')}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-slate-100 pt-2 mt-auto flex items-center justify-between">
+                  <span className="text-xs text-slate-400">Last: {lastFmt}</span>
+                  <span className="text-xs font-bold text-slate-800 tabular-nums">
+                    Total: {group.variants.reduce((s, v) => s + v.totalQty, 0).toLocaleString('fr-FR')}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Active filter banner */}
+      {filterBase && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+          <span className="text-blue-700 font-medium">Showing: {filterBase}</span>
+          <button onClick={() => setFilterBase(null)} className="ml-auto flex items-center gap-1 text-blue-500 hover:text-blue-700 transition-colors">
+            <X size={14} /> Clear filter
+          </button>
+        </div>
+      )}
+
+      {/* Orders table */}
+      {loading ? (
+        <div className="text-center text-slate-400 py-20 text-sm">Loading…</div>
+      ) : filteredOrders.length === 0 ? (
+        <div className="text-center py-20">
+          <ShoppingBag size={44} className="mx-auto mb-3 text-slate-200" />
+          <p className="text-slate-400 text-sm">No orders yet.</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-100">
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Product ID</th>
-                <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Qty</th>
-                <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
+              <tr className="border-b border-slate-100 text-left text-xs text-slate-400 uppercase tracking-wide bg-slate-50">
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">Ref</th>
+                <th className="px-4 py-3">Client</th>
+                <th className="px-4 py-3">Products</th>
+                <th className="px-4 py-3 text-right">Total pcs</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50">
-              {sales.map(s => (
-                <tr key={s.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 text-sm font-medium text-slate-800">{s.client}</td>
-                  <td className="px-4 py-3 text-sm text-slate-500 font-mono">{s.productId}</td>
-                  <td className="px-4 py-3 text-sm text-slate-700 text-right">{s.quantity}</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-slate-800 text-right">${s.totalAmount?.toLocaleString()}</td>
-                </tr>
-              ))}
-              {sales.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-slate-400 text-sm">No sales recorded yet.</td>
-                </tr>
-              )}
+            <tbody>
+              {filteredOrders.map(order => {
+                const date = order.date instanceof Date ? order.date : new Date(order.date);
+                const totalQty = order.lines.reduce((s, l) => s + l.totalQty, 0);
+                return (
+                  <tr key={order.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3 text-slate-500 tabular-nums whitespace-nowrap">
+                      {date.toLocaleDateString('fr-FR')}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{order.ref}</td>
+                    <td className="px-4 py-3 font-medium text-slate-700">{order.client}</td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">
+                      {order.lines.map(l => l.sku).join(', ')}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-800 tabular-nums">{totalQty}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1 justify-end">
+                        <button onClick={() => setDetail(order)}
+                          className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors" title="View">
+                          <Eye size={15} />
+                        </button>
+                        {!isLive && (
+                          <button onClick={() => setEditing(order)}
+                            className="p-1.5 text-slate-400 hover:text-amber-500 transition-colors" title="Edit">
+                            <Pencil size={15} />
+                          </button>
+                        )}
+                        <button onClick={() => downloadInvoice(order)}
+                          className="p-1.5 text-slate-400 hover:text-slate-700 transition-colors" title="Download">
+                          <Download size={15} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-        )}
-      </div>
+        </div>
+      )}
 
-      {showModal && (
-        <Modal title="Record Sale" onClose={() => setShowModal(false)}>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Product</label>
-              <select
-                value={form.productId}
-                onChange={e => setForm(f => ({ ...f, productId: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              >
-                <option value="">Select product...</option>
-                {products.map(p => <option key={p.id} value={p.id}>{p.name} (stock: {p.stock_level})</option>)}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Quantity</label>
-                <input type="number" min="1" value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Total Amount ($)</label>
-                <input type="number" min="0" value={form.totalAmount} onChange={e => setForm(f => ({ ...f, totalAmount: e.target.value }))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Client</label>
-              <input type="text" value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
-            </div>
-            {error && <p className="text-red-600 text-sm">{error}</p>}
-            <div className="flex gap-3 pt-2">
-              <button type="submit" disabled={saving}
-                className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                {saving ? 'Saving...' : 'Record Sale'}
-              </button>
-              <button type="button" onClick={() => setShowModal(false)}
-                className="flex-1 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
-                Cancel
-              </button>
-            </div>
-          </form>
-        </Modal>
+      {showNew && (
+        <NewOrderModal products={products} onClose={() => setShowNew(false)} onSaved={load} />
+      )}
+      {detail && (
+        <OrderDetailModal order={detail} onClose={() => setDetail(null)} />
+      )}
+      {editing && (
+        <EditOrderModal
+          order={editing}
+          products={products}
+          onClose={() => setEditing(null)}
+          onSaved={load}
+        />
       )}
     </div>
   );
