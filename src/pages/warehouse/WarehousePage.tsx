@@ -9,6 +9,7 @@ import type { Product, ProductType } from '@/types';
 const PRODUCT_IMAGES: Record<string, string> = {
   'JSM-2102N': '/products/JSM-2102N.png',
   'JSM-2102G': '/products/JSM-2102G.png',
+  'JSM-1406N': '/products/JSM-1406N.png',
   'JSM-2104N': '/products/JSM-2104N.png',
   'JSM-1408N': '/products/JSM-1408N.png',
   'JSM-1408G': '/products/JSM-1408G.png',
