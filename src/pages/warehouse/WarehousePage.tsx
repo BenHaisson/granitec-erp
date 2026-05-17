@@ -1,9 +1,20 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Plus, Search, Package } from 'lucide-react';
+import { useEffect, useState, useRef, type FormEvent } from 'react';
+import { Plus, Search, Package, ImageOff } from 'lucide-react';
 import { getProducts, addProduct } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
 import type { Product, ProductType } from '@/types';
+
+// ── Product image map (SKU → public/products/<sku>.<ext>) ────────
+const PRODUCT_IMAGES: Record<string, string> = {
+  'JSM-2102N': '/products/JSM-2102N.png',
+  'JSM-2102G': '/products/JSM-2102G.png',
+  'JSM-2104N': '/products/JSM-2104N.png',
+  'JSM-1408N': '/products/JSM-1408N.png',
+  'JSM-1408G': '/products/JSM-1408G.png',
+  'JSM-1407N': '/products/JSM-1407N.JPEG',
+  'JSM-1407G': '/products/JSM-1407G.jfif',
+};
 
 // ── Category order ───────────────────────────────────────────────
 const CATEGORY_ORDER = [
@@ -78,6 +89,99 @@ function groupBadge(group: ProductGroup) {
   if (allEmpty) return <Badge label="Empty" variant="red" />;
   if (anyLow)   return <Badge label="Low"   variant="yellow" />;
   return             <Badge label="In Stock" variant="green" />;
+}
+
+// ── Product group card with image carousel ────────────────────────
+function ProductGroupCard({ group }: { group: ProductGroup }) {
+  const images = group.variants
+    .map(v => PRODUCT_IMAGES[v.product.sku])
+    .filter((url): url is string => Boolean(url));
+  const unique = [...new Set(images)];
+
+  const [idx, setIdx] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (unique.length < 2) return;
+    timerRef.current = setInterval(() => {
+      setIdx(i => (i + 1) % unique.length);
+    }, 2500);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [unique.length]);
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 flex flex-col gap-3 hover:shadow-md transition-shadow">
+
+      {/* Image carousel */}
+      <div className="w-full aspect-square rounded-lg overflow-hidden bg-slate-50 relative">
+        {unique.length > 0 ? (
+          <>
+            <div
+              className="flex h-full transition-transform duration-500 ease-in-out"
+              style={{ width: `${unique.length * 100}%`, transform: `translateX(-${idx * (100 / unique.length)}%)` }}
+            >
+              {unique.map((src, i) => (
+                <div key={i} className="h-full flex items-center justify-center p-2"
+                  style={{ width: `${100 / unique.length}%` }}>
+                  <img src={src} alt={group.base} className="w-full h-full object-contain" />
+                </div>
+              ))}
+            </div>
+            {unique.length > 1 && (
+              <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1">
+                {unique.map((_, i) => (
+                  <button key={i} onClick={() => {
+                    setIdx(i);
+                    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+                  }}
+                    className={`w-1.5 h-1.5 rounded-full transition-colors ${i === idx ? 'bg-slate-600' : 'bg-slate-300'}`}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <ImageOff size={32} className="text-slate-200" />
+          </div>
+        )}
+      </div>
+
+      {/* Title + badge */}
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-sm font-semibold text-slate-800 leading-snug">{group.base}</p>
+        {groupBadge(group)}
+      </div>
+
+      {/* Category tag */}
+      {group.category && (
+        <span className="self-start text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
+          {group.category}
+        </span>
+      )}
+
+      {/* Color variants */}
+      <div className="space-y-2 mt-1">
+        {group.variants.map(({ product: p, color }) => (
+          <div key={p.id} className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              {color && (
+                <span className={`w-3 h-3 rounded-full shrink-0 ${COLOR_DOT[color]}`} />
+              )}
+              <span className="text-slate-500 font-mono truncate">{p.sku}</span>
+              {color && <span className="text-slate-400">{color}</span>}
+            </div>
+            <span className={`font-semibold tabular-nums ${
+              p.stock_level <= 0 ? 'text-red-500' :
+              p.stock_level <= p.min_stock ? 'text-yellow-600' : 'text-slate-700'
+            }`}>
+              {p.stock_level} <span className="font-normal text-slate-400">{p.unit}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function WarehousePage() {
@@ -193,42 +297,8 @@ export default function WarehousePage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {groups.map(group => (
-            <div key={group.base + group.category}
-              className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 flex flex-col gap-3 hover:shadow-md transition-shadow">
-
-              {/* Title + badge */}
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-semibold text-slate-800 leading-snug">{group.base}</p>
-                {groupBadge(group)}
-              </div>
-
-              {/* Category tag */}
-              {group.category && (
-                <span className="self-start text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
-                  {group.category}
-                </span>
-              )}
-
-              {/* Color variants */}
-              <div className="space-y-2 mt-1">
-                {group.variants.map(({ product: p, color }) => (
-                  <div key={p.id} className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {color && (
-                        <span className={`w-3 h-3 rounded-full flex-shrink-0 ${COLOR_DOT[color]}`} />
-                      )}
-                      <span className="text-slate-500 font-mono truncate">{p.sku}</span>
-                      {color && <span className="text-slate-400">{color}</span>}
-                    </div>
-                    <span className={`font-semibold tabular-nums ${
-                      p.stock_level <= 0 ? 'text-red-500' :
-                      p.stock_level <= p.min_stock ? 'text-yellow-600' : 'text-slate-700'
-                    }`}>
-                      {p.stock_level} <span className="font-normal text-slate-400">{p.unit}</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
+            <div key={group.base + group.category}>
+              <ProductGroupCard group={group} />
             </div>
           ))}
         </div>
