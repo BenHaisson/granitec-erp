@@ -18,9 +18,19 @@ const nav = [
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   return (
-    <aside className="w-64 bg-slate-900 text-white flex flex-col shrink-0">
+    <aside className={`
+      fixed inset-y-0 left-0 z-40 w-64 bg-slate-900 text-white flex flex-col shrink-0
+      transition-transform duration-300 ease-in-out
+      lg:static lg:translate-x-0
+      ${isOpen ? 'translate-x-0' : '-translate-x-full'}
+    `}>
       <div className="p-6 border-b border-slate-700">
         <h1 className="text-xl font-bold text-white">Granitec ERP</h1>
         <p className="text-slate-400 text-xs mt-1">Factory Management</p>
@@ -31,6 +41,7 @@ export default function Sidebar() {
           <NavLink
             key={to}
             to={to}
+            onClick={onClose}
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                 isActive
