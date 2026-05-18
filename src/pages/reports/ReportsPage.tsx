@@ -14,6 +14,7 @@ const GROUPS = [
   { key: 'granite-saucepot', label: 'Saucepot — Granite', color: '#f97316', match: (n: string) => n.includes('Saucepot') && n.includes('Granite') },
   { key: 'ceramic-saucepot', label: 'Saucepot — Ceramic', color: '#8b5cf6', match: (n: string) => n.includes('Saucepot') && n.includes('Ceramic') },
   { key: 'marmite-granite',  label: 'Marmite — Granite',  color: '#10b981', match: (n: string) => n.includes('Marmite') },
+  { key: 'crepierre',        label: 'Crepierre',           color: '#f59e0b', match: (n: string) => n.includes('Crepierre') },
 ] as const;
 
 type GroupKey = typeof GROUPS[number]['key'];
@@ -64,6 +65,7 @@ function buildChartData(orders: SalesOrder[], year: number | null): ChartRow[] {
     'granite-saucepot': 0,
     'ceramic-saucepot': 0,
     'marmite-granite': 0,
+    'crepierre': 0,
   }));
   const idx = Object.fromEntries(yms.map((ym, i) => [ym, i]));
 
@@ -151,7 +153,7 @@ export default function ReportsPage() {
   const totalPcs = allData.reduce((s, r) => s + rowTotal(r), 0);
   const activeMonths = allData.filter(r => rowTotal(r) > 0);
   const monthlyAvg = activeMonths.length > 0 ? Math.round(totalPcs / activeMonths.length) : 0;
-  const bestRow = allData.reduce((best, r) => rowTotal(r) > rowTotal(best) ? r : best, allData[0] ?? { month: '', label: '', 'granite-frypan': 0, 'ceramic-frypan': 0, 'granite-saucepot': 0, 'ceramic-saucepot': 0 });
+  const bestRow = allData.reduce((best, r) => rowTotal(r) > rowTotal(best) ? r : best, allData[0] ?? { month: '', label: '', 'granite-frypan': 0, 'ceramic-frypan': 0, 'granite-saucepot': 0, 'ceramic-saucepot': 0, 'marmite-granite': 0, 'crepierre': 0 });
   const worstRow = activeMonths.reduce((worst, r) => rowTotal(r) < rowTotal(worst) ? r : worst, activeMonths[0] ?? bestRow);
 
   // Product group totals (all time)
