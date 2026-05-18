@@ -24,8 +24,10 @@ const C09N = { productId: 'JSM-0905N', productName: 'Crepe Pan 22cm — Granite 
 const C09C = { productId: 'JSM-0905C', productName: 'Crepe Pan 22cm — Granite Cream',       sku: 'JSM-0905C' };
 const C11N = { productId: 'JSM-1109N', productName: 'Crepe Pan 18cm — Granite Black',       sku: 'JSM-1109N' };
 const C11C = { productId: 'JSM-1109C', productName: 'Crepe Pan 18cm — Granite Cream',       sku: 'JSM-1109C' };
+const T7N  = { productId: 'JSM-0707N', productName: '7-Piece Stock Pot Set (Tanjara) — Black', sku: 'JSM-0707N' };
+const T7G  = { productId: 'JSM-0707G', productName: '7-Piece Stock Pot Set (Tanjara) — Gray',  sku: 'JSM-0707G' };
 
-type P = typeof N | typeof G | typeof CN | typeof SN | typeof SG | typeof SCN | typeof GN | typeof GG | typeof M30N | typeof M30G | typeof M28N | typeof M28G | typeof M26N | typeof M26G | typeof M24N | typeof M24G | typeof C14N | typeof C14C | typeof C09N | typeof C09C | typeof C11N | typeof C11C;
+type P = typeof N | typeof G | typeof CN | typeof SN | typeof SG | typeof SCN | typeof GN | typeof GG | typeof M30N | typeof M30G | typeof M28N | typeof M28G | typeof M26N | typeof M26G | typeof M24N | typeof M24G | typeof C14N | typeof C14C | typeof C09N | typeof C09C | typeof C11N | typeof C11C | typeof T7N | typeof T7G;
 const line = (p: P, qty: number) => ({ ...p, boxes: qty, qtyPerBox: 1, totalQty: qty });
 
 export const SEED_ORDERS: SeedOrder[] = [
@@ -302,4 +304,52 @@ export const SEED_ORDERS: SeedOrder[] = [
   { ref: 'ORD-2026-0066', client: 'Saada Menage', date: new Date('2026-02-24'), lines: [line(C14C,620), line(C09N,520), line(C09C,1200)] },
   { ref: 'ORD-2026-0067', client: 'Saada Menage', date: new Date('2026-03-16'), lines: [line(C09N,440)] },
   { ref: 'ORD-2026-0068', client: 'Saada Menage', date: new Date('2026-04-28'), lines: [line(C11N,100), line(C11C,100)] },
+
+  // ── JSM-0707N/G — 7-Piece Stock Pot Set (Tanjara) ────────────────
+  { ref: 'ORD-2024-0101', client: 'Saada Menage', date: new Date('2024-08-16'), lines: [line(T7N,148), line(T7G,150)] },
+  { ref: 'ORD-2024-0102', client: 'Saada Menage', date: new Date('2024-08-23'), lines: [line(T7N,55),  line(T7G,150)] },
+  { ref: 'ORD-2024-0103', client: 'Saada Menage', date: new Date('2024-09-10'), lines: [line(T7N,160), line(T7G,160)] },
+  { ref: 'ORD-2024-0104', client: 'Saada Menage', date: new Date('2024-09-25'), lines: [line(T7N,30)]                 },
+  { ref: 'ORD-2024-0105', client: 'Saada Menage', date: new Date('2024-09-27'), lines: [line(T7N,20),  line(T7G,20)]  },
+  { ref: 'ORD-2024-0106', client: 'Saada Menage', date: new Date('2024-10-10'), lines: [line(T7N,27)]                 },
+  { ref: 'ORD-2024-0107', client: 'Saada Menage', date: new Date('2024-10-17'), lines: [line(T7N,48),  line(T7G,50)]  },
+  { ref: 'ORD-2024-0108', client: 'Saada Menage', date: new Date('2024-10-25'), lines: [line(T7N,20),  line(T7G,20)]  },
+  { ref: 'ORD-2024-0109', client: 'Saada Menage', date: new Date('2024-11-17'), lines: [line(T7N,40)]                 },
+  { ref: 'ORD-2024-0110', client: 'Saada Menage', date: new Date('2024-11-20'), lines: [line(T7N,36)]                 },
+  { ref: 'ORD-2024-0111', client: 'Saada Menage', date: new Date('2024-12-02'), lines: [line(T7N,40),  line(T7G,40)]  },
+  { ref: 'ORD-2024-0112', client: 'Saada Menage', date: new Date('2024-12-10'), lines: [line(T7N,30),  line(T7G,30)]  },
+  { ref: 'ORD-2024-0113', client: 'Saada Menage', date: new Date('2024-12-19'), lines: [line(T7N,20),  line(T7G,20)]  },
+
+  { ref: 'ORD-2025-0087', client: 'Saada Menage', date: new Date('2025-01-09'), lines: [line(T7N,30),  line(T7G,30)]  },
+  { ref: 'ORD-2025-0088', client: 'Saada Menage', date: new Date('2025-01-23'), lines: [line(T7N,30),  line(T7G,30)]  },
+  { ref: 'ORD-2025-0089', client: 'Saada Menage', date: new Date('2025-02-05'), lines: [line(T7N,20),  line(T7G,20)]  },
+  { ref: 'ORD-2025-0090', client: 'Saada Menage', date: new Date('2025-02-08'), lines: [line(T7N,30),  line(T7G,30)]  },
+  { ref: 'ORD-2025-0091', client: 'Saada Menage', date: new Date('2025-02-13'), lines: [line(T7N,30),  line(T7G,30)]  },
+  { ref: 'ORD-2025-0092', client: 'Saada Menage', date: new Date('2025-02-26'), lines: [line(T7N,20),  line(T7G,20)]  },
+  { ref: 'ORD-2025-0093', client: 'Saada Menage', date: new Date('2025-02-28'), lines: [line(T7N,54),  line(T7G,60)]  },
+  { ref: 'ORD-2025-0094', client: 'Saada Menage', date: new Date('2025-03-12'), lines: [line(T7N,10),  line(T7G,10)]  },
+  { ref: 'ORD-2025-0095', client: 'Saada Menage', date: new Date('2025-04-10'), lines: [line(T7N,15),  line(T7G,15)]  },
+  { ref: 'ORD-2025-0096', client: 'Saada Menage', date: new Date('2025-04-30'), lines: [line(T7N,6),   line(T7G,6)]   },
+  { ref: 'ORD-2025-0097', client: 'Saada Menage', date: new Date('2025-05-31'), lines: [line(T7N,40),  line(T7G,40)]  },
+  { ref: 'ORD-2025-0098', client: 'Saada Menage', date: new Date('2025-07-11'), lines: [line(T7N,10),  line(T7G,10)]  },
+  { ref: 'ORD-2025-0099', client: 'Saada Menage', date: new Date('2025-07-21'), lines: [line(T7N,20),  line(T7G,20)]  },
+  { ref: 'ORD-2025-0100', client: 'Saada Menage', date: new Date('2025-08-06'), lines: [line(T7N,20),  line(T7G,20)]  },
+  { ref: 'ORD-2025-0101', client: 'Saada Menage', date: new Date('2025-08-15'), lines: [line(T7N,7),   line(T7G,25)]  },
+  { ref: 'ORD-2025-0102', client: 'Saada Menage', date: new Date('2025-11-21'), lines: [line(T7N,80),  line(T7G,80)]  },
+  { ref: 'ORD-2025-0103', client: 'Saada Menage', date: new Date('2025-11-25'), lines: [line(T7N,60),  line(T7G,60)]  },
+  { ref: 'ORD-2025-0104', client: 'Saada Menage', date: new Date('2025-11-27'), lines: [line(T7N,10),  line(T7G,10)]  },
+  { ref: 'ORD-2025-0105', client: 'Saada Menage', date: new Date('2025-12-03'), lines: [line(T7N,25),  line(T7G,25)]  },
+  { ref: 'ORD-2025-0106', client: 'Saada Menage', date: new Date('2025-12-17'), lines: [line(T7N,15),  line(T7G,15)]  },
+  { ref: 'ORD-2025-0107', client: 'Saada Menage', date: new Date('2025-12-25'), lines: [line(T7N,6),   line(T7G,6)]   },
+
+  { ref: 'ORD-2026-0069', client: 'Saada Menage', date: new Date('2026-01-05'), lines: [line(T7N,30),  line(T7G,30)]  },
+  { ref: 'ORD-2026-0070', client: 'Saada Menage', date: new Date('2026-01-07'), lines: [line(T7N,40),  line(T7G,40)]  },
+  { ref: 'ORD-2026-0071', client: 'Saada Menage', date: new Date('2026-01-22'), lines: [line(T7N,20),  line(T7G,20)]  },
+  { ref: 'ORD-2026-0072', client: 'Saada Menage', date: new Date('2026-01-25'), lines: [line(T7N,20),  line(T7G,20)]  },
+  { ref: 'ORD-2026-0073', client: 'Saada Menage', date: new Date('2026-01-27'), lines: [line(T7N,8),   line(T7G,8)]   },
+  { ref: 'ORD-2026-0074', client: 'Saada Menage', date: new Date('2026-01-31'), lines: [line(T7N,30),  line(T7G,30)]  },
+  { ref: 'ORD-2026-0075', client: 'Saada Menage', date: new Date('2026-02-03'), lines: [line(T7N,40),  line(T7G,40)]  },
+  { ref: 'ORD-2026-0076', client: 'Saada Menage', date: new Date('2026-02-04'), lines: [line(T7N,20),  line(T7G,20)]  },
+  { ref: 'ORD-2026-0077', client: 'Saada Menage', date: new Date('2026-02-06'), lines: [line(T7N,20),  line(T7G,20)]  },
+  { ref: 'ORD-2026-0078', client: 'Saada Menage', date: new Date('2026-02-20'), lines: [line(T7N,20),  line(T7G,20)]  },
 ];
