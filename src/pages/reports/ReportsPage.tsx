@@ -14,7 +14,7 @@ const GROUPS = [
   { key: 'granite-saucepot', label: 'Saucepot — Granite', color: '#f97316', match: (n: string) => n.includes('Saucepot') && n.includes('Granite') },
   { key: 'ceramic-saucepot', label: 'Saucepot — Ceramic', color: '#8b5cf6', match: (n: string) => n.includes('Saucepot') && n.includes('Ceramic') },
   { key: 'marmite-granite',  label: 'Marmite — Granite',  color: '#10b981', match: (n: string) => n.includes('Marmite') },
-  { key: 'crepierre',        label: 'Crepierre',           color: '#f59e0b', match: (n: string) => n.includes('Crepierre') },
+  { key: 'crepierre',        label: 'Crepe Pan — Granite', color: '#f59e0b', match: (n: string) => n.includes('Crepe Pan') },
 ] as const;
 
 type GroupKey = typeof GROUPS[number]['key'];
