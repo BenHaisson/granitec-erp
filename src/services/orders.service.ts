@@ -38,11 +38,17 @@ export const createOrder = async (
 export const seedHistoricalOrders = async (
   orders: Omit<SalesOrder, 'id'>[]
 ): Promise<void> => {
-  for (const order of orders) {
-    await addDoc(collection(db, 'sales_orders'), {
-      ...order,
-      date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
+  const CHUNK = 400;
+  for (let i = 0; i < orders.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    orders.slice(i, i + CHUNK).forEach(order => {
+      const ref = doc(collection(db, 'sales_orders'));
+      batch.set(ref, {
+        ...order,
+        date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
+      });
     });
+    await batch.commit();
   }
 };
 
