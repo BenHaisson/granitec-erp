@@ -90,25 +90,51 @@ function rowTotal(row: ChartRow): number {
   return GROUPS.reduce((s, g) => s + row[g.key], 0);
 }
 
+// ── YoY data helper ───────────────────────────────────────────────
+type YoYRow = { month: string; '2024': number; '2025': number; '2026': number };
+
+function buildYoYData(orders: SalesOrder[], groupFilter: GroupKey | null): YoYRow[] {
+  const MONTH_LABELS = Array.from({ length: 12 }, (_, i) =>
+    new Date(2024, i, 1).toLocaleDateString('fr-FR', { month: 'short' })
+  );
+  const rows: YoYRow[] = MONTH_LABELS.map(m => ({ month: m, '2024': 0, '2025': 0, '2026': 0 }));
+  const gf = groupFilter ? GROUPS.find(g => g.key === groupFilter) : null;
+  for (const order of orders) {
+    const d = toDate(order.date);
+    const yr = d.getFullYear();
+    if (yr < 2024 || yr > 2026) continue;
+    const mi = d.getMonth();
+    for (const line of order.lines) {
+      if (!gf || gf.match(line.productName)) {
+        (rows[mi] as unknown as Record<string, number>)[String(yr)] += line.totalQty;
+      }
+    }
+  }
+  return rows;
+}
+
 // ── Custom tooltip ────────────────────────────────────────────────
 function ChartTooltip({ active, payload, label }: {
   active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string;
 }) {
   if (!active || !payload?.length) return null;
-  const total = payload.reduce((s, p) => s + p.value, 0);
+  const filtered = payload.filter(p => p.value > 0);
+  const total = filtered.reduce((s, p) => s + p.value, 0);
   return (
     <div className="bg-white border border-slate-200 rounded-xl shadow-lg p-3 text-xs min-w-[160px]">
       <p className="font-semibold text-slate-700 mb-2">{label}</p>
-      {payload.filter(p => p.value > 0).map(p => (
+      {filtered.map(p => (
         <div key={p.name} className="flex items-center justify-between gap-4 mb-1">
           <span style={{ color: p.color }}>{p.name}</span>
           <span className="font-semibold tabular-nums">{p.value.toLocaleString('fr-FR')}</span>
         </div>
       ))}
-      <div className="border-t border-slate-100 mt-2 pt-2 flex justify-between font-bold text-slate-800">
-        <span>Total</span>
-        <span className="tabular-nums">{total.toLocaleString('fr-FR')}</span>
-      </div>
+      {filtered.length > 1 && (
+        <div className="border-t border-slate-100 mt-2 pt-2 flex justify-between font-bold text-slate-800">
+          <span>Total</span>
+          <span className="tabular-nums">{total.toLocaleString('fr-FR')}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -134,11 +160,14 @@ function KpiCard({ label, value, sub, icon: Icon, color }: {
 
 // ── Main page ─────────────────────────────────────────────────────
 const YEARS = [2024, 2025, 2026] as const;
+const FALLBACK_ROW: ChartRow = { month: '', label: '', 'granite-frypan': 0, 'ceramic-frypan': 0, 'granite-saucepot': 0, 'ceramic-saucepot': 0, 'marmite-granite': 0, 'crepierre': 0, 'tanjara': 0 };
 
 export default function ReportsPage() {
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [year, setYear] = useState<number | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<GroupKey | null>(null);
+  const [chartMode, setChartMode] = useState<'stacked' | 'yoy'>('stacked');
 
   useEffect(() => {
     getOrders()
@@ -155,8 +184,13 @@ export default function ReportsPage() {
   const totalPcs = allData.reduce((s, r) => s + rowTotal(r), 0);
   const activeMonths = allData.filter(r => rowTotal(r) > 0);
   const monthlyAvg = activeMonths.length > 0 ? Math.round(totalPcs / activeMonths.length) : 0;
-  const bestRow = allData.reduce((best, r) => rowTotal(r) > rowTotal(best) ? r : best, allData[0] ?? { month: '', label: '', 'granite-frypan': 0, 'ceramic-frypan': 0, 'granite-saucepot': 0, 'ceramic-saucepot': 0, 'marmite-granite': 0, 'crepierre': 0, 'tanjara': 0 });
+  const bestRow = allData.reduce((best, r) => rowTotal(r) > rowTotal(best) ? r : best, allData[0] ?? FALLBACK_ROW);
   const worstRow = activeMonths.reduce((worst, r) => rowTotal(r) < rowTotal(worst) ? r : worst, activeMonths[0] ?? bestRow);
+
+  // YoY growth KPI
+  const pcs2024 = allData.filter(r => r.month.startsWith('2024')).reduce((s, r) => s + rowTotal(r), 0);
+  const pcs2025 = allData.filter(r => r.month.startsWith('2025')).reduce((s, r) => s + rowTotal(r), 0);
+  const yoyPct  = pcs2024 > 0 ? ((pcs2025 - pcs2024) / pcs2024 * 100) : null;
 
   // Product group totals (all time)
   const groupTotals = GROUPS.map(g => ({
@@ -164,6 +198,12 @@ export default function ReportsPage() {
     total: allData.reduce((s, r) => s + r[g.key], 0),
   })).sort((a, b) => b.total - a.total);
   const maxGroupTotal = groupTotals[0]?.total ?? 1;
+
+  // Groups to render in stacked chart
+  const visibleGroups = selectedGroup ? GROUPS.filter(g => g.key === selectedGroup) : GROUPS;
+
+  // Last stacked bar gets rounded top corners
+  const lastKey = visibleGroups[visibleGroups.length - 1]?.key;
 
   return (
     <div className="space-y-6">
@@ -178,9 +218,16 @@ export default function ReportsPage() {
       ) : (
         <>
           {/* KPI row */}
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
             <KpiCard label="Total Orders"   value={totalOrders.toLocaleString('fr-FR')} icon={ShoppingBag} color="bg-blue-500" />
             <KpiCard label="Total Pcs"      value={totalPcs.toLocaleString('fr-FR')}    icon={BarChart3}   color="bg-slate-700" />
+            <KpiCard
+              label="YoY Growth"
+              value={yoyPct !== null ? `${yoyPct >= 0 ? '+' : ''}${yoyPct.toFixed(1)}%` : '—'}
+              sub="2025 vs 2024"
+              icon={yoyPct !== null && yoyPct < 0 ? TrendingDown : TrendingUp}
+              color={yoyPct !== null && yoyPct < 0 ? 'bg-red-400' : 'bg-green-500'}
+            />
             <KpiCard label="Monthly Avg"    value={monthlyAvg.toLocaleString('fr-FR')}  icon={Activity}    color="bg-indigo-500" />
             <KpiCard
               label="Best Month"
@@ -200,34 +247,93 @@ export default function ReportsPage() {
 
           {/* Monthly chart */}
           <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5">
-            <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+            {/* Row 1: title + mode toggle + year buttons */}
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
               <h2 className="text-sm font-semibold text-slate-700">Monthly Sales (pcs)</h2>
-              <div className="flex gap-1">
-                {([null, ...YEARS] as (number | null)[]).map(y => (
-                  <button key={y ?? 'all'} onClick={() => setYear(y)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                      year === y
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}>
-                    {y ?? 'All'}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2">
+                {/* Chart mode toggle */}
+                <div className="flex gap-1">
+                  {(['stacked', 'yoy'] as const).map(m => (
+                    <button key={m} onClick={() => setChartMode(m)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        chartMode === m
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}>
+                      {m === 'stacked' ? 'Stacked' : 'YoY'}
+                    </button>
+                  ))}
+                </div>
+                {/* Year buttons — hidden in YoY mode */}
+                {chartMode === 'stacked' && (
+                  <div className="flex gap-1">
+                    {([null, ...YEARS] as (number | null)[]).map(y => (
+                      <button key={y ?? 'all'} onClick={() => setYear(y)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                          year === y
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}>
+                        {y ?? 'All'}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* Row 2: group filter chips */}
+            <div className="flex gap-1.5 flex-wrap mb-5">
+              <button
+                onClick={() => setSelectedGroup(null)}
+                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  selectedGroup === null
+                    ? 'bg-slate-700 text-white border-slate-700'
+                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'
+                }`}>
+                All groups
+              </button>
+              {GROUPS.map(g => (
+                <button
+                  key={g.key}
+                  onClick={() => setSelectedGroup(selectedGroup === g.key ? null : g.key)}
+                  className="px-3 py-1 rounded-full text-xs font-medium border transition-colors"
+                  style={selectedGroup === g.key
+                    ? { backgroundColor: g.color, borderColor: g.color, color: '#fff' }
+                    : { backgroundColor: '#fff', borderColor: '#e2e8f0', color: '#64748b' }
+                  }>
+                  {g.label}
+                </button>
+              ))}
+            </div>
+
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false}
-                  tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
-                <Tooltip content={<ChartTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
-                {GROUPS.map(g => (
-                  <Bar key={g.key} dataKey={g.key} name={g.label} stackId="a"
-                    fill={g.color} radius={g.key === 'ceramic-saucepot' ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
-                ))}
-              </BarChart>
+              {chartMode === 'stacked' ? (
+                <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
+                  {visibleGroups.map(g => (
+                    <Bar key={g.key} dataKey={g.key} name={g.label} stackId="a"
+                      fill={g.color} radius={g.key === lastKey ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
+                  ))}
+                </BarChart>
+              ) : (
+                <BarChart data={buildYoYData(orders, selectedGroup)} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
+                  <Bar dataKey="2024" name="2024" fill="#94a3b8" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="2025" name="2025" fill="#3b82f6" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="2026" name="2026" fill="#1d4ed8" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              )}
             </ResponsiveContainer>
           </div>
 
