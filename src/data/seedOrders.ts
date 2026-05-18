@@ -22,8 +22,8 @@ const C14N = { productId: 'JSM-1405N', productName: 'Crepe Pan 24cm — Granite 
 const C14C = { productId: 'JSM-1405C', productName: 'Crepe Pan 24cm — Granite Cream',       sku: 'JSM-1405C' };
 const C09N = { productId: 'JSM-0905N', productName: 'Crepe Pan 22cm — Granite Black',       sku: 'JSM-0905N' };
 const C09C = { productId: 'JSM-0905C', productName: 'Crepe Pan 22cm — Granite Cream',       sku: 'JSM-0905C' };
-const C11N = { productId: 'JSM-1109N', productName: 'Crepe Pan 24cm — Granite Black',       sku: 'JSM-1109N' };
-const C11C = { productId: 'JSM-1109C', productName: 'Crepe Pan 24cm — Granite Cream',       sku: 'JSM-1109C' };
+const C11N = { productId: 'JSM-1109N', productName: 'Crepe Pan 18cm — Granite Black',       sku: 'JSM-1109N' };
+const C11C = { productId: 'JSM-1109C', productName: 'Crepe Pan 18cm — Granite Cream',       sku: 'JSM-1109C' };
 
 type P = typeof N | typeof G | typeof CN | typeof SN | typeof SG | typeof SCN | typeof GN | typeof GG | typeof M30N | typeof M30G | typeof M28N | typeof M28G | typeof M26N | typeof M26G | typeof M24N | typeof M24G | typeof C14N | typeof C14C | typeof C09N | typeof C09C | typeof C11N | typeof C11C;
 const line = (p: P, qty: number) => ({ ...p, boxes: qty, qtyPerBox: 1, totalQty: qty });
