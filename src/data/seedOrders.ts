@@ -8,8 +8,10 @@ const CN  = { productId: 'JSM-2104N', productName: '3-Piece Frypan Set — Ceram
 const SN  = { productId: 'JSM-1407N', productName: '5-Piece Saucepot Set — Granite Black', sku: 'JSM-1407N' };
 const SG  = { productId: 'JSM-1407G', productName: '5-Piece Saucepot Set — Granite Gray',  sku: 'JSM-1407G' };
 const SCN = { productId: 'JSM-1406N', productName: '3-Piece Saucepot Set — Ceramic Black', sku: 'JSM-1406N' };
+const GN  = { productId: 'JSM-1408N', productName: '3-Piece Saucepot Set — Granite Black', sku: 'JSM-1408N' };
+const GG  = { productId: 'JSM-1408G', productName: '3-Piece Saucepot Set — Granite Gray',  sku: 'JSM-1408G' };
 
-type P = typeof N | typeof G | typeof CN | typeof SN | typeof SG | typeof SCN;
+type P = typeof N | typeof G | typeof CN | typeof SN | typeof SG | typeof SCN | typeof GN | typeof GG;
 const line = (p: P, qty: number) => ({ ...p, boxes: qty, qtyPerBox: 1, totalQty: qty });
 
 export const SEED_ORDERS: SeedOrder[] = [
@@ -50,41 +52,41 @@ export const SEED_ORDERS: SeedOrder[] = [
   { ref: 'ORD-2024-0034', client: 'Saada Menage', date: new Date('2024-12-19'), lines: [line(N,120), line(G,120)] },
 
   // ── 2025 ──────────────────────────────────────────────────────
-  { ref: 'ORD-2025-0001', client: 'Saada Menage', date: new Date('2025-01-02'), lines: [line(N,120), line(G,120)] },
+  { ref: 'ORD-2025-0001', client: 'Saada Menage', date: new Date('2025-01-02'), lines: [line(N,120), line(G,120), line(GN,600), line(GG,600)] },
   { ref: 'ORD-2025-0002', client: 'Saada Menage', date: new Date('2025-01-03'), lines: [line(N,240), line(G,240)] },
   { ref: 'ORD-2025-0003', client: 'Saada Menage', date: new Date('2025-01-09'), lines: [line(N,120), line(G,120)] },
-  { ref: 'ORD-2025-0004', client: 'Saada Menage', date: new Date('2025-01-17'), lines: [line(N,180), line(G,300)] },
+  { ref: 'ORD-2025-0004', client: 'Saada Menage', date: new Date('2025-01-17'), lines: [line(N,180), line(G,300), line(GN,120), line(GG,120)] },
   { ref: 'ORD-2025-0005', client: 'Saada Menage', date: new Date('2025-01-24'), lines: [line(G,72)]              },
-  { ref: 'ORD-2025-0006', client: 'Saada Menage', date: new Date('2025-01-28'), lines: [line(N,150), line(G,150)] },
-  { ref: 'ORD-2025-0007', client: 'Saada Menage', date: new Date('2025-02-03'), lines: [line(N,180), line(G,180)] },
-  { ref: 'ORD-2025-0008', client: 'Saada Menage', date: new Date('2025-02-05'), lines: [line(N,330), line(G,240)] },
+  { ref: 'ORD-2025-0006', client: 'Saada Menage', date: new Date('2025-01-28'), lines: [line(N,150), line(G,150), line(GN,120), line(GG,120)] },
+  { ref: 'ORD-2025-0007', client: 'Saada Menage', date: new Date('2025-02-03'), lines: [line(N,180), line(G,180), line(GN,240), line(GG,240)] },
+  { ref: 'ORD-2025-0008', client: 'Saada Menage', date: new Date('2025-02-05'), lines: [line(N,330), line(G,240), line(GN,90), line(GG,90)] },
   { ref: 'ORD-2025-0009', client: 'Saada Menage', date: new Date('2025-02-11'), lines: [line(N,174), line(G,234)] },
-  { ref: 'ORD-2025-0010', client: 'Saada Menage', date: new Date('2025-02-13'), lines: [line(G,36)]              },
+  { ref: 'ORD-2025-0010', client: 'Saada Menage', date: new Date('2025-02-13'), lines: [line(G,36), line(GN,107), line(GG,102)] },
   { ref: 'ORD-2025-0011', client: 'Saada Menage', date: new Date('2025-02-15'), lines: [line(G,372)]             },
   { ref: 'ORD-2025-0012', client: 'Saada Menage', date: new Date('2025-02-22'), lines: [line(G,450)]             },
   { ref: 'ORD-2025-0013', client: 'Saada Menage', date: new Date('2025-02-26'), lines: [line(G,216)]             },
   { ref: 'ORD-2025-0014', client: 'Saada Menage', date: new Date('2025-02-28'), lines: [line(G,468)]             },
   { ref: 'ORD-2025-0015', client: 'Saada Menage', date: new Date('2025-03-12'), lines: [line(G,180)]             },
   { ref: 'ORD-2025-0016', client: 'Saada Menage', date: new Date('2025-04-22'), lines: [line(G,384)]             },
-  { ref: 'ORD-2025-0017', client: 'Saada Menage', date: new Date('2025-04-30'), lines: [line(G,6)]               },
-  { ref: 'ORD-2025-0018', client: 'Saada Menage', date: new Date('2025-04-10'), lines: [line(G,300)]             },
-  { ref: 'ORD-2025-0019', client: 'Saada Menage', date: new Date('2025-05-21'), lines: [line(N,150), line(G,156)] },
+  { ref: 'ORD-2025-0017', client: 'Saada Menage', date: new Date('2025-04-30'), lines: [line(G,6), line(GG,288)] },
+  { ref: 'ORD-2025-0018', client: 'Saada Menage', date: new Date('2025-04-10'), lines: [line(G,300), line(GG,300)] },
+  { ref: 'ORD-2025-0019', client: 'Saada Menage', date: new Date('2025-05-21'), lines: [line(N,150), line(G,156), line(GN,150), line(GG,150)] },
   { ref: 'ORD-2025-0020', client: 'Saada Menage', date: new Date('2025-05-24'), lines: [line(N,150), line(G,156)] },
   { ref: 'ORD-2025-0021', client: 'Saada Menage', date: new Date('2025-05-31'), lines: [line(N,60),  line(G,60)]  },
   { ref: 'ORD-2025-0022', client: 'Saada Menage', date: new Date('2025-06-20'), lines: [line(N,180), line(G,174)] },
-  { ref: 'ORD-2025-0023', client: 'Saada Menage', date: new Date('2025-07-11'), lines: [line(N,180), line(G,180)] },
-  { ref: 'ORD-2025-0024', client: 'Saada Menage', date: new Date('2025-07-21'), lines: [line(N,120), line(G,120)] },
+  { ref: 'ORD-2025-0023', client: 'Saada Menage', date: new Date('2025-07-11'), lines: [line(N,180), line(G,180), line(GN,180), line(GG,156)] },
+  { ref: 'ORD-2025-0024', client: 'Saada Menage', date: new Date('2025-07-21'), lines: [line(N,120), line(G,120), line(GN,120)] },
   { ref: 'ORD-2025-0025', client: 'Saada Menage', date: new Date('2025-08-06'), lines: [line(N,120), line(G,120)] },
   { ref: 'ORD-2025-0026', client: 'Saada Menage', date: new Date('2025-08-12'), lines: [line(N,120), line(G,120)] },
-  { ref: 'ORD-2025-0027', client: 'Saada Menage', date: new Date('2025-08-19'), lines: [line(N,234), line(G,216)] },
-  { ref: 'ORD-2025-0028', client: 'Saada Menage', date: new Date('2025-09-03'), lines: [line(N,126)]             },
-  { ref: 'ORD-2025-0029', client: 'Saada Menage', date: new Date('2025-09-08'), lines: [line(N,118)]             },
+  { ref: 'ORD-2025-0027', client: 'Saada Menage', date: new Date('2025-08-19'), lines: [line(N,234), line(G,216), line(GN,120)] },
+  { ref: 'ORD-2025-0028', client: 'Saada Menage', date: new Date('2025-09-03'), lines: [line(N,126), line(GN,120)] },
+  { ref: 'ORD-2025-0029', client: 'Saada Menage', date: new Date('2025-09-08'), lines: [line(N,118), line(GN,120)] },
   { ref: 'ORD-2025-0030', client: 'Saada Menage', date: new Date('2025-09-18'), lines: [line(N,276), line(G,300)] },
-  { ref: 'ORD-2025-0031', client: 'Saada Menage', date: new Date('2025-10-03'), lines: [line(N,132), line(G,120)] },
+  { ref: 'ORD-2025-0031', client: 'Saada Menage', date: new Date('2025-10-03'), lines: [line(N,132), line(G,120), line(GG,186)] },
   { ref: 'ORD-2025-0032', client: 'Saada Menage', date: new Date('2025-10-14'), lines: [line(N,450), line(G,450)] },
-  { ref: 'ORD-2025-0033', client: 'Saada Menage', date: new Date('2025-10-24'), lines: [line(G,300)]             },
-  { ref: 'ORD-2025-0034', client: 'Saada Menage', date: new Date('2025-10-25'), lines: [line(N,300), line(G,222)] },
-  { ref: 'ORD-2025-0035', client: 'Saada Menage', date: new Date('2025-10-27'), lines: [line(N,372), line(G,108)] },
+  { ref: 'ORD-2025-0033', client: 'Saada Menage', date: new Date('2025-10-24'), lines: [line(G,300), line(GN,240)] },
+  { ref: 'ORD-2025-0034', client: 'Saada Menage', date: new Date('2025-10-25'), lines: [line(N,300), line(G,222), line(GG,300)] },
+  { ref: 'ORD-2025-0035', client: 'Saada Menage', date: new Date('2025-10-27'), lines: [line(N,372), line(G,108), line(GN,78), line(GG,228)] },
   { ref: 'ORD-2025-0036', client: 'Saada Menage', date: new Date('2025-11-07'), lines: [line(N,4),   line(G,5)]   },
 
   // ── 2026 ──────────────────────────────────────────────────────
@@ -92,13 +94,13 @@ export const SEED_ORDERS: SeedOrder[] = [
   { ref: 'ORD-2026-0002', client: 'Saada Menage', date: new Date('2026-01-15'), lines: [line(N,600), line(G,474)] },
   { ref: 'ORD-2026-0003', client: 'Saada Menage', date: new Date('2026-01-17'), lines: [line(N,150)]             },
   { ref: 'ORD-2026-0004', client: 'Saada Menage', date: new Date('2026-01-19'), lines: [line(N,540)]             },
-  { ref: 'ORD-2026-0005', client: 'Saada Menage', date: new Date('2026-01-22'), lines: [line(N,180)]             },
+  { ref: 'ORD-2026-0005', client: 'Saada Menage', date: new Date('2026-01-22'), lines: [line(N,180), line(GN,90)] },
   { ref: 'ORD-2026-0006', client: 'Saada Menage', date: new Date('2026-01-29'), lines: [line(N,96)]              },
   { ref: 'ORD-2026-0007', client: 'Saada Menage', date: new Date('2026-01-31'), lines: [line(G,354)]             },
   { ref: 'ORD-2026-0008', client: 'Saada Menage', date: new Date('2026-02-04'), lines: [line(G,246)]             },
-  { ref: 'ORD-2026-0009', client: 'Saada Menage', date: new Date('2026-02-11'), lines: [line(N,633), line(G,618)] },
+  { ref: 'ORD-2026-0009', client: 'Saada Menage', date: new Date('2026-02-11'), lines: [line(N,633), line(G,618), line(GN,29)] },
   { ref: 'ORD-2026-0010', client: 'Saada Menage', date: new Date('2026-02-18'), lines: [line(N,342), line(G,480)] },
-  { ref: 'ORD-2026-0011', client: 'Saada Menage', date: new Date('2026-02-20'), lines: [line(N,3), line(CN,240)]   },
+  { ref: 'ORD-2026-0011', client: 'Saada Menage', date: new Date('2026-02-20'), lines: [line(N,3), line(CN,240), line(GN,5)] },
 
   // ── 2026 — JSM-2104N standalone (3-Piece Frypan Set — Ceramic Black) ─────
   { ref: 'ORD-2026-0012', client: 'Saada Menage', date: new Date('2026-02-12'), lines: [line(CN,500)]  },
@@ -143,7 +145,7 @@ export const SEED_ORDERS: SeedOrder[] = [
   // ── 2025 — JSM-1407N/G ─────────────────────────────────────────
   { ref: 'ORD-2025-0037', client: 'Saada Menage', date: new Date('2025-01-03'), lines: [line(SN,160), line(SG,160)] },
   { ref: 'ORD-2025-0038', client: 'Saada Menage', date: new Date('2025-01-09'), lines: [line(SN,164), line(SG,165)] },
-  { ref: 'ORD-2025-0039', client: 'Saada Menage', date: new Date('2025-05-19'), lines: [line(SN,260), line(SG,260)] },
+  { ref: 'ORD-2025-0039', client: 'Saada Menage', date: new Date('2025-05-19'), lines: [line(SN,260), line(SG,260), line(GN,300), line(GG,300)] },
   { ref: 'ORD-2025-0040', client: 'Saada Menage', date: new Date('2025-05-21'), lines: [line(SN,220), line(SG,220)] },
   { ref: 'ORD-2025-0041', client: 'Saada Menage', date: new Date('2025-05-31'), lines: [line(SN,160), line(SG,96)]  },
   { ref: 'ORD-2025-0042', client: 'Saada Menage', date: new Date('2025-06-20'), lines: [line(SN,60),  line(SG,60)]  },
@@ -158,29 +160,29 @@ export const SEED_ORDERS: SeedOrder[] = [
   { ref: 'ORD-2025-0051', client: 'Saada Menage', date: new Date('2025-10-03'), lines: [line(SN,60),  line(SG,60)]  },
   { ref: 'ORD-2025-0052', client: 'Saada Menage', date: new Date('2025-10-21'), lines: [line(SN,160), line(SG,160)] },
   { ref: 'ORD-2025-0053', client: 'Saada Menage', date: new Date('2025-11-14'), lines: [line(SN,120), line(SG,120)] },
-  { ref: 'ORD-2025-0054', client: 'Saada Menage', date: new Date('2025-11-25'), lines: [line(SN,120), line(SG,120)] },
+  { ref: 'ORD-2025-0054', client: 'Saada Menage', date: new Date('2025-11-25'), lines: [line(SN,120), line(SG,120), line(GN,120), line(GG,120)] },
   { ref: 'ORD-2025-0055', client: 'Saada Menage', date: new Date('2025-12-03'), lines: [line(SN,120), line(SG,120)] },
-  { ref: 'ORD-2025-0056', client: 'Saada Menage', date: new Date('2025-12-17'), lines: [line(SN,80),  line(SG,80)]  },
+  { ref: 'ORD-2025-0056', client: 'Saada Menage', date: new Date('2025-12-17'), lines: [line(SN,80),  line(SG,80), line(GN,90), line(GG,90)] },
 
   // ── 2026 — JSM-1407N/G ─────────────────────────────────────────
-  { ref: 'ORD-2026-0024', client: 'Saada Menage', date: new Date('2026-01-05'), lines: [line(SN,68),   line(SG,92)]   },
-  { ref: 'ORD-2026-0025', client: 'Saada Menage', date: new Date('2026-01-07'), lines: [line(SN,80),   line(SG,80)]   },
+  { ref: 'ORD-2026-0024', client: 'Saada Menage', date: new Date('2026-01-05'), lines: [line(SN,68),   line(SG,92), line(GN,120), line(GG,120)] },
+  { ref: 'ORD-2026-0025', client: 'Saada Menage', date: new Date('2026-01-07'), lines: [line(SN,80),   line(SG,80), line(GN,90), line(GG,24)] },
   { ref: 'ORD-2026-0026', client: 'Saada Menage', date: new Date('2026-01-13'), lines: [line(SN,40),   line(SG,80)]   },
   { ref: 'ORD-2026-0027', client: 'Saada Menage', date: new Date('2026-01-17'), lines: [line(SN,40),   line(SG,40)]   },
   { ref: 'ORD-2026-0028', client: 'Saada Menage', date: new Date('2026-01-19'), lines: [line(SN,40),   line(SG,40)]   },
   { ref: 'ORD-2026-0029', client: 'Saada Menage', date: new Date('2026-01-22'), lines: [line(SN,40),   line(SG,40)]   },
-  { ref: 'ORD-2026-0030', client: 'Saada Menage', date: new Date('2026-01-25'), lines: [line(SN,40),   line(SG,40)]   },
-  { ref: 'ORD-2026-0031', client: 'Saada Menage', date: new Date('2026-01-27'), lines: [line(SN,120),  line(SG,120)]  },
+  { ref: 'ORD-2026-0030', client: 'Saada Menage', date: new Date('2026-01-25'), lines: [line(SN,40),   line(SG,40), line(GN,30)] },
+  { ref: 'ORD-2026-0031', client: 'Saada Menage', date: new Date('2026-01-27'), lines: [line(SN,120),  line(SG,120), line(GN,264)] },
   { ref: 'ORD-2026-0032', client: 'Saada Menage', date: new Date('2026-01-29'), lines: [line(SN,60),   line(SG,60)]   },
   { ref: 'ORD-2026-0033', client: 'Saada Menage', date: new Date('2026-01-31'), lines: [line(SN,60),   line(SG,60)]   },
   { ref: 'ORD-2026-0034', client: 'Saada Menage', date: new Date('2026-02-03'), lines: [line(SN,120),  line(SG,120)]  },
   { ref: 'ORD-2026-0035', client: 'Saada Menage', date: new Date('2026-02-04'), lines: [line(SN,80),   line(SG,80)]   },
   { ref: 'ORD-2026-0036', client: 'Saada Menage', date: new Date('2026-02-06'), lines: [line(SN,60),   line(SG,60)]   },
   { ref: 'ORD-2026-0037', client: 'Saada Menage', date: new Date('2026-02-13'), lines: [line(SN,136),  line(SG,140), line(CN,500)] },
-  { ref: 'ORD-2026-0038', client: 'Saada Menage', date: new Date('2026-02-16'), lines: [line(SN,108)]                },
+  { ref: 'ORD-2026-0038', client: 'Saada Menage', date: new Date('2026-02-16'), lines: [line(SN,108), line(GN,264), line(GG,288)] },
   { ref: 'ORD-2026-0039', client: 'Bim',          date: new Date('2026-04-24'), lines: [line(SN,2000), line(SG,2000)] },
   { ref: 'ORD-2026-0040', client: 'Saada Menage', date: new Date('2026-04-28'), lines: [line(SN,100),  line(SG,100)]  },
-  { ref: 'ORD-2026-0041', client: 'Saada Menage', date: new Date('2026-05-05'), lines: [line(SN,32), line(SG,192), line(SCN,160), line(CN,620)] },
+  { ref: 'ORD-2026-0041', client: 'Saada Menage', date: new Date('2026-05-05'), lines: [line(SN,32), line(SG,192), line(SCN,160), line(CN,620), line(GG,330)] },
 
   // ── JSM-1406N — 3-Piece Saucepot Set — Ceramic Black ─────────────
   { ref: 'ORD-2026-0042', client: 'Saada Menage', date: new Date('2026-02-25'), lines: [line(SCN,160)] },
@@ -189,5 +191,13 @@ export const SEED_ORDERS: SeedOrder[] = [
   { ref: 'ORD-2026-0045', client: 'Saada Menage', date: new Date('2026-03-11'), lines: [line(SCN,208), line(CN,500)]  },
   { ref: 'ORD-2026-0046', client: 'Saada Menage', date: new Date('2026-03-16'), lines: [line(SCN,240), line(CN,500)]  },
   { ref: 'ORD-2026-0047', client: 'Saada Menage', date: new Date('2026-03-31'), lines: [line(SCN,800), line(CN,1000)] },
-  { ref: 'ORD-2026-0048', client: 'Saada Menage', date: new Date('2026-05-06'), lines: [line(SCN,240)] },
+  { ref: 'ORD-2026-0048', client: 'Saada Menage', date: new Date('2026-05-06'), lines: [line(SCN,240), line(GG,132)] },
+
+  // ── JSM-1408N/G — 3-Piece Saucepot Set — Granite (standalone) ───
+  { ref: 'ORD-2025-0057', client: 'Saada Menage', date: new Date('2025-01-13'), lines: [line(GN,120), line(GG,120)] },
+  { ref: 'ORD-2025-0058', client: 'Saada Menage', date: new Date('2025-01-23'), lines: [line(GN,180), line(GG,180)] },
+  { ref: 'ORD-2025-0059', client: 'Saada Menage', date: new Date('2025-04-19'), lines: [line(GG,210)] },
+  { ref: 'ORD-2025-0060', client: 'Saada Menage', date: new Date('2025-09-25'), lines: [line(GG,90)]  },
+  { ref: 'ORD-2025-0061', client: 'Saada Menage', date: new Date('2025-11-03'), lines: [line(GN,450), line(GG,330)] },
+  { ref: 'ORD-2025-0062', client: 'Saada Menage', date: new Date('2025-11-21'), lines: [line(GN,48),  line(GG,48)]  },
 ];
