@@ -13,6 +13,7 @@ const GROUPS = [
   { key: 'ceramic-frypan',   label: 'Frypan — Ceramic',   color: '#06b6d4', match: (n: string) => n.includes('Frypan')   && n.includes('Ceramic') },
   { key: 'granite-saucepot', label: 'Saucepot — Granite', color: '#f97316', match: (n: string) => n.includes('Saucepot') && n.includes('Granite') },
   { key: 'ceramic-saucepot', label: 'Saucepot — Ceramic', color: '#8b5cf6', match: (n: string) => n.includes('Saucepot') && n.includes('Ceramic') },
+  { key: 'marmite-granite',  label: 'Marmite — Granite',  color: '#10b981', match: (n: string) => n.includes('Marmite') },
 ] as const;
 
 type GroupKey = typeof GROUPS[number]['key'];
@@ -62,6 +63,7 @@ function buildChartData(orders: SalesOrder[], year: number | null): ChartRow[] {
     'ceramic-frypan': 0,
     'granite-saucepot': 0,
     'ceramic-saucepot': 0,
+    'marmite-granite': 0,
   }));
   const idx = Object.fromEntries(yms.map((ym, i) => [ym, i]));
 
