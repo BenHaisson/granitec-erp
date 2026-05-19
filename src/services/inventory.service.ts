@@ -47,3 +47,44 @@ export const getMovements = async (): Promise<InventoryMovement[]> => {
   const snap = await getDocs(collection(db, 'inventory_movements'));
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as InventoryMovement));
 };
+
+export const seedDiscHistory = async (
+  products: Omit<Product, 'id'>[],
+  entries: { productSku: string; ref: string; date: Date; qty: number }[]
+): Promise<void> => {
+  const CHUNK = 400;
+  const prodBatch = writeBatch(db);
+  products.forEach(p => prodBatch.set(doc(db, 'products', p.sku), p));
+  await prodBatch.commit();
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    entries.slice(i, i + CHUNK).forEach(e => {
+      batch.set(doc(collection(db, 'inventory_movements')), {
+        productId: e.productSku,
+        quantity: e.qty,
+        reason: 'PURCHASE',
+        note: e.ref,
+        createdAt: Timestamp.fromDate(e.date),
+      });
+    });
+    await batch.commit();
+  }
+};
+
+export const deleteDiscHistory = async (): Promise<void> => {
+  const [prodSnap, movSnap] = await Promise.all([
+    getDocs(collection(db, 'products')),
+    getDocs(collection(db, 'inventory_movements')),
+  ]);
+  const rawIds = new Set(prodSnap.docs.filter(d => d.data().type === 'RAW').map(d => d.id));
+  const toDelete = [
+    ...prodSnap.docs.filter(d => rawIds.has(d.id)),
+    ...movSnap.docs.filter(d => rawIds.has(d.data().productId as string)),
+  ];
+  const CHUNK = 400;
+  for (let i = 0; i < toDelete.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    toDelete.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+};

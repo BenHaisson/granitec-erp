@@ -1,26 +1,36 @@
 import { useEffect, useState } from 'react';
-import { Database, AlertTriangle, ShoppingBag } from 'lucide-react';
-import { getProducts, upsertProduct, deleteAllProducts } from '@/services/inventory.service';
+import { Database, AlertTriangle, ShoppingBag, Layers } from 'lucide-react';
+import { getProducts, upsertProduct, deleteAllProducts, seedDiscHistory, deleteDiscHistory } from '@/services/inventory.service';
 import { getOrders, seedHistoricalOrders, deleteAllOrders } from '@/services/orders.service';
 import { SEED_PRODUCTS } from '@/data/seedProducts';
 import { SEED_ORDERS } from '@/data/seedOrders';
+import { DISC_PRODUCTS, DISC_MOVEMENTS } from '@/data/seedDiscs';
 
 const isLive = import.meta.env.VITE_APP_MODE === 'live';
 
 export default function SettingsPage() {
   const [productCount, setProductCount] = useState<number | null>(null);
   const [orderCount, setOrderCount] = useState<number | null>(null);
+  const [discCount, setDiscCount] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [ordersRunning, setOrdersRunning] = useState(false);
+  const [discRunning, setDiscRunning] = useState(false);
   const [status, setStatus] = useState<'idle' | 'done' | 'error'>('idle');
   const [ordersStatus, setOrdersStatus] = useState<'idle' | 'done' | 'error'>('idle');
+  const [discStatus, setDiscStatus] = useState<'idle' | 'done' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const [ordersMessage, setOrdersMessage] = useState('');
+  const [discMessage, setDiscMessage] = useState('');
 
-  useEffect(() => {
-    getProducts().then(p => setProductCount(p.length));
+  const refreshCounts = () => {
+    getProducts().then(p => {
+      setProductCount(p.filter(x => x.type === 'FINISHED').length);
+      setDiscCount(p.filter(x => x.type === 'RAW').length);
+    });
     getOrders().then(o => setOrderCount(o.length));
-  }, []);
+  };
+
+  useEffect(() => { refreshCounts(); }, []);
 
   const handleReseed = async () => {
     const action = productCount === 0 ? 'Import' : `Delete all ${productCount} products and re-import`;
@@ -30,7 +40,7 @@ export default function SettingsPage() {
     try {
       if (productCount !== 0) await deleteAllProducts();
       for (const p of SEED_PRODUCTS) await upsertProduct(p);
-      setProductCount(SEED_PRODUCTS.length);
+      refreshCounts();
       setStatus('done');
       setMessage(`${SEED_PRODUCTS.length} products imported successfully.`);
     } catch {
@@ -41,14 +51,47 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSeedDiscs = async () => {
+    if (!confirm(`Import ${DISC_PRODUCTS.length} disc products and ${DISC_MOVEMENTS.length} shipping entries? This will overwrite existing disc data.`)) return;
+    setDiscRunning(true);
+    setDiscStatus('idle');
+    try {
+      await seedDiscHistory(DISC_PRODUCTS, DISC_MOVEMENTS);
+      refreshCounts();
+      setDiscStatus('done');
+      setDiscMessage(`${DISC_PRODUCTS.length} disc products and ${DISC_MOVEMENTS.length} movements imported.`);
+    } catch {
+      setDiscStatus('error');
+      setDiscMessage('Failed to import disc history. Check Firestore rules.');
+    } finally {
+      setDiscRunning(false);
+    }
+  };
+
+  const handleDeleteDiscs = async () => {
+    if (!confirm(`Delete all ${discCount} disc products and their movement history? This cannot be undone.`)) return;
+    setDiscRunning(true);
+    setDiscStatus('idle');
+    try {
+      await deleteDiscHistory();
+      refreshCounts();
+      setDiscStatus('done');
+      setDiscMessage('All disc data deleted.');
+    } catch {
+      setDiscStatus('error');
+      setDiscMessage('Failed to delete disc data.');
+    } finally {
+      setDiscRunning(false);
+    }
+  };
+
   const handleSeedOrders = async () => {
     if (!confirm(`Import ${SEED_ORDERS.length} historical orders? This will add them on top of existing orders.`)) return;
     setOrdersRunning(true);
     setOrdersStatus('idle');
     try {
       await seedHistoricalOrders(SEED_ORDERS);
-      const updated = await getOrders();
-      setOrderCount(updated.length);
+      refreshCounts();
       setOrdersStatus('done');
       setOrdersMessage(`${SEED_ORDERS.length} historical orders imported.`);
     } catch {
@@ -65,7 +108,7 @@ export default function SettingsPage() {
     setOrdersStatus('idle');
     try {
       await deleteAllOrders();
-      setOrderCount(0);
+      refreshCounts();
       setOrdersStatus('done');
       setOrdersMessage('All orders deleted.');
     } catch {
@@ -76,9 +119,10 @@ export default function SettingsPage() {
     }
   };
 
-  const hasProducts = productCount !== null && productCount > 0;
+  const hasProducts  = productCount !== null && productCount > 0;
   const isDuplicated = productCount !== null && productCount > SEED_PRODUCTS.length;
-  const hasOrders = orderCount !== null && orderCount > 0;
+  const hasOrders    = orderCount !== null && orderCount > 0;
+  const hasDiscs     = discCount !== null && discCount > 0;
 
   return (
     <div className="space-y-6">
@@ -129,6 +173,49 @@ export default function SettingsPage() {
         )}
         {!isLive && status === 'error' && (
           <p className="mt-4 text-red-600 text-sm">{message}</p>
+        )}
+      </div>
+
+      {/* Disc inventory */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center shrink-0">
+              <Layers size={20} className="text-indigo-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Disc Inventory</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {discCount === null
+                  ? 'Loading...'
+                  : `${discCount} disc products in Firestore · Catalog has ${DISC_PRODUCTS.length} references · ${DISC_MOVEMENTS.length} shipping entries`}
+              </p>
+            </div>
+          </div>
+          {!isLive && (
+            <div className="flex gap-2 shrink-0">
+              <button
+                onClick={handleSeedDiscs}
+                disabled={discRunning || discCount === null}
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-indigo-600 text-white hover:bg-indigo-700">
+                {discRunning ? 'Importing…' : 'Import Disc History'}
+              </button>
+              {hasDiscs && (
+                <button
+                  onClick={handleDeleteDiscs}
+                  disabled={discRunning}
+                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">
+                  Delete disc data
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        {!isLive && discStatus === 'done' && (
+          <p className="mt-4 text-green-600 text-sm">{discMessage}</p>
+        )}
+        {!isLive && discStatus === 'error' && (
+          <p className="mt-4 text-red-600 text-sm">{discMessage}</p>
         )}
       </div>
 
