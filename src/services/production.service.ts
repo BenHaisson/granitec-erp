@@ -1,5 +1,5 @@
 import {
-  collection, addDoc, getDocs, doc, runTransaction, Timestamp,
+  collection, addDoc, getDocs, doc, runTransaction, Timestamp, setDoc,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { ProductionOrder, Recipe } from '@/types';
@@ -30,6 +30,16 @@ export const checkFeasibility = async (recipeId: string, quantity: number) => {
     if (have < need) shortfalls.push({ productId: comp.productId, need, have });
   }
   return { feasible: shortfalls.length === 0, shortfalls };
+};
+
+export const createRecipe = async (recipe: Omit<Recipe, 'id'>): Promise<string> => {
+  const ref = await addDoc(collection(db, 'recipes'), recipe);
+  return ref.id;
+};
+
+export const updateRecipe = async (recipe: Recipe): Promise<void> => {
+  const { id, ...data } = recipe;
+  await setDoc(doc(db, 'recipes', id), data);
 };
 
 export const createProductionOrder = (recipeId: string, quantity: number) =>
