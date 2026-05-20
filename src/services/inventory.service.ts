@@ -28,6 +28,47 @@ export const deleteAllProducts = async () => {
 
 export const deleteProduct = (id: string) => deleteDoc(doc(db, 'products', id));
 
+export const deleteAllAccessories = async () => {
+  const snap = await getDocs(collection(db, 'products'));
+  const toDelete = snap.docs.filter(d => d.data().category === 'Accessories');
+  const BATCH_SIZE = 400;
+  for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
+    const batch = writeBatch(db);
+    toDelete.slice(i, i + BATCH_SIZE).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+};
+
+export const receiveSupplyBatch = async (
+  lines: { productId: string; qty: number }[],
+  ref: string,
+  date: Date
+): Promise<void> => {
+  // Update each product's stock level atomically, then write all movement records
+  for (const line of lines) {
+    await runTransaction(db, async (tx) => {
+      const prodRef = doc(db, 'products', line.productId);
+      const snap = await tx.get(prodRef);
+      if (!snap.exists()) return;
+      tx.update(prodRef, { stock_level: (snap.data().stock_level as number) + line.qty });
+    });
+  }
+  const CHUNK = 400;
+  for (let i = 0; i < lines.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    lines.slice(i, i + CHUNK).forEach(line => {
+      batch.set(doc(collection(db, 'inventory_movements')), {
+        productId: line.productId,
+        quantity: line.qty,
+        reason: 'PURCHASE',
+        note: ref,
+        createdAt: Timestamp.fromDate(date),
+      });
+    });
+    await batch.commit();
+  }
+};
+
 export const updateProduct = (id: string, patch: Partial<import('@/types').Product>) =>
   updateDoc(doc(db, 'products', id), patch as Record<string, unknown>);
 

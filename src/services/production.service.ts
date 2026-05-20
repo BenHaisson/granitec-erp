@@ -1,5 +1,5 @@
 import {
-  collection, addDoc, getDocs, doc, runTransaction, Timestamp, setDoc, deleteDoc,
+  collection, addDoc, getDocs, doc, runTransaction, Timestamp, setDoc, deleteDoc, updateDoc,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { ProductionOrder, Recipe } from '@/types';
@@ -52,6 +52,9 @@ export const createProductionOrder = (recipeId: string, quantity: number) =>
     createdAt: Timestamp.now(),
     updatedAt: Timestamp.now(),
   });
+
+export const startProductionOrder = (orderId: string) =>
+  updateDoc(doc(db, 'production_orders', orderId), { status: 'IN_PROGRESS', updatedAt: Timestamp.now() });
 
 export const validateAndCompleteProduction = async (orderId: string) => {
   await runTransaction(db, async (tx) => {

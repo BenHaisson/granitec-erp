@@ -1,11 +1,12 @@
 import { useEffect, useState, type ElementType } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Package, AlertTriangle, Factory, ShoppingCart,
   TrendingUp, Layers, BarChart3, ArrowUpRight,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer,
+  Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
 import { getProducts, getMovements } from '@/services/inventory.service';
 import { getProductionOrders } from '@/services/production.service';
@@ -19,18 +20,24 @@ interface StatCardProps {
   label: string;
   value: string | number;
   icon: ElementType;
-  color: string;
+  gradient: string;
+  shadow: string;
   sub?: string;
   trend?: { value: string; positive: boolean };
+  href?: string;
 }
 
-function StatCard({ label, value, icon: Icon, color, sub, trend }: StatCardProps) {
+function StatCard({ label, value, icon: Icon, gradient, shadow, sub, trend, href }: StatCardProps) {
+  const navigate = useNavigate();
   return (
-    <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100 flex flex-col gap-3">
+    <div
+      onClick={href ? () => navigate(href) : undefined}
+      className={`bg-white rounded-xl p-5 shadow-sm border border-slate-100 flex flex-col gap-3 ${href ? 'cursor-pointer hover:shadow-md hover:border-slate-200 transition-all' : ''}`}
+    >
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</span>
-        <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${color}`}>
-          <Icon size={18} className="text-white" />
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center bg-linear-to-br ${gradient} shadow-md ${shadow}`}>
+          <Icon size={20} className="text-white" />
         </div>
       </div>
       <div>
@@ -81,6 +88,8 @@ function buildRecentMonths(orders: SalesOrder[], n = 6) {
   });
 }
 
+const today = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
 export default function DashboardPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<ProductionOrder[]>([]);
@@ -105,15 +114,14 @@ export default function DashboardPage() {
   const totalRevenue    = sales.reduce((sum, s) => sum + (s.totalAmount ?? 0), 0);
   const totalDiscStock  = rawMaterials.reduce((s, p) => s + p.stock_level, 0);
 
-  // Recent supply receipts (last 5 PURCHASE movements)
   const recentSupply = [...movements]
     .filter(m => m.reason === 'PURCHASE')
     .sort((a, b) => tsToDate(b.createdAt).getTime() - tsToDate(a.createdAt).getTime())
     .slice(0, 5);
 
   const productMap = Object.fromEntries(products.map(p => [p.id, p]));
-
   const monthlyData = buildRecentMonths(salesOrders);
+  const maxPcs = Math.max(...monthlyData.map(d => d.pcs), 1);
 
   if (loading) {
     return (
@@ -128,92 +136,127 @@ export default function DashboardPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
-        <p className="text-slate-500 text-sm mt-1">Factory overview</p>
+        <p className="text-slate-400 text-sm mt-0.5 capitalize">{today}</p>
       </div>
 
-      {/* KPI grid */}
+      {/* KPI grid — row 1 */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard
           label="Finished Goods"
           value={finishedGoods.length}
           icon={Package}
-          color="bg-blue-500"
+          gradient="from-blue-400 to-blue-600"
+          shadow="shadow-blue-500/30"
           sub={`${finishedGoods.filter(p => p.stock_level > 0).length} with stock`}
+          href="/warehouse"
         />
         <StatCard
           label="Raw Materials"
           value={rawMaterials.length}
           icon={Layers}
-          color="bg-indigo-500"
+          gradient="from-indigo-400 to-indigo-600"
+          shadow="shadow-indigo-500/30"
           sub={`${totalDiscStock.toLocaleString('fr-FR')} pcs total`}
+          href="/inventory"
         />
         <StatCard
           label="Stock Alerts"
           value={lowStock.length + emptyStock.length}
           icon={AlertTriangle}
-          color={lowStock.length + emptyStock.length > 0 ? 'bg-red-500' : 'bg-green-500'}
+          gradient={lowStock.length + emptyStock.length > 0 ? 'from-red-400 to-red-600' : 'from-emerald-400 to-emerald-600'}
+          shadow={lowStock.length + emptyStock.length > 0 ? 'shadow-red-500/30' : 'shadow-emerald-500/30'}
           sub={`${emptyStock.length} empty · ${lowStock.length} low`}
+          href="/inventory"
         />
         <StatCard
           label="Active Orders"
           value={activeOrders.length}
           icon={Factory}
-          color="bg-purple-500"
+          gradient="from-purple-400 to-purple-600"
+          shadow="shadow-purple-500/30"
           sub="production in progress"
+          href="/production"
         />
       </div>
 
+      {/* KPI grid — row 2 */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard
           label="Total Revenue"
           value={`${totalRevenue.toLocaleString('fr-FR')} DH`}
           icon={ShoppingCart}
-          color="bg-emerald-500"
+          gradient="from-emerald-400 to-emerald-600"
+          shadow="shadow-emerald-500/30"
           sub={`${sales.length} sales`}
         />
         <StatCard
           label="Sales Orders"
           value={salesOrders.length}
           icon={BarChart3}
-          color="bg-cyan-500"
+          gradient="from-cyan-400 to-cyan-600"
+          shadow="shadow-cyan-500/30"
           sub="all time"
+          href="/sales"
         />
         <StatCard
           label="Supply Receipts"
           value={movements.filter(m => m.reason === 'PURCHASE').length}
           icon={TrendingUp}
-          color="bg-amber-500"
+          gradient="from-amber-400 to-amber-600"
+          shadow="shadow-amber-500/30"
           sub="purchase movements"
+          href="/inventory"
         />
         <StatCard
           label="Completed Orders"
           value={orders.filter(o => o.status === 'COMPLETED').length}
           icon={Factory}
-          color="bg-slate-600"
+          gradient="from-slate-500 to-slate-700"
+          shadow="shadow-slate-500/20"
           sub="production done"
+          href="/production"
         />
       </div>
 
-      {/* Chart + lists row */}
+      {/* Chart + alerts row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Mini sales chart */}
+        {/* Sales chart */}
         <div className="lg:col-span-2 bg-white rounded-xl p-5 shadow-sm border border-slate-100">
-          <h2 className="text-sm font-semibold text-slate-700 mb-4">Sales — Last 6 Months (pcs)</h2>
+          <div className="flex items-center gap-2 mb-4">
+            <BarChart3 size={15} className="text-blue-500" />
+            <h2 className="text-sm font-semibold text-slate-700">Sales — Last 6 Months (pcs)</h2>
+          </div>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={monthlyData} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
+              <defs>
+                <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#60a5fa" />
+                  <stop offset="100%" stopColor="#2563eb" />
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} />
               <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false}
                 tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
               <Tooltip content={<MiniTooltip />} cursor={{ fill: '#f8fafc' }} />
-              <Bar dataKey="pcs" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="pcs" radius={[6, 6, 0, 0]}>
+                {monthlyData.map((entry, i) => (
+                  <Cell
+                    key={i}
+                    fill={entry.pcs === maxPcs ? 'url(#barGradient)' : '#bfdbfe'}
+                  />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Low stock */}
+        {/* Stock alerts */}
         <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
-          <h2 className="text-sm font-semibold text-slate-700 mb-4">Stock Alerts</h2>
+          <div className="flex items-center gap-2 mb-4">
+            <AlertTriangle size={15} className="text-red-400" />
+            <h2 className="text-sm font-semibold text-slate-700">Stock Alerts</h2>
+          </div>
           {lowStock.length + emptyStock.length === 0 ? (
             <p className="text-slate-400 text-sm">All products are sufficiently stocked.</p>
           ) : (
@@ -241,7 +284,10 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Active production orders */}
         <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
-          <h2 className="text-sm font-semibold text-slate-700 mb-4">Production Orders</h2>
+          <div className="flex items-center gap-2 mb-4">
+            <Factory size={15} className="text-purple-500" />
+            <h2 className="text-sm font-semibold text-slate-700">Production Orders</h2>
+          </div>
           {activeOrders.length === 0 ? (
             <p className="text-slate-400 text-sm">No active production orders.</p>
           ) : (
@@ -252,7 +298,7 @@ export default function DashboardPage() {
                     <p className="text-sm font-medium text-slate-700">Order #{o.id.slice(0, 8)}</p>
                     <p className="text-xs text-slate-400">Qty: {o.quantity}</p>
                   </div>
-                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
                     o.status === 'IN_PROGRESS'
                       ? 'bg-blue-100 text-blue-700'
                       : 'bg-yellow-100 text-yellow-700'
@@ -267,7 +313,10 @@ export default function DashboardPage() {
 
         {/* Recent supply receipts */}
         <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
-          <h2 className="text-sm font-semibold text-slate-700 mb-4">Recent Supply Receipts</h2>
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp size={15} className="text-amber-500" />
+            <h2 className="text-sm font-semibold text-slate-700">Recent Supply Receipts</h2>
+          </div>
           {recentSupply.length === 0 ? (
             <p className="text-slate-400 text-sm">No supply receipts yet.</p>
           ) : (

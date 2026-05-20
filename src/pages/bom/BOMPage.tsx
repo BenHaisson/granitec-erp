@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
+import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
 import { getRecipes, createRecipe, updateRecipe, deleteRecipe } from '@/services/production.service';
 import { getProducts } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
@@ -64,13 +65,12 @@ function RecipeModal({
         {/* Finished product */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Finished Product</label>
-          <select value={finishedId} onChange={e => setFinishedId(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
-            <option value="">Select a product…</option>
-            {finishedList.map(p => (
-              <option key={p.id} value={p.id}>{p.name} — {p.sku}</option>
-            ))}
-          </select>
+          <ProductPickerDropdown
+            products={finishedList}
+            value={finishedId}
+            onChange={p => setFinishedId(p.id)}
+            placeholder="Select a finished product…"
+          />
         </div>
 
         {/* Components */}
@@ -83,20 +83,21 @@ function RecipeModal({
           )}
           <div className="space-y-2">
             {rows.map((row, i) => (
-              <div key={i} className="flex gap-2 items-center">
-                <select value={row.productId} onChange={e => updateRow(i, { productId: e.target.value })}
-                  className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">Select material…</option>
-                  {rawList.map(p => (
-                    <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>
-                  ))}
-                </select>
+              <div key={i} className="flex gap-2 items-start">
+                <div className="flex-1 min-w-0">
+                  <ProductPickerDropdown
+                    products={rawList}
+                    value={row.productId}
+                    onChange={p => updateRow(i, { productId: p.id })}
+                    placeholder="Select material…"
+                  />
+                </div>
                 <input type="number" min="0.001" step="any" value={row.quantity}
                   onChange={e => updateRow(i, { quantity: Number(e.target.value) })}
-                  className="w-24 px-3 py-2 border border-slate-300 rounded-lg text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  className="w-24 px-3 py-2 border border-slate-300 rounded-lg text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500 shrink-0" />
                 <button type="button" onClick={() => removeRow(i)}
                   disabled={rows.length === 1}
-                  className="p-2 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-30">
+                  className="p-2 mt-0.5 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-30 shrink-0">
                   <Trash2 size={15} />
                 </button>
               </div>

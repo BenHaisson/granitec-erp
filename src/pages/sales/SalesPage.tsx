@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Plus, X, ShoppingBag, Download, Eye, Pencil } from 'lucide-react';
+import { Plus, X, ShoppingBag, Download, Eye, Pencil, FileDown } from 'lucide-react';
 import { getOrders, createOrder, updateOrder, generateOrderRef } from '@/services/orders.service';
 import { getProducts } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
-import type { SalesOrder, SalesOrderLine, Product } from '@/types';
+import type { SalesOrder, SalesOrderLine, Product, PaymentStatus, DeliveryStatus } from '@/types';
 
 // ── Color helpers (mirrors WarehousePage) ────────────────────────
 const COLOR_NAMES = ['Black', 'Gray', 'Cream', 'Blue', 'Red'] as const;
@@ -179,6 +179,204 @@ function downloadInvoice(order: SalesOrder) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+// ── Full Sales Report ─────────────────────────────────────────────
+function downloadSalesReport(orders: SalesOrder[], products: Product[]) {
+  const now = new Date();
+  const sorted = [...orders].sort((a, b) => {
+    const da = a.date instanceof Date ? a.date : new Date(a.date);
+    const db = b.date instanceof Date ? b.date : new Date(b.date);
+    return db.getTime() - da.getTime();
+  });
+
+  const productCatMap = new Map<string, string>();
+  for (const p of products) {
+    productCatMap.set(p.id, p.category ?? 'Other');
+    productCatMap.set(p.sku, p.category ?? 'Other');
+  }
+
+  const allLines = orders.flatMap(o => o.lines);
+  const totalPcs = allLines.reduce((s, l) => s + l.totalQty, 0);
+  const uniqueClients = new Set(orders.map(o => o.client.toLowerCase().trim())).size;
+
+  const dates = orders.map(o => (o.date instanceof Date ? o.date : new Date(o.date)));
+  const minDate = dates.length ? new Date(Math.min(...dates.map(d => d.getTime()))) : null;
+  const maxDate = dates.length ? new Date(Math.max(...dates.map(d => d.getTime()))) : null;
+  const dateRange = minDate && maxDate
+    ? `${minDate.toLocaleDateString('fr-FR')} – ${maxDate.toLocaleDateString('fr-FR')}`
+    : '—';
+
+  const bySku = new Map<string, { name: string; sku: string; cat: string; orders: number; qty: number }>();
+  for (const order of orders) {
+    for (const line of order.lines) {
+      const cat = productCatMap.get(line.productId) ?? productCatMap.get(line.sku) ?? 'Other';
+      if (!bySku.has(line.sku)) bySku.set(line.sku, { name: line.productName, sku: line.sku, cat, orders: 0, qty: 0 });
+      const s = bySku.get(line.sku)!;
+      s.orders++;
+      s.qty += line.totalQty;
+    }
+  }
+  const skuRows = Array.from(bySku.values()).sort((a, b) => b.qty - a.qty);
+
+  const byCat = new Map<string, { orders: number; qty: number }>();
+  for (const s of skuRows) {
+    if (!byCat.has(s.cat)) byCat.set(s.cat, { orders: 0, qty: 0 });
+    byCat.get(s.cat)!.orders += s.orders;
+    byCat.get(s.cat)!.qty += s.qty;
+  }
+  const catRows = Array.from(byCat.entries()).sort((a, b) => b[1].qty - a[1].qty);
+
+  const byYear = new Map<number, { orders: number; qty: number }>();
+  for (const order of orders) {
+    const y = (order.date instanceof Date ? order.date : new Date(order.date)).getFullYear();
+    if (!byYear.has(y)) byYear.set(y, { orders: 0, qty: 0 });
+    byYear.get(y)!.orders++;
+    byYear.get(y)!.qty += order.lines.reduce((s, l) => s + l.totalQty, 0);
+  }
+  const yearRows = Array.from(byYear.entries()).sort((a, b) => b[0] - a[0]);
+
+  const catHtml = catRows.map(([cat, s]) => `<tr>
+    <td>${cat}</td>
+    <td class="num">${s.orders.toLocaleString('fr-FR')}</td>
+    <td class="num">${s.qty.toLocaleString('fr-FR')}</td>
+    <td class="num">${totalPcs > 0 ? ((s.qty / totalPcs) * 100).toFixed(1) : 0}%</td>
+  </tr>`).join('');
+
+  const yearHtml = yearRows.map(([y, s]) => `<tr>
+    <td>${y}</td>
+    <td class="num">${s.orders.toLocaleString('fr-FR')}</td>
+    <td class="num">${s.qty.toLocaleString('fr-FR')}</td>
+  </tr>`).join('');
+
+  const skuHtml = skuRows.map((s, i) => `<tr>
+    <td>${i + 1}</td>
+    <td>${s.name}</td>
+    <td class="mono">${s.sku}</td>
+    <td>${s.cat}</td>
+    <td class="num">${s.orders.toLocaleString('fr-FR')}</td>
+    <td class="num">${s.qty.toLocaleString('fr-FR')}</td>
+    <td class="num">${totalPcs > 0 ? ((s.qty / totalPcs) * 100).toFixed(1) : 0}%</td>
+  </tr>`).join('');
+
+  const ordersHtml = sorted.map(order => {
+    const d = order.date instanceof Date ? order.date : new Date(order.date);
+    const qty = order.lines.reduce((s, l) => s + l.totalQty, 0);
+    return `<tr>
+      <td class="mono" style="white-space:nowrap">${d.toLocaleDateString('fr-FR')}</td>
+      <td class="mono">${order.ref}</td>
+      <td>${order.client}</td>
+      <td style="font-size:11px;color:#666">${order.lines.map(l => l.sku).join(', ')}</td>
+      <td class="num">${order.lines.length}</td>
+      <td class="num">${qty.toLocaleString('fr-FR')}</td>
+    </tr>`;
+  }).join('');
+
+  const css = `
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1a1a2e;padding:40px 60px;font-size:13px}
+    .rh{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;padding-bottom:24px;border-bottom:3px solid #1a1a2e}
+    .brand{font-size:32px;font-weight:900;letter-spacing:3px}.brand span{color:#e63946}
+    .rm{text-align:right}.rm .title{font-size:18px;font-weight:700;margin-bottom:6px}.rm .sub{color:#888;font-size:12px;margin-top:2px}
+    .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:40px}
+    .kpi-box{background:#f7f8fc;border:1px solid #e8eaf0;border-radius:8px;padding:16px}
+    .kpi-box .lbl{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#888;margin-bottom:6px}
+    .kpi-box .val{font-size:22px;font-weight:800;color:#1a1a2e}
+    .sec{margin-bottom:40px}
+    .sec-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#888;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #e8eaf0;display:flex;align-items:center;gap:8px}
+    .acc{display:inline-block;width:4px;height:14px;background:#e63946;border-radius:2px;flex-shrink:0}
+    table{width:100%;border-collapse:collapse;font-size:12px}
+    thead tr{background:#1a1a2e;color:#fff}
+    thead th{padding:9px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+    thead th.r{text-align:right}
+    tbody tr:nth-child(even){background:#f7f8fc}
+    tbody td{padding:9px 12px;border-bottom:1px solid #eee;vertical-align:middle}
+    td.mono{font-family:monospace;font-size:11px;color:#555}
+    td.num{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+    tfoot tr{background:#1a1a2e;color:#fff}
+    tfoot td{padding:10px 12px;font-weight:700}
+    tfoot td.num{text-align:right}
+    .foot{margin-top:60px;padding-top:16px;border-top:1px solid #e8eaf0;text-align:center;font-size:10px;color:#bbb}
+    @media print{body{padding:20px 40px}}@page{margin:1cm}`;
+
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+<title>Granitec — Sales Report ${now.toISOString().slice(0,10)}</title>
+<style>${css}</style></head><body>
+<div class="rh">
+  <div class="brand">GRANITE<span>C</span></div>
+  <div class="rm">
+    <div class="title">Sales Activity Report</div>
+    <div class="sub">Période : ${dateRange}</div>
+    <div class="sub">Généré le ${now.toLocaleDateString('fr-FR', { day:'2-digit', month:'long', year:'numeric' })}</div>
+  </div>
+</div>
+<div class="kpi">
+  <div class="kpi-box"><div class="lbl">Total Orders</div><div class="val">${orders.length.toLocaleString('fr-FR')}</div></div>
+  <div class="kpi-box"><div class="lbl">Total Pieces</div><div class="val">${totalPcs.toLocaleString('fr-FR')}</div></div>
+  <div class="kpi-box"><div class="lbl">Unique Clients</div><div class="val">${uniqueClients.toLocaleString('fr-FR')}</div></div>
+  <div class="kpi-box"><div class="lbl">Product References</div><div class="val">${skuRows.length.toLocaleString('fr-FR')}</div></div>
+</div>
+<div class="sec">
+  <div class="sec-title"><span class="acc"></span>Output by Category</div>
+  <table>
+    <thead><tr><th>Category</th><th class="r">Orders</th><th class="r">Total Pieces</th><th class="r">% of Total</th></tr></thead>
+    <tbody>${catHtml}</tbody>
+    <tfoot><tr><td>TOTAL</td><td class="num">${orders.length.toLocaleString('fr-FR')}</td><td class="num">${totalPcs.toLocaleString('fr-FR')}</td><td class="num">100%</td></tr></tfoot>
+  </table>
+</div>
+<div class="sec">
+  <div class="sec-title"><span class="acc"></span>Sales by Year</div>
+  <table>
+    <thead><tr><th>Year</th><th class="r">Orders</th><th class="r">Total Pieces</th></tr></thead>
+    <tbody>${yearHtml}</tbody>
+  </table>
+</div>
+<div class="sec">
+  <div class="sec-title"><span class="acc"></span>Product Summary — ${skuRows.length} references</div>
+  <table>
+    <thead><tr><th>#</th><th>Product</th><th>SKU</th><th>Category</th><th class="r">Orders</th><th class="r">Total Pieces</th><th class="r">Share</th></tr></thead>
+    <tbody>${skuHtml}</tbody>
+  </table>
+</div>
+<div class="sec">
+  <div class="sec-title"><span class="acc"></span>All Sales Orders — Full Detail (${sorted.length} orders)</div>
+  <table>
+    <thead><tr><th>Date</th><th>Ref</th><th>Client</th><th>Products (SKU)</th><th class="r">Lines</th><th class="r">Total Pcs</th></tr></thead>
+    <tbody>${ordersHtml}</tbody>
+    <tfoot><tr><td colspan="5">TOTAL</td><td class="num">${totalPcs.toLocaleString('fr-FR')}</td></tr></tfoot>
+  </table>
+</div>
+<div class="foot">Confidentiel — Document généré par Granitec ERP · ${now.toLocaleDateString('fr-FR')} · Granitec</div>
+</body></html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `granitec_sales_report_${now.toISOString().slice(0, 10)}.html`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Status badge helpers ──────────────────────────────────────────
+const PAYMENT_LABELS: Record<PaymentStatus, string> = { unpaid: 'Unpaid', partial: 'Partial', paid: 'Paid' };
+const DELIVERY_LABELS: Record<DeliveryStatus, string> = { pending: 'Pending', shipped: 'Shipped', delivered: 'Delivered' };
+
+const PAYMENT_STYLE: Record<PaymentStatus, string> = {
+  unpaid:  'bg-red-100 text-red-700 hover:bg-red-200',
+  partial: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200',
+  paid:    'bg-green-100 text-green-700 hover:bg-green-200',
+};
+const DELIVERY_STYLE: Record<DeliveryStatus, string> = {
+  pending:   'bg-slate-100 text-slate-600 hover:bg-slate-200',
+  shipped:   'bg-blue-100 text-blue-700 hover:bg-blue-200',
+  delivered: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200',
+};
+
+const PAYMENT_CYCLE: PaymentStatus[] = ['unpaid', 'partial', 'paid'];
+const DELIVERY_CYCLE: DeliveryStatus[] = ['pending', 'shipped', 'delivered'];
+
+function nextPayment(s?: PaymentStatus): PaymentStatus { const i = PAYMENT_CYCLE.indexOf(s ?? 'unpaid'); return PAYMENT_CYCLE[(i + 1) % 3]; }
+function nextDelivery(s?: DeliveryStatus): DeliveryStatus { const i = DELIVERY_CYCLE.indexOf(s ?? 'pending'); return DELIVERY_CYCLE[(i + 1) % 3]; }
 
 // ── Product picker (categories accordion) ────────────────────────
 const CATEGORY_ORDER = ['Sets & Packs', 'Marmite', 'Crepe & Specialty', 'Frypans', 'Saucepots', 'Cake & Molds'];
@@ -678,14 +876,28 @@ export default function SalesPage() {
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}
+              {filterBase ? ` · filtered by "${filterBase}"` : ''}
+            </span>
+            <button
+              onClick={() => downloadSalesReport(orders, products)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-medium hover:bg-slate-700 transition-colors"
+            >
+              <FileDown size={13} /> Download Report
+            </button>
+          </div>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-100 text-left text-xs text-slate-400 uppercase tracking-wide bg-slate-50">
+              <tr className="border-b border-slate-100 text-left text-xs text-slate-400 uppercase tracking-wide bg-white">
                 <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">Ref</th>
                 <th className="px-4 py-3">Client</th>
                 <th className="px-4 py-3">Products</th>
                 <th className="px-4 py-3 text-right">Total pcs</th>
+                <th className="px-4 py-3">Payment</th>
+                <th className="px-4 py-3">Delivery</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
@@ -704,6 +916,24 @@ export default function SalesPage() {
                       {order.lines.map(l => l.sku).join(', ')}
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-800 tabular-nums">{totalQty}</td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => updateOrder({ ...order, paymentStatus: nextPayment(order.paymentStatus) }).then(load)}
+                        className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${PAYMENT_STYLE[order.paymentStatus ?? 'unpaid']}`}
+                        title="Click to cycle status"
+                      >
+                        {PAYMENT_LABELS[order.paymentStatus ?? 'unpaid']}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => updateOrder({ ...order, deliveryStatus: nextDelivery(order.deliveryStatus) }).then(load)}
+                        className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${DELIVERY_STYLE[order.deliveryStatus ?? 'pending']}`}
+                        title="Click to cycle status"
+                      >
+                        {DELIVERY_LABELS[order.deliveryStatus ?? 'pending']}
+                      </button>
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end">
                         <button onClick={() => setDetail(order)}

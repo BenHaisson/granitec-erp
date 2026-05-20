@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Database, AlertTriangle, ShoppingBag, Layers } from 'lucide-react';
-import { getProducts, upsertProduct, deleteAllProducts, seedDiscHistory, deleteDiscHistory } from '@/services/inventory.service';
+import { Database, AlertTriangle, ShoppingBag, Layers, Wrench } from 'lucide-react';
+import { getProducts, upsertProduct, deleteAllProducts, seedDiscHistory, deleteDiscHistory, deleteAllAccessories } from '@/services/inventory.service';
 import { getOrders, seedHistoricalOrders, deleteAllOrders } from '@/services/orders.service';
 import { SEED_PRODUCTS } from '@/data/seedProducts';
 import { SEED_ORDERS } from '@/data/seedOrders';
 import { DISC_PRODUCTS, DISC_MOVEMENTS } from '@/data/seedDiscs';
+import { ACCESSORIES } from '@/data/seedAccessories';
 
 const isLive = import.meta.env.VITE_APP_MODE === 'live';
 
@@ -15,17 +16,22 @@ export default function SettingsPage() {
   const [running, setRunning] = useState(false);
   const [ordersRunning, setOrdersRunning] = useState(false);
   const [discRunning, setDiscRunning] = useState(false);
+  const [accRunning, setAccRunning] = useState(false);
   const [status, setStatus] = useState<'idle' | 'done' | 'error'>('idle');
   const [ordersStatus, setOrdersStatus] = useState<'idle' | 'done' | 'error'>('idle');
   const [discStatus, setDiscStatus] = useState<'idle' | 'done' | 'error'>('idle');
+  const [accStatus, setAccStatus] = useState<'idle' | 'done' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const [ordersMessage, setOrdersMessage] = useState('');
   const [discMessage, setDiscMessage] = useState('');
+  const [accMessage, setAccMessage] = useState('');
+  const [accCount, setAccCount] = useState<number | null>(null);
 
   const refreshCounts = () => {
     getProducts().then(p => {
       setProductCount(p.filter(x => x.type === 'FINISHED').length);
-      setDiscCount(p.filter(x => x.type === 'RAW').length);
+      setDiscCount(p.filter(x => x.type === 'RAW' && x.category !== 'Accessories').length);
+      setAccCount(p.filter(x => x.type === 'RAW' && x.category === 'Accessories').length);
     });
     getOrders().then(o => setOrderCount(o.length));
   };
@@ -116,6 +122,41 @@ export default function SettingsPage() {
       setOrdersMessage('Failed to delete orders.');
     } finally {
       setOrdersRunning(false);
+    }
+  };
+
+  const handleSeedAccessories = async () => {
+    if (!confirm(`Delete all existing accessories and import ${ACCESSORIES.length} fresh entries?`)) return;
+    setAccRunning(true);
+    setAccStatus('idle');
+    try {
+      await deleteAllAccessories();
+      for (const p of ACCESSORIES) await upsertProduct(p);
+      refreshCounts();
+      setAccStatus('done');
+      setAccMessage(`${ACCESSORIES.length} accessories imported successfully.`);
+    } catch {
+      setAccStatus('error');
+      setAccMessage('Failed to import accessories. Check Firestore rules.');
+    } finally {
+      setAccRunning(false);
+    }
+  };
+
+  const handleDeleteAccessories = async () => {
+    if (!confirm(`Delete all ${accCount} accessories? This cannot be undone.`)) return;
+    setAccRunning(true);
+    setAccStatus('idle');
+    try {
+      await deleteAllAccessories();
+      refreshCounts();
+      setAccStatus('done');
+      setAccMessage('All accessories deleted.');
+    } catch {
+      setAccStatus('error');
+      setAccMessage('Failed to delete accessories.');
+    } finally {
+      setAccRunning(false);
     }
   };
 
@@ -217,6 +258,45 @@ export default function SettingsPage() {
         {!isLive && discStatus === 'error' && (
           <p className="mt-4 text-red-600 text-sm">{discMessage}</p>
         )}
+      </div>
+
+      {/* Accessories */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center shrink-0">
+              <Wrench size={20} className="text-amber-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Accessories Catalog</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {accCount === null
+                  ? 'Loading...'
+                  : `${accCount} accessories in Firestore · Catalog has ${ACCESSORIES.length} references`}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={handleSeedAccessories}
+              disabled={accRunning || accCount === null}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-amber-600 text-white hover:bg-amber-700"
+            >
+              {accRunning ? 'Working…' : 'Delete & Re-import'}
+            </button>
+            {(accCount ?? 0) > 0 && (
+              <button
+                onClick={handleDeleteAccessories}
+                disabled={accRunning}
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
+              >
+                Delete all
+              </button>
+            )}
+          </div>
+        </div>
+        {accStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{accMessage}</p>}
+        {accStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{accMessage}</p>}
       </div>
 
       {/* Historical orders */}

@@ -62,10 +62,15 @@ export interface SalesOrderLine {
   totalQty: number;
 }
 
+export type PaymentStatus = 'unpaid' | 'partial' | 'paid';
+export type DeliveryStatus = 'pending' | 'shipped' | 'delivered';
+
 export interface SalesOrder {
   id: string;
   ref: string;
   client: string;
   date: Date;
   lines: SalesOrderLine[];
+  paymentStatus?: PaymentStatus;
+  deliveryStatus?: DeliveryStatus;
 }

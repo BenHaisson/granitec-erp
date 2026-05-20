@@ -47,20 +47,20 @@ interface SidebarProps {
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   return (
     <aside className={`
-      fixed inset-y-0 left-0 z-40 w-64 bg-slate-900 text-white flex flex-col shrink-0
+      fixed inset-y-0 left-0 z-40 w-64 bg-slate-950 text-white flex flex-col shrink-0
       transition-transform duration-300 ease-in-out
       lg:static lg:translate-x-0
       ${isOpen ? 'translate-x-0' : '-translate-x-full'}
     `}>
       {/* Logo */}
-      <div className="px-5 py-5 border-b border-slate-800">
+      <div className="px-5 py-5 border-b border-slate-800/60">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
-            <Factory size={16} className="text-white" />
+          <div className="w-9 h-9 rounded-xl bg-linear-to-br from-blue-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-lg shadow-blue-500/25">
+            <Factory size={17} className="text-white" />
           </div>
           <div>
             <h1 className="text-sm font-bold text-white leading-tight">Granitec ERP</h1>
-            <p className="text-slate-500 text-xs">Factory Management</p>
+            <p className="text-slate-400 text-[11px]">Factory Management</p>
           </div>
         </div>
       </div>
@@ -68,8 +68,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       {/* Nav */}
       <nav className="flex-1 py-4 overflow-y-auto">
         {NAV_SECTIONS.map(section => (
-          <div key={section.label} className="mb-4">
-            <p className="px-5 mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+          <div key={section.label} className="mb-5">
+            <p className="px-5 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
               {section.label}
             </p>
             <div className="space-y-0.5 px-3">
@@ -79,10 +79,10 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
                   to={to}
                   onClick={onClose}
                   className={({ isActive }) =>
-                    `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                    `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all border-l-2 ${
                       isActive
-                        ? 'bg-blue-600 text-white'
-                        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                        ? 'bg-white/10 text-white font-medium border-blue-400'
+                        : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border-transparent'
                     }`
                   }
                 >
@@ -96,10 +96,10 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       </nav>
 
       {/* Sign out */}
-      <div className="px-3 py-4 border-t border-slate-800">
+      <div className="px-3 py-4 border-t border-slate-800/60">
         <button
           onClick={signOut}
-          className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-sm text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+          className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-sm text-slate-400 hover:bg-white/5 hover:text-slate-200 transition-all border-l-2 border-transparent"
         >
           <LogOut size={16} />
           Sign Out

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Plus, CheckCircle2, XCircle } from 'lucide-react';
+import { Plus, CheckCircle2, XCircle, Play } from 'lucide-react';
 import {
-  getProductionOrders, getRecipes, createProductionOrder, validateAndCompleteProduction, checkFeasibility,
+  getProductionOrders, getRecipes, createProductionOrder, validateAndCompleteProduction,
+  checkFeasibility, startProductionOrder,
 } from '@/services/production.service';
 import { getProducts } from '@/services/inventory.service';
 import Badge from '@/components/ui/Badge';
@@ -72,6 +73,11 @@ export default function ProductionPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleStart = async (id: string) => {
+    try { await startProductionOrder(id); load(); }
+    catch { alert('Failed to start order'); }
   };
 
   const handleComplete = async (id: string) => {
@@ -186,14 +192,24 @@ export default function ProductionPage() {
                       <Badge label={o.status} variant={statusVariant[o.status] ?? 'gray'} />
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {(o.status === 'PLANNED' || o.status === 'IN_PROGRESS') && (
-                        <button
-                          onClick={() => handleComplete(o.id)}
-                          className="text-xs text-green-600 hover:text-green-800 font-medium"
-                        >
-                          Complete
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2 justify-end">
+                        {o.status === 'PLANNED' && (
+                          <button
+                            onClick={() => handleStart(o.id)}
+                            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                          >
+                            <Play size={12} /> Start
+                          </button>
+                        )}
+                        {(o.status === 'PLANNED' || o.status === 'IN_PROGRESS') && (
+                          <button
+                            onClick={() => handleComplete(o.id)}
+                            className="text-xs text-green-600 hover:text-green-800 font-medium"
+                          >
+                            Complete
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
