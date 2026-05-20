@@ -1,5 +1,5 @@
 import {
-  collection, addDoc, getDocs, doc, runTransaction, Timestamp, setDoc,
+  collection, addDoc, getDocs, doc, runTransaction, Timestamp, setDoc, deleteDoc,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { ProductionOrder, Recipe } from '@/types';
@@ -31,6 +31,8 @@ export const checkFeasibility = async (recipeId: string, quantity: number) => {
   }
   return { feasible: shortfalls.length === 0, shortfalls };
 };
+
+export const deleteRecipe = (id: string) => deleteDoc(doc(db, 'recipes', id));
 
 export const createRecipe = async (recipe: Omit<Recipe, 'id'>): Promise<string> => {
   const ref = await addDoc(collection(db, 'recipes'), recipe);

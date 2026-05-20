@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, type FormEvent } from 'react';
-import { Plus, Search, Package, ImageOff } from 'lucide-react';
-import { getProducts, addProduct } from '@/services/inventory.service';
+import { Plus, Search, Package, ImageOff, Pencil, Trash2 } from 'lucide-react';
+import { getProducts, addProduct, updateProduct, deleteProduct } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
 import type { Product, ProductType } from '@/types';
@@ -74,7 +74,11 @@ function groupBadge(group: ProductGroup) {
 }
 
 // ── Product card ─────────────────────────────────────────────────
-function ProductGroupCard({ group }: { group: ProductGroup }) {
+function ProductGroupCard({ group, onEdit, onDelete }: {
+  group: ProductGroup;
+  onEdit: (p: Product) => void;
+  onDelete: (p: Product) => void;
+}) {
   const images = group.variants.map(v => PRODUCT_IMAGES[v.product.sku]).filter(Boolean) as string[];
   const unique = [...new Set(images)];
   const [idx, setIdx] = useState(0);
@@ -131,11 +135,21 @@ function ProductGroupCard({ group }: { group: ProductGroup }) {
               <span className="text-slate-500 font-mono truncate">{p.sku}</span>
               {color && <span className="text-slate-400">{color}</span>}
             </div>
-            <span className={`font-semibold tabular-nums ${
-              p.stock_level <= 0 ? 'text-red-500' : p.stock_level <= p.min_stock ? 'text-yellow-600' : 'text-slate-700'
-            }`}>
-              {p.stock_level} <span className="font-normal text-slate-400">{p.unit}</span>
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className={`font-semibold tabular-nums ${
+                p.stock_level <= 0 ? 'text-red-500' : p.stock_level <= p.min_stock ? 'text-yellow-600' : 'text-slate-700'
+              }`}>
+                {p.stock_level} <span className="font-normal text-slate-400">{p.unit}</span>
+              </span>
+              <button onClick={() => onEdit(p)} title="Edit"
+                className="p-0.5 rounded text-slate-300 hover:text-blue-500 transition-colors">
+                <Pencil size={10} />
+              </button>
+              <button onClick={() => onDelete(p)} title="Delete"
+                className="p-0.5 rounded text-slate-300 hover:text-red-500 transition-colors">
+                <Trash2 size={10} />
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -154,6 +168,39 @@ export default function WarehousePage() {
   const [saving, setSaving]       = useState(false);
   const [formError, setFormError] = useState('');
   const [form, setForm]           = useState({ name: '', sku: '', category: '', unit: 'pcs', stock_level: '0', min_stock: '10' });
+
+  const [editProduct, setEditProduct] = useState<Product | null>(null);
+  const [editForm, setEditForm]       = useState({ name: '', sku: '', category: '', unit: 'pcs', min_stock: '10' });
+  const [editSaving, setEditSaving]   = useState(false);
+  const [editError, setEditError]     = useState('');
+
+  const openEdit = (p: Product) => {
+    setEditProduct(p);
+    setEditForm({ name: p.name, sku: p.sku, category: p.category ?? '', unit: p.unit, min_stock: String(p.min_stock) });
+    setEditError('');
+  };
+
+  const handleEditProduct = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!editProduct) return;
+    setEditError(''); setEditSaving(true);
+    try {
+      await updateProduct(editProduct.id, {
+        name: editForm.name, sku: editForm.sku,
+        category: editForm.category || undefined,
+        unit: editForm.unit, min_stock: Number(editForm.min_stock),
+      });
+      setEditProduct(null);
+      load();
+    } catch { setEditError('Failed to save.'); }
+    finally { setEditSaving(false); }
+  };
+
+  const handleDeleteProduct = async (p: Product) => {
+    if (!confirm(`Delete "${p.name}"? This cannot be undone.`)) return;
+    await deleteProduct(p.id);
+    load();
+  };
 
   const load = () => {
     setLoading(true);
@@ -246,7 +293,7 @@ export default function WarehousePage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {groups.map(g => <ProductGroupCard key={g.base + g.category} group={g} />)}
+          {groups.map(g => <ProductGroupCard key={g.base + g.category} group={g} onEdit={openEdit} onDelete={handleDeleteProduct} />)}
         </div>
       )}
 
@@ -303,6 +350,59 @@ export default function WarehousePage() {
                 {saving ? 'Saving…' : 'Add Product'}
               </button>
               <button type="button" onClick={() => { setShowModal(false); setFormError(''); }}
+                className="flex-1 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
+                Cancel
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Edit Product Modal */}
+      {editProduct && (
+        <Modal title="Edit Product" onClose={() => setEditProduct(null)}>
+          <form onSubmit={handleEditProduct} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Product Name</label>
+              <input type="text" value={editForm.name} required
+                onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">SKU</label>
+                <input type="text" value={editForm.sku} required
+                  onChange={e => setEditForm(f => ({ ...f, sku: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Unit</label>
+                <input type="text" value={editForm.unit} required
+                  onChange={e => setEditForm(f => ({ ...f, unit: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
+                <input type="text" value={editForm.category}
+                  onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Min Stock</label>
+                <input type="number" min="0" value={editForm.min_stock} required
+                  onChange={e => setEditForm(f => ({ ...f, min_stock: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+            {editError && <p className="text-red-600 text-sm">{editError}</p>}
+            <div className="flex gap-3 pt-1">
+              <button type="submit" disabled={editSaving}
+                className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                {editSaving ? 'Saving…' : 'Save Changes'}
+              </button>
+              <button type="button" onClick={() => setEditProduct(null)}
                 className="flex-1 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
                 Cancel
               </button>

@@ -1,5 +1,5 @@
 import {
-  collection, addDoc, getDocs, doc, setDoc, deleteDoc, runTransaction, Timestamp, writeBatch,
+  collection, addDoc, getDocs, doc, setDoc, deleteDoc, updateDoc, runTransaction, Timestamp, writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { Product, InventoryMovement } from '@/types';
@@ -25,6 +25,11 @@ export const deleteAllProducts = async () => {
     await batch.commit();
   }
 };
+
+export const deleteProduct = (id: string) => deleteDoc(doc(db, 'products', id));
+
+export const updateProduct = (id: string, patch: Partial<import('@/types').Product>) =>
+  updateDoc(doc(db, 'products', id), patch as Record<string, unknown>);
 
 export const adjustStock = async (
   productId: string,

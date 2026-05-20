@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
-import { getRecipes, createRecipe, updateRecipe } from '@/services/production.service';
+import { getRecipes, createRecipe, updateRecipe, deleteRecipe } from '@/services/production.service';
 import { getProducts } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
 import type { Recipe, Product } from '@/types';
@@ -157,6 +157,13 @@ export default function BOMPage() {
     load();
   };
 
+  const handleDelete = async (recipe: Recipe) => {
+    const name = productMap.get(recipe.finishedProductId)?.name ?? recipe.id;
+    if (!confirm(`Delete recipe for "${name}"? This cannot be undone.`)) return;
+    await deleteRecipe(recipe.id);
+    load();
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Loading…</div>;
   }
@@ -190,10 +197,16 @@ export default function BOMPage() {
                   <h2 className="text-base font-semibold text-slate-800">
                     {finished?.name ?? recipe.finishedProductId}
                   </h2>
-                  <button onClick={() => setModal({ mode: 'edit', recipe })}
-                    className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                    <Pencil size={14} />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setModal({ mode: 'edit', recipe })}
+                      className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                      <Pencil size={14} />
+                    </button>
+                    <button onClick={() => handleDelete(recipe)}
+                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
                 <p className="text-xs text-slate-400 mb-4">SKU: {finished?.sku ?? '—'}</p>
                 <table className="w-full">
