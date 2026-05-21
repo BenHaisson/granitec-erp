@@ -328,7 +328,7 @@ function groupBadge(group: RawMaterialGroup) {
 const CATEGORY_ACCENT: Record<string, { border: string; badge: string; dot: string }> = {
   'Aluminium Disc': { border: 'border-l-indigo-500', badge: 'bg-indigo-50 text-indigo-700', dot: 'bg-indigo-500' },
   'Accessories':    { border: 'border-l-amber-400',  badge: 'bg-amber-50 text-amber-700',   dot: 'bg-amber-400' },
-  'Packaging':      { border: 'border-l-emerald-500', badge: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
+  'Packaging':      { border: 'border-l-violet-500',  badge: 'bg-violet-50 text-violet-700',   dot: 'bg-violet-500' },
 };
 const DEFAULT_ACCENT = { border: 'border-l-slate-300', badge: 'bg-slate-100 text-slate-600', dot: 'bg-slate-400' };
 

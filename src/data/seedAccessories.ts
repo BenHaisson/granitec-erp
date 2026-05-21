@@ -49,4 +49,21 @@ export const ACCESSORIES: Omit<Product, 'id'>[] = [
   { name: 'Screw 13mm', sku: 'SC-13', type: 'RAW', category: 'Accessories', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 29 },
   { name: 'Screw 14mm', sku: 'SC-14', type: 'RAW', category: 'Accessories', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 30 },
   { name: 'Screw 16mm', sku: 'SC-16', type: 'RAW', category: 'Accessories', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 31 },
+
+  // ── Egg Pan Handle ──────────────────────────────────────────── #32
+  { name: 'Egg Pan Handle Black Small',                                       sku: 'HEP-S-BK',     type: 'RAW', category: 'Accessories', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 32 },
+
+  // ── Packaging — Individual ───────────────────────────────────── #33–37
+  { name: 'Egg Pan 14cm (Ceramic) — Color Box',                               sku: 'PKG-EGG-BOX',  type: 'RAW', category: 'Packaging', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 33 },
+  { name: 'Crepe Pan 18cm (Granite) — Sticker',                               sku: 'PKG-CR-18',    type: 'RAW', category: 'Packaging', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 34 },
+  { name: 'Crepe Pan 22cm (Granite) — Sticker',                               sku: 'PKG-CR-22',    type: 'RAW', category: 'Packaging', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 35 },
+  { name: 'Crepe Pan 24cm (Granite) — Sticker',                               sku: 'PKG-CR-24',    type: 'RAW', category: 'Packaging', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 36 },
+  { name: '5-Piece Saucepot Set (Granite) — Color Box',                       sku: 'PKG-SP-1407',  type: 'RAW', category: 'Packaging', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 37 },
+
+  // ── Packaging — American Master Box ─────────────────────────── #38–42
+  { name: 'Egg Pan 14cm (Ceramic) — American Master Box (20 pcs)',            sku: 'PKG-AMB-EGG',  type: 'RAW', category: 'Packaging', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 38 },
+  { name: 'Crepe Pan 18cm (Granite) — American Master Box (20 pcs)',          sku: 'PKG-AMB-CR18', type: 'RAW', category: 'Packaging', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 39 },
+  { name: 'Crepe Pan 22cm (Granite) — American Master Box (20 pcs)',          sku: 'PKG-AMB-CR22', type: 'RAW', category: 'Packaging', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 40 },
+  { name: 'Crepe Pan 24cm (Granite) — American Master Box (20 pcs)',          sku: 'PKG-AMB-CR24', type: 'RAW', category: 'Packaging', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 41 },
+  { name: '5-Piece Saucepot Set (Granite) — American Master Box (6 sets)',    sku: 'PKG-AMB-SP',   type: 'RAW', category: 'Packaging', unit: 'pcs', stock_level: 0, min_stock: 0, cost: 0, sort_order: 42 },
 ];
