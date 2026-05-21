@@ -89,6 +89,28 @@ export const adjustStock = async (
   });
 };
 
+export const addUnverifiedStock = async (productId: string, qty: number, note: string) => {
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'products', productId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const current = (snap.data().unverified_stock ?? 0) as number;
+    tx.update(ref, { unverified_stock: current + qty });
+    const movRef = doc(collection(db, 'inventory_movements'));
+    tx.set(movRef, { productId, quantity: qty, reason: 'ADJUSTMENT', note: `Unverified: ${note}`, createdAt: Timestamp.now() });
+  });
+};
+
+export const reconcileUnverifiedStock = async (productId: string, qty: number) => {
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'products', productId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const current = (snap.data().unverified_stock ?? 0) as number;
+    tx.update(ref, { unverified_stock: Math.max(0, current - qty) });
+  });
+};
+
 export const getMovements = async (): Promise<InventoryMovement[]> => {
   const snap = await getDocs(collection(db, 'inventory_movements'));
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as InventoryMovement));
@@ -115,6 +137,33 @@ export const seedDiscHistory = async (
     });
     await batch.commit();
   }
+};
+
+export const recalculateStockFromMovements = async (): Promise<number> => {
+  const [movSnap, prodSnap] = await Promise.all([
+    getDocs(collection(db, 'inventory_movements')),
+    getDocs(collection(db, 'products')),
+  ]);
+
+  // Sum all signed movement quantities per product
+  const netStock = new Map<string, number>();
+  prodSnap.docs.forEach(d => netStock.set(d.id, 0));
+  for (const m of movSnap.docs) {
+    const { productId, quantity } = m.data() as { productId: string; quantity: number };
+    if (productId) netStock.set(productId, (netStock.get(productId) ?? 0) + quantity);
+  }
+
+  const productIds = new Set(prodSnap.docs.map(d => d.id));
+  const entries = Array.from(netStock.entries()).filter(([id]) => productIds.has(id));
+  const CHUNK = 400;
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    entries.slice(i, i + CHUNK).forEach(([id, level]) => {
+      batch.update(doc(db, 'products', id), { stock_level: level });
+    });
+    await batch.commit();
+  }
+  return entries.length;
 };
 
 export const deleteDiscHistory = async (): Promise<void> => {

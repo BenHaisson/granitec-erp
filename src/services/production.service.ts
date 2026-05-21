@@ -73,6 +73,99 @@ export const deleteAllRecipes = async (): Promise<void> => {
   }
 };
 
+const CREPE_SKUS = new Set([
+  'JSM-1109C', 'JSM-1109N', 'JSM-0905C', 'JSM-0905N',
+  'JSM-1405C', 'JSM-1405N', 'JSM-1954B', 'JSM-1954R',
+]);
+
+export const backfillCrepeProductionHistory = async (): Promise<number> => {
+  const [ordersSnap, recipesSnap, productsSnap] = await Promise.all([
+    getDocs(collection(db, 'sales_orders')),
+    getDocs(collection(db, 'recipes')),
+    getDocs(collection(db, 'products')),
+  ]);
+
+  // Build lookup maps
+  const skuToProductId = new Map<string, string>();
+  productsSnap.docs.forEach(d => skuToProductId.set(d.data().sku as string, d.id));
+
+  // recipes keyed by finishedProductId
+  const recipeByFinished = new Map<string, { id: string; components: RecipeItem[] }>();
+  recipesSnap.docs.forEach(d => {
+    recipeByFinished.set(d.id, { id: d.id, components: d.data().components as RecipeItem[] });
+  });
+
+  let created = 0;
+  const CHUNK = 400;
+  const prodOrderDocs: object[] = [];
+  const movementDocs: object[] = [];
+
+  for (const orderDoc of ordersSnap.docs) {
+    const data = orderDoc.data();
+    const saleDate: Date = (data.date as Timestamp).toDate();
+    const prodDate = new Date(saleDate);
+    prodDate.setDate(prodDate.getDate() - 3);
+    const lines = data.lines as Array<{ sku: string; totalQty: number; productId: string }>;
+
+    for (const line of lines) {
+      if (!CREPE_SKUS.has(line.sku)) continue;
+      const finishedProductId = skuToProductId.get(line.sku) ?? line.productId;
+      const recipe = recipeByFinished.get(finishedProductId);
+      if (!recipe || line.totalQty <= 0) continue;
+
+      const ordId = `backfill_${orderDoc.id}_${line.sku}`;
+      prodOrderDocs.push({
+        _id: ordId,
+        recipeId: finishedProductId,
+        quantity: line.totalQty,
+        status: 'COMPLETED',
+        createdAt: Timestamp.fromDate(prodDate),
+        updatedAt: Timestamp.fromDate(saleDate),
+      });
+
+      // Production movements: +finished goods on prodDate, -raw components on prodDate
+      movementDocs.push({
+        productId: finishedProductId,
+        quantity: line.totalQty,
+        reason: 'PRODUCTION',
+        note: `Backfill: ${data.ref ?? orderDoc.id}`,
+        createdAt: Timestamp.fromDate(prodDate),
+      });
+      for (const comp of recipe.components) {
+        movementDocs.push({
+          productId: comp.productId,
+          quantity: -(comp.quantity * line.totalQty),
+          reason: 'PRODUCTION',
+          note: `Backfill: ${data.ref ?? orderDoc.id}`,
+          createdAt: Timestamp.fromDate(prodDate),
+        });
+      }
+      created++;
+    }
+  }
+
+  // Write production orders using deterministic IDs (idempotent)
+  for (let i = 0; i < prodOrderDocs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    (prodOrderDocs.slice(i, i + CHUNK) as Array<Record<string, unknown>>).forEach(o => {
+      const { _id, ...rest } = o;
+      batch.set(doc(db, 'production_orders', _id as string), rest);
+    });
+    await batch.commit();
+  }
+
+  // Write movements
+  for (let i = 0; i < movementDocs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    (movementDocs.slice(i, i + CHUNK) as object[]).forEach(m => {
+      batch.set(doc(collection(db, 'inventory_movements')), m);
+    });
+    await batch.commit();
+  }
+
+  return created;
+};
+
 export const validateAndCompleteProduction = async (orderId: string) => {
   await runTransaction(db, async (tx) => {
     const orderRef = doc(db, 'production_orders', orderId);
@@ -90,7 +183,6 @@ export const validateAndCompleteProduction = async (orderId: string) => {
       const prodSnap = await tx.get(prodRef);
       const current = (prodSnap.data()?.stock_level as number) ?? 0;
       const need = comp.quantity * order.quantity;
-      if (current < need) throw new Error(`Insufficient stock for product ${comp.productId}`);
       tx.update(prodRef, { stock_level: current - need });
       const movRef = doc(collection(db, 'inventory_movements'));
       tx.set(movRef, {

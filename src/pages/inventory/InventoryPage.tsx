@@ -319,7 +319,8 @@ function groupRawMaterials(products: Product[]): RawMaterialGroup[] {
 
 function groupBadge(group: RawMaterialGroup) {
   const ps = group.variants.map(v => v.product);
-  if (ps.every(p => p.stock_level <= 0)) return <Badge label="Empty" variant="red" />;
+  if (ps.some(p => p.stock_level < 0)) return <Badge label="Negative" variant="red" />;
+  if (ps.every(p => p.stock_level === 0)) return <Badge label="Empty" variant="red" />;
   if (ps.some(p => p.stock_level > 0 && p.stock_level <= p.min_stock)) return <Badge label="Low" variant="yellow" />;
   return <Badge label="In Stock" variant="green" />;
 }
@@ -377,11 +378,15 @@ function RawMaterialGroupCard({ group, onReceive, onEdit, onDelete }: {
           {/* Single variant: show stock as big number */}
           {!multi && (() => {
             const p = group.variants[0].product;
-            const empty = p.stock_level <= 0;
-            const low = !empty && p.stock_level <= p.min_stock;
+            const negative = p.stock_level < 0;
+            const empty = p.stock_level === 0;
+            const low = !negative && !empty && p.stock_level <= p.min_stock;
             return (
               <div className="text-right mt-0.5">
-                <span className={`text-2xl font-black tabular-nums leading-none ${empty ? 'text-red-500' : low ? 'text-yellow-600' : 'text-slate-800'}`}>
+                {negative && (
+                  <span className="block text-[9px] font-bold text-red-400 uppercase tracking-wide mb-0.5">Negative</span>
+                )}
+                <span className={`text-2xl font-black tabular-nums leading-none ${negative || empty ? 'text-red-500' : low ? 'text-yellow-600' : 'text-slate-800'}`}>
                   {p.stock_level.toLocaleString()}
                 </span>
                 <span className="text-[11px] text-slate-400 ml-1">{p.unit}</span>
@@ -394,10 +399,11 @@ function RawMaterialGroupCard({ group, onReceive, onEdit, onDelete }: {
       {/* Variant rows */}
       <div className="divide-y divide-slate-50">
         {group.variants.map(({ product: p, color }) => {
-          const empty = p.stock_level <= 0;
-          const low = !empty && p.stock_level <= p.min_stock;
+          const negative = p.stock_level < 0;
+          const empty = p.stock_level === 0;
+          const low = !negative && !empty && p.stock_level <= p.min_stock;
           return (
-            <div key={p.id} className="px-3 py-2 flex items-center gap-2">
+            <div key={p.id} className={`px-3 py-2 flex items-center gap-2 ${negative ? 'bg-red-50/50' : ''}`}>
 
               {/* Color dot */}
               {color
@@ -416,7 +422,7 @@ function RawMaterialGroupCard({ group, onReceive, onEdit, onDelete }: {
 
               {/* Stock (multi only) */}
               {multi && (
-                <span className={`text-sm font-bold tabular-nums shrink-0 ${empty ? 'text-red-500' : low ? 'text-yellow-600' : 'text-slate-800'}`}>
+                <span className={`text-sm font-bold tabular-nums shrink-0 ${negative || empty ? 'text-red-500' : low ? 'text-yellow-600' : 'text-slate-800'}`}>
                   {p.stock_level.toLocaleString()}
                   <span className="text-[10px] font-normal text-slate-400 ml-0.5">{p.unit}</span>
                 </span>

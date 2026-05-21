@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Database, AlertTriangle, ShoppingBag, Layers, Wrench, BookOpen, BookMarked, Cpu } from 'lucide-react';
-import { getProducts, upsertProduct, deleteAllProducts, seedDiscHistory, deleteDiscHistory, deleteAllAccessories } from '@/services/inventory.service';
-import { getOrders, seedHistoricalOrders, deleteAllOrders } from '@/services/orders.service';
-import { getRecipes, upsertRecipe, deleteAllRecipes } from '@/services/production.service';
+import { getProducts, upsertProduct, deleteAllProducts, seedDiscHistory, deleteDiscHistory, deleteAllAccessories, recalculateStockFromMovements } from '@/services/inventory.service';
+import { getOrders, seedHistoricalOrders, deleteAllOrders, backfillSalesMovements } from '@/services/orders.service';
+import { getRecipes, upsertRecipe, deleteAllRecipes, backfillCrepeProductionHistory } from '@/services/production.service';
+import { getProductionOrders } from '@/services/production.service';
 import { getMachines, upsertMachine, deleteAllMachines, getLibraryItems, upsertLibraryItem, deleteAllLibraryItems } from '@/services/library.service';
 import { SEED_PRODUCTS } from '@/data/seedProducts';
 import { SEED_ORDERS } from '@/data/seedOrders';
@@ -43,6 +44,13 @@ export default function SettingsPage() {
   const [libStatus, setLibStatus] = useState<'idle' | 'done' | 'error'>('idle');
   const [libMessage, setLibMessage] = useState('');
   const [libCount, setLibCount] = useState<number | null>(null);
+  const [backfillRunning, setBackfillRunning] = useState(false);
+  const [backfillStatus, setBackfillStatus] = useState<'idle' | 'done' | 'error'>('idle');
+  const [backfillMessage, setBackfillMessage] = useState('');
+  const [prodOrderCount, setProdOrderCount] = useState<number | null>(null);
+  const [syncRunning, setSyncRunning] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'done' | 'error'>('idle');
+  const [syncMessage, setSyncMessage] = useState('');
 
   const refreshCounts = () => {
     getProducts().then(p => {
@@ -54,6 +62,7 @@ export default function SettingsPage() {
     getRecipes().then(r => setRecipeCount(r.length));
     getMachines().then(m => setMachineCount(m.length));
     getLibraryItems().then(l => setLibCount(l.length));
+    getProductionOrders().then(o => setProdOrderCount(o.filter(x => x.recipeId?.startsWith && x.status === 'COMPLETED').length));
   };
 
   useEffect(() => { refreshCounts(); }, []);
@@ -255,6 +264,44 @@ export default function SettingsPage() {
       setLibStatus('done'); setLibMessage('All library items deleted.');
     } catch { setLibStatus('error'); setLibMessage('Failed to delete library.'); }
     finally { setLibRunning(false); }
+  };
+
+  const handleBackfillCrepe = async () => {
+    if (!confirm('Generate production orders for all historical Crepe & Egg Pan sales (3 days before each sale date)? This also writes inventory movements. Idempotent — safe to re-run.')) return;
+    setBackfillRunning(true); setBackfillStatus('idle');
+    try {
+      const count = await backfillCrepeProductionHistory();
+      refreshCounts();
+      setBackfillStatus('done');
+      setBackfillMessage(`${count} production order lines backfilled successfully.`);
+    } catch (e) {
+      setBackfillStatus('error');
+      setBackfillMessage(`Backfill failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally { setBackfillRunning(false); }
+  };
+
+  const handleSyncInventory = async () => {
+    if (!confirm(
+      'Sync full inventory from history? This will:\n' +
+      '1. Backfill crepe/egg pan production orders (3 days before each sale)\n' +
+      '2. Write SALE movements for all historical orders\n' +
+      '3. Recalculate every product\'s stock_level from all movements\n\n' +
+      'Safe to re-run — idempotent. Negative stock will be shown in the UI.'
+    )) return;
+    setSyncRunning(true); setSyncStatus('idle'); setSyncMessage('Step 1/3: backfilling production orders…');
+    try {
+      const prodCount = await backfillCrepeProductionHistory();
+      setSyncMessage(`Step 2/3: writing sales movements… (${prodCount} production lines done)`);
+      const saleCount = await backfillSalesMovements();
+      setSyncMessage(`Step 3/3: recalculating stock levels… (${saleCount} sale movements written)`);
+      const productCount = await recalculateStockFromMovements();
+      refreshCounts();
+      setSyncStatus('done');
+      setSyncMessage(`Sync complete — ${prodCount} production lines, ${saleCount} sale movements, ${productCount} products recalculated.`);
+    } catch (e) {
+      setSyncStatus('error');
+      setSyncMessage(`Sync failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally { setSyncRunning(false); }
   };
 
   const hasProducts  = productCount !== null && productCount > 0;
@@ -468,6 +515,54 @@ export default function SettingsPage() {
         </div>
         {recipeStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{recipeMessage}</p>}
         {recipeStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{recipeMessage}</p>}
+      </div>
+
+      {/* Crepe & Egg Pan Production History */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-cyan-50 rounded-lg flex items-center justify-center shrink-0">
+              <Layers size={20} className="text-cyan-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Crepe & Egg Pan Production History</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Generates a completed production order 3 days before each crepe/egg pan sale. Idempotent.
+                {prodOrderCount !== null && ` · ${prodOrderCount} completed orders already in Firestore`}
+              </p>
+            </div>
+          </div>
+          <button onClick={handleBackfillCrepe} disabled={backfillRunning}
+            className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-cyan-600 text-white hover:bg-cyan-700">
+            {backfillRunning ? 'Running…' : 'Backfill Production Orders'}
+          </button>
+        </div>
+        {backfillStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{backfillMessage}</p>}
+        {backfillStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{backfillMessage}</p>}
+      </div>
+
+      {/* Sync Inventory from History */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100 border-l-4 border-l-emerald-500">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-emerald-50 rounded-lg flex items-center justify-center shrink-0">
+              <Database size={20} className="text-emerald-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Sync Inventory from History</p>
+              <p className="text-xs text-slate-400 mt-0.5 max-w-lg">
+                Full 3-step sync: backfill crepe/egg pan production orders → write SALE movements for all historical sales → recalculate every product's stock_level from movements. Negative stock is allowed and shown in red.
+              </p>
+            </div>
+          </div>
+          <button onClick={handleSyncInventory} disabled={syncRunning}
+            className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-emerald-600 text-white hover:bg-emerald-700 whitespace-nowrap">
+            {syncRunning ? syncMessage.split(':')[0] + '…' : 'Sync Inventory'}
+          </button>
+        </div>
+        {syncRunning && <p className="mt-3 text-slate-500 text-sm animate-pulse">{syncMessage}</p>}
+        {syncStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{syncMessage}</p>}
+        {syncStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{syncMessage}</p>}
       </div>
 
       {/* Machines & Tools */}

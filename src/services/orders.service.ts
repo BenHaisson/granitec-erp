@@ -4,6 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { SalesOrder, SalesOrderLine } from '@/types';
+import { adjustStock } from './inventory.service';
 
 const toOrder = (id: string, data: Record<string, unknown>): SalesOrder => ({
   id,
@@ -32,6 +33,14 @@ export const createOrder = async (
     ...order,
     date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
   });
+  // Deduct finished goods stock for each line
+  for (const line of order.lines) {
+    if (line.totalQty > 0) {
+      try {
+        await adjustStock(line.productId, -line.totalQty, 'SALE', order.ref ?? document.id);
+      } catch { /* product may not exist in Firestore yet — skip silently */ }
+    }
+  }
   return document.id;
 };
 
@@ -69,4 +78,47 @@ export const deleteAllOrders = async (): Promise<void> => {
     snap.docs.slice(i, i + CHUNK).forEach(d => batch.delete(doc(db, 'sales_orders', d.id)));
     await batch.commit();
   }
+};
+
+export const backfillSalesMovements = async (): Promise<number> => {
+  const [ordersSnap, movsSnap] = await Promise.all([
+    getDocs(collection(db, 'sales_orders')),
+    getDocs(collection(db, 'inventory_movements')),
+  ]);
+
+  // Build set of productId|note keys for existing SALE movements (idempotency check)
+  const existingKeys = new Set(
+    movsSnap.docs
+      .filter(d => d.data().reason === 'SALE')
+      .map(d => `${d.data().productId as string}|${d.data().note as string}`)
+  );
+
+  const movDocs: object[] = [];
+  for (const orderDoc of ordersSnap.docs) {
+    const data = orderDoc.data();
+    const ref = (data.ref as string) ?? orderDoc.id;
+    const date = (data.date as Timestamp).toDate();
+    const lines = data.lines as Array<{ productId: string; totalQty: number }>;
+    for (const line of lines) {
+      if (!line.totalQty || line.totalQty <= 0) continue;
+      if (existingKeys.has(`${line.productId}|${ref}`)) continue;
+      movDocs.push({
+        productId: line.productId,
+        quantity: -line.totalQty,
+        reason: 'SALE',
+        note: ref,
+        createdAt: Timestamp.fromDate(date),
+      });
+    }
+  }
+
+  const CHUNK = 400;
+  for (let i = 0; i < movDocs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    movDocs.slice(i, i + CHUNK).forEach(m => {
+      batch.set(doc(collection(db, 'inventory_movements')), m);
+    });
+    await batch.commit();
+  }
+  return movDocs.length;
 };
