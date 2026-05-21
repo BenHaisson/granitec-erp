@@ -88,6 +88,42 @@ export interface Machine {
   sort_order?: number;
 }
 
+export type ProductionStage = 'Press' | 'Tourna' | 'Laser' | 'Pounta' | 'Screw' | 'Gather' | 'Box';
+
+export interface ProductionTarget {
+  id: string;
+  date: string; // YYYY-MM-DD
+  type: 'stage' | 'recipe';
+  stage?: ProductionStage;
+  discType?: string;
+  recipeId?: string;
+  recipeName?: string;
+  targetQty: number;
+  completedQty: number;
+  defects?: number;
+  deadline: string; // YYYY-MM-DD
+  deadlineTime?: string; // HH:MM
+  line?: string;
+  status: 'not_started' | 'in_progress' | 'at_risk' | 'complete';
+  notes?: string;
+  createdAt: { toDate: () => Date } | Date;
+}
+
+export interface ProductionEntry {
+  id: string;
+  date: string; // YYYY-MM-DD
+  targetId: string;
+  stage: ProductionStage;
+  discType: string;
+  qty: number;
+  goodQty?: number;
+  defects?: number;
+  qualityCheck?: 'passed' | 'review' | 'hold';
+  loggedAt: string; // HH:MM
+  notes?: string;
+  createdAt: { toDate: () => Date } | Date;
+}
+
 export type LibraryCategory = 'guide' | 'sop' | 'standard' | 'spec';
 
 export interface LibraryItem {
