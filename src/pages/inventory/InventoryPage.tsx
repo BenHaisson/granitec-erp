@@ -324,6 +324,14 @@ function groupBadge(group: RawMaterialGroup) {
   return <Badge label="In Stock" variant="green" />;
 }
 
+// ── Category accent colours ───────────────────────────────────────
+const CATEGORY_ACCENT: Record<string, { border: string; badge: string; dot: string }> = {
+  'Aluminium Disc': { border: 'border-l-indigo-500', badge: 'bg-indigo-50 text-indigo-700', dot: 'bg-indigo-500' },
+  'Accessories':    { border: 'border-l-amber-400',  badge: 'bg-amber-50 text-amber-700',   dot: 'bg-amber-400' },
+  'Packaging':      { border: 'border-l-emerald-500', badge: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
+};
+const DEFAULT_ACCENT = { border: 'border-l-slate-300', badge: 'bg-slate-100 text-slate-600', dot: 'bg-slate-400' };
+
 // ── Raw material group card ───────────────────────────────────────
 function RawMaterialGroupCard({ group, onReceive, onEdit, onDelete }: {
   group: RawMaterialGroup;
@@ -331,44 +339,110 @@ function RawMaterialGroupCard({ group, onReceive, onEdit, onDelete }: {
   onEdit: (p: Product) => void;
   onDelete: (p: Product) => void;
 }) {
+  const accent = CATEGORY_ACCENT[group.category] ?? DEFAULT_ACCENT;
+  const totalStock = group.variants.reduce((s, v) => s + v.product.stock_level, 0);
+  const multi = group.variants.length > 1;
+
   return (
-    <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 flex flex-col gap-3 hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between gap-2">
-        <div>
+    <div className={`bg-white rounded-xl border border-slate-100 border-l-4 ${accent.border} shadow-sm hover:shadow-md transition-all`}>
+
+      {/* Header */}
+      <div className="px-4 pt-3.5 pb-3 border-b border-slate-50 flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
           {group.category && (
-            <span className="inline-block mb-1.5 text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600">
+            <span className={`inline-flex items-center gap-1 mb-1.5 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${accent.badge}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${accent.dot}`} />
               {group.category}
             </span>
           )}
-          <p className="text-sm font-semibold text-slate-800">{group.base}</p>
+          <p className="text-sm font-bold text-slate-800 leading-snug">{group.base}</p>
+
+          {/* Single variant: show REF prominently below name */}
+          {!multi && (
+            <p className="mt-1.5 font-mono text-xs font-semibold text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-md w-fit tracking-wide">
+              {group.variants[0]?.product.sku}
+            </p>
+          )}
+
+          {/* Multi variant: show total */}
+          {multi && (
+            <p className="text-[11px] text-slate-400 mt-0.5 tabular-nums">
+              {group.variants.length} variants · <span className="font-semibold text-slate-600">{totalStock.toLocaleString()}</span> {group.variants[0]?.product.unit} total
+            </p>
+          )}
         </div>
-        {groupBadge(group)}
+
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          {groupBadge(group)}
+          {/* Single variant: show stock as big number */}
+          {!multi && (() => {
+            const p = group.variants[0].product;
+            const empty = p.stock_level <= 0;
+            const low = !empty && p.stock_level <= p.min_stock;
+            return (
+              <div className="text-right mt-0.5">
+                <span className={`text-2xl font-black tabular-nums leading-none ${empty ? 'text-red-500' : low ? 'text-yellow-600' : 'text-slate-800'}`}>
+                  {p.stock_level.toLocaleString()}
+                </span>
+                <span className="text-[11px] text-slate-400 ml-1">{p.unit}</span>
+              </div>
+            );
+          })()}
+        </div>
       </div>
-      <div className="space-y-2 mt-1">
+
+      {/* Variant rows */}
+      <div className="divide-y divide-slate-50">
         {group.variants.map(({ product: p, color }) => {
           const empty = p.stock_level <= 0;
-          const low = p.stock_level > 0 && p.stock_level <= p.min_stock;
+          const low = !empty && p.stock_level <= p.min_stock;
           return (
-            <div key={p.id} className="flex items-center gap-2 text-xs">
-              {color ? <span className={`w-3 h-3 rounded-full shrink-0 ${COLOR_DOT[color]}`} /> : <span className="w-3 h-3 shrink-0" />}
-              <span className="text-slate-500 w-16 shrink-0">{color ?? '—'}</span>
-              <span className={`font-bold tabular-nums text-sm ${empty ? 'text-red-500' : low ? 'text-yellow-600' : 'text-slate-800'}`}>
-                {p.stock_level.toLocaleString()}
-              </span>
-              <span className="text-slate-400">{p.unit}</span>
-              <div className="ml-auto flex items-center gap-1">
-                {stockBadge(p)}
-                <button onClick={() => onReceive(p)} title="Quick receive"
-                  className="p-1 rounded border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors">
-                  <ArrowDownToLine size={11} />
+            <div key={p.id} className="px-4 py-2.5 flex items-center gap-2.5">
+
+              {/* Color dot (or spacer) */}
+              {color
+                ? <span className={`w-2.5 h-2.5 rounded-full shrink-0 shadow-sm ${COLOR_DOT[color]}`} />
+                : <span className="w-2.5 h-2.5 shrink-0" />}
+
+              {/* Middle: color label + SKU (multi-variant only shows SKU) */}
+              <div className="flex-1 min-w-0">
+                {multi ? (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {color && <span className="text-xs text-slate-700 font-semibold">{color}</span>}
+                    <span className="font-mono text-[10px] text-slate-400 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded leading-none">
+                      {p.sku}
+                    </span>
+                  </div>
+                ) : (
+                  /* Single variant row: just action context label */
+                  <span className="text-xs text-slate-400">Quick receive / edit</span>
+                )}
+              </div>
+
+              {/* Stock (multi only — single shows in header) */}
+              {multi && (
+                <div className="text-right shrink-0">
+                  <span className={`text-sm font-bold tabular-nums ${empty ? 'text-red-500' : low ? 'text-yellow-600' : 'text-slate-800'}`}>
+                    {p.stock_level.toLocaleString()}
+                  </span>
+                  <span className="text-xs text-slate-400 ml-1">{p.unit}</span>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex items-center gap-0.5 shrink-0">
+                {multi && stockBadge(p)}
+                <button onClick={() => onReceive(p)} title="Receive stock"
+                  className="p-1.5 rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors">
+                  <ArrowDownToLine size={12} />
                 </button>
                 <button onClick={() => onEdit(p)} title="Edit"
-                  className="p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
-                  <Pencil size={11} />
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+                  <Pencil size={12} />
                 </button>
                 <button onClick={() => onDelete(p)} title="Delete"
-                  className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
-                  <Trash2 size={11} />
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                  <Trash2 size={12} />
                 </button>
               </div>
             </div>
