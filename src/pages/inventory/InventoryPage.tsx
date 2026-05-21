@@ -397,52 +397,44 @@ function RawMaterialGroupCard({ group, onReceive, onEdit, onDelete }: {
           const empty = p.stock_level <= 0;
           const low = !empty && p.stock_level <= p.min_stock;
           return (
-            <div key={p.id} className="px-4 py-2.5 flex items-center gap-2.5">
+            <div key={p.id} className="px-3 py-2 flex items-center gap-2">
 
-              {/* Color dot (or spacer) */}
+              {/* Color dot */}
               {color
-                ? <span className={`w-2.5 h-2.5 rounded-full shrink-0 shadow-sm ${COLOR_DOT[color]}`} />
-                : <span className="w-2.5 h-2.5 shrink-0" />}
+                ? <span className={`w-2 h-2 rounded-full shrink-0 ${COLOR_DOT[color]}`} />
+                : <span className="w-2 h-2 shrink-0" />}
 
-              {/* Middle: color label + SKU (multi-variant only shows SKU) */}
-              <div className="flex-1 min-w-0">
-                {multi ? (
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {color && <span className="text-xs text-slate-700 font-semibold">{color}</span>}
-                    <span className="font-mono text-[10px] text-slate-400 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded leading-none">
-                      {p.sku}
-                    </span>
-                  </div>
-                ) : (
-                  /* Single variant row: just action context label */
-                  <span className="text-xs text-slate-400">Quick receive / edit</span>
+              {/* Label: stacked color + SKU */}
+              <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                {multi && color && (
+                  <span className="text-[11px] font-semibold text-slate-700 leading-none">{color}</span>
                 )}
+                <span className="font-mono text-[10px] text-slate-400 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded w-fit leading-none truncate max-w-full">
+                  {p.sku}
+                </span>
               </div>
 
-              {/* Stock (multi only — single shows in header) */}
+              {/* Stock (multi only) */}
               {multi && (
-                <div className="text-right shrink-0">
-                  <span className={`text-sm font-bold tabular-nums ${empty ? 'text-red-500' : low ? 'text-yellow-600' : 'text-slate-800'}`}>
-                    {p.stock_level.toLocaleString()}
-                  </span>
-                  <span className="text-xs text-slate-400 ml-1">{p.unit}</span>
-                </div>
+                <span className={`text-sm font-bold tabular-nums shrink-0 ${empty ? 'text-red-500' : low ? 'text-yellow-600' : 'text-slate-800'}`}>
+                  {p.stock_level.toLocaleString()}
+                  <span className="text-[10px] font-normal text-slate-400 ml-0.5">{p.unit}</span>
+                </span>
               )}
 
               {/* Actions */}
-              <div className="flex items-center gap-0.5 shrink-0">
-                {multi && stockBadge(p)}
+              <div className="flex items-center gap-0.5 shrink-0 ml-1">
                 <button onClick={() => onReceive(p)} title="Receive stock"
                   className="p-1.5 rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors">
-                  <ArrowDownToLine size={12} />
+                  <ArrowDownToLine size={11} />
                 </button>
                 <button onClick={() => onEdit(p)} title="Edit"
                   className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
-                  <Pencil size={12} />
+                  <Pencil size={11} />
                 </button>
                 <button onClick={() => onDelete(p)} title="Delete"
                   className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
-                  <Trash2 size={12} />
+                  <Trash2 size={11} />
                 </button>
               </div>
             </div>
@@ -692,7 +684,7 @@ export default function InventoryPage() {
             rawGrouped.map(({ cat, groups }) => (
               <div key={cat}>
                 <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">{cat}</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                   {groups.map(g => (
                     <RawMaterialGroupCard key={g.base + g.category} group={g}
                       onReceive={p => { setReceiveProduct(p); setReceiveForm({ qty: '1', note: '' }); setReceiveError(''); }}
