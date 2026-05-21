@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, Pencil, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { getTargets, createTarget, updateTarget, deleteTarget } from '@/services/productionTargets.service';
-import { getRecipes } from '@/services/production.service';
-import { getProducts } from '@/services/inventory.service';
+import { getRecipes, checkFeasibility } from '@/services/production.service';
+import { getProducts, addUnverifiedStock } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
 import type { ProductionTarget, ProductionStage, Recipe, Product } from '@/types';
 
@@ -57,6 +57,15 @@ export default function DailyPlanning() {
   const [saving, setSaving]         = useState(false);
   const [error, setError]           = useState('');
 
+  // Feasibility gate state
+  type Shortfall = { productId: string; need: number; have: number };
+  const [feasibilityDialog, setFeasibilityDialog] = useState<{
+    shortfalls: Shortfall[];
+    maxProducible: number;
+    pendingPayload: Omit<ProductionTarget, 'id' | 'createdAt'>;
+  } | null>(null);
+  const [feasSaving, setFeasSaving] = useState(false);
+
   const load = () => {
     setLoading(true);
     Promise.all([getTargets(date), getRecipes(), getProducts()])
@@ -97,6 +106,7 @@ export default function DailyPlanning() {
     if (form.type === 'recipe' && !form.recipeId) { setError('Select a recipe.'); return; }
     setError(''); setSaving(true);
     try {
+      const qty = Number(form.targetQty);
       const payload: Omit<ProductionTarget, 'id' | 'createdAt'> = {
         date,
         type: form.type,
@@ -104,7 +114,7 @@ export default function DailyPlanning() {
         discType:    form.type === 'stage' ? form.discType : undefined,
         recipeId:    form.type === 'recipe' ? form.recipeId : undefined,
         recipeName:  form.type === 'recipe' ? form.recipeName : undefined,
-        targetQty:   Number(form.targetQty),
+        targetQty:   qty,
         completedQty: editTarget?.completedQty ?? 0,
         deadline:    form.deadline,
         deadlineTime: form.deadlineTime || undefined,
@@ -112,6 +122,21 @@ export default function DailyPlanning() {
         status:      form.status,
         notes:       form.notes || undefined,
       };
+      // Feasibility gate for new recipe targets only
+      if (form.type === 'recipe' && !editTarget) {
+        const { feasible, shortfalls } = await checkFeasibility(form.recipeId, qty);
+        if (!feasible) {
+          const recipe = recipes.find(r => r.id === form.recipeId);
+          const components = recipe?.components ?? [];
+          const stockMap = new Map(products.map(p => [p.id, p.stock_level]));
+          const maxProducible = shortfalls.length > 0
+            ? Math.min(...components.map(c => Math.floor((stockMap.get(c.productId) ?? 0) / c.quantity)))
+            : qty;
+          setFeasibilityDialog({ shortfalls, maxProducible: Math.max(0, maxProducible), pendingPayload: payload });
+          setSaving(false);
+          return;
+        }
+      }
       if (editTarget) {
         await updateTarget(editTarget.id, payload);
       } else {
@@ -121,6 +146,29 @@ export default function DailyPlanning() {
       load();
     } catch { setError('Failed to save.'); }
     finally { setSaving(false); }
+  };
+
+  const handleFeasibilityAutoAdjust = async () => {
+    if (!feasibilityDialog) return;
+    setFeasSaving(true);
+    try {
+      const adjusted = { ...feasibilityDialog.pendingPayload, targetQty: feasibilityDialog.maxProducible };
+      await createTarget(adjusted);
+      setFeasibilityDialog(null); setShowModal(false); load();
+    } finally { setFeasSaving(false); }
+  };
+
+  const handleFeasibilityUnverified = async () => {
+    if (!feasibilityDialog) return;
+    setFeasSaving(true);
+    try {
+      for (const sf of feasibilityDialog.shortfalls) {
+        const shortAmount = sf.need - sf.have;
+        await addUnverifiedStock(sf.productId, shortAmount, `Production target: ${feasibilityDialog.pendingPayload.recipeName ?? ''}`);
+      }
+      await createTarget(feasibilityDialog.pendingPayload);
+      setFeasibilityDialog(null); setShowModal(false); load();
+    } finally { setFeasSaving(false); }
   };
 
   const handleDelete = async (t: ProductionTarget) => {
@@ -386,6 +434,66 @@ export default function DailyPlanning() {
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* Feasibility Gate Dialog */}
+      {feasibilityDialog && (
+        <Modal title="Insufficient Stock" onClose={() => setFeasibilityDialog(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-700">
+              Not enough raw materials to produce <span className="font-semibold">{feasibilityDialog.pendingPayload.targetQty}</span> units.
+            </p>
+            <div className="bg-red-50 border border-red-200 rounded-lg overflow-hidden">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-red-100 text-red-700">
+                    <th className="text-left px-3 py-2">Component</th>
+                    <th className="text-right px-3 py-2">Need</th>
+                    <th className="text-right px-3 py-2">Have</th>
+                    <th className="text-right px-3 py-2">Short</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {feasibilityDialog.shortfalls.map(sf => {
+                    const p = products.find(p => p.id === sf.productId);
+                    return (
+                      <tr key={sf.productId} className="border-t border-red-100">
+                        <td className="px-3 py-2 text-slate-700">{p?.name ?? sf.productId}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-600">{sf.need}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-600">{sf.have}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-red-600 font-semibold">−{sf.need - sf.have}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex flex-col gap-2 pt-1">
+              <button
+                onClick={handleFeasibilityAutoAdjust}
+                disabled={feasSaving || feasibilityDialog.maxProducible <= 0}
+                className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                {feasibilityDialog.maxProducible > 0
+                  ? `Auto-adjust to ${feasibilityDialog.maxProducible} units`
+                  : 'Cannot produce any (stock at zero)'}
+              </button>
+              <button
+                onClick={handleFeasibilityUnverified}
+                disabled={feasSaving}
+                className="w-full py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50"
+              >
+                Use unverified stock &amp; keep {feasibilityDialog.pendingPayload.targetQty} units
+              </button>
+              <button
+                onClick={() => setFeasibilityDialog(null)}
+                className="w-full py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
     </div>

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, FlaskConical, ArrowDownToLine, ChevronDown, Search, FileText, X, Pencil, Trash2, PackagePlus, FileDown } from 'lucide-react';
 import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
-import { getProducts, addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch } from '@/services/inventory.service';
+import { getProducts, addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch, reconcileUnverifiedStock } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
 import type { Product, ProductType, InventoryMovement } from '@/types';
@@ -545,14 +545,19 @@ export default function InventoryPage() {
   const [receiveForm, setReceiveForm]       = useState({ qty: '1', note: '' });
   const [receiveSaving, setReceiveSaving]   = useState(false);
   const [receiveError, setReceiveError]     = useState('');
+  const [reconcileOnReceive, setReconcileOnReceive] = useState(false);
 
   const handleReceive = async (e: FormEvent) => {
     e.preventDefault();
     if (!receiveProduct) return;
     setReceiveError(''); setReceiveSaving(true);
     try {
-      await adjustStock(receiveProduct.id, Number(receiveForm.qty), 'PURCHASE', receiveForm.note || undefined);
-      setReceiveProduct(null); setReceiveForm({ qty: '1', note: '' }); load();
+      const qty = Number(receiveForm.qty);
+      await adjustStock(receiveProduct.id, qty, 'PURCHASE', receiveForm.note || undefined);
+      if (reconcileOnReceive && (receiveProduct.unverified_stock ?? 0) > 0) {
+        await reconcileUnverifiedStock(receiveProduct.id, Math.min(qty, receiveProduct.unverified_stock ?? 0));
+      }
+      setReceiveProduct(null); setReceiveForm({ qty: '1', note: '' }); setReconcileOnReceive(false); load();
     } catch { setReceiveError('Failed to record receipt.'); }
     finally { setReceiveSaving(false); }
   };
@@ -693,6 +698,40 @@ export default function InventoryPage() {
                 </div>
               </div>
             ))
+          )}
+
+          {/* Unverified Stock Section */}
+          {rawMaterials.some(p => (p.unverified_stock ?? 0) > 0) && (
+            <div className="bg-amber-50 rounded-xl border border-amber-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-amber-200 flex items-center gap-2">
+                <span className="text-amber-600 font-bold text-base">⚠</span>
+                <h2 className="text-sm font-semibold text-amber-800">Unverified Stock</h2>
+                <span className="text-xs text-amber-600 ml-1">Stock used in production without a matching supply receipt</span>
+              </div>
+              <div className="divide-y divide-amber-100">
+                {rawMaterials.filter(p => (p.unverified_stock ?? 0) > 0).map(p => (
+                  <div key={p.id} className="px-5 py-3 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-800">{p.name}</p>
+                      <p className="text-xs font-mono text-slate-400">{p.sku}</p>
+                    </div>
+                    <span className="px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold tabular-nums">
+                      {p.unverified_stock} {p.unit}
+                    </span>
+                    <button
+                      onClick={async () => {
+                        if (!confirm(`Reconcile all ${p.unverified_stock} ${p.unit} of unverified stock for "${p.name}"?`)) return;
+                        await reconcileUnverifiedStock(p.id, p.unverified_stock ?? 0);
+                        load();
+                      }}
+                      className="px-3 py-1.5 text-xs font-medium text-amber-700 border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors"
+                    >
+                      Reconcile
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* Supply Receipt History */}
@@ -936,7 +975,7 @@ export default function InventoryPage() {
 
       {/* ── Quick Single-Item Receive Modal ─────────────────────── */}
       {receiveProduct && (
-        <Modal title="Quick Receive" onClose={() => { setReceiveProduct(null); setReceiveError(''); }}>
+        <Modal title="Quick Receive" onClose={() => { setReceiveProduct(null); setReceiveError(''); setReconcileOnReceive(false); }}>
           <form onSubmit={handleReceive} className="space-y-4">
             <div className="bg-slate-50 rounded-lg px-4 py-3">
               {receiveProduct.category && (
@@ -963,6 +1002,21 @@ export default function InventoryPage() {
                 placeholder="e.g. DISC-2025-S5"
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
+            {(receiveProduct.unverified_stock ?? 0) > 0 && (
+              <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                <input
+                  type="checkbox"
+                  id="reconcile-toggle"
+                  checked={reconcileOnReceive}
+                  onChange={e => setReconcileOnReceive(e.target.checked)}
+                  className="mt-0.5 accent-amber-600"
+                />
+                <label htmlFor="reconcile-toggle" className="text-xs text-amber-800 cursor-pointer">
+                  <span className="font-semibold">Apply {Math.min(Number(receiveForm.qty) || 0, receiveProduct.unverified_stock ?? 0)} {receiveProduct.unit} to reconcile unverified stock</span>
+                  <span className="block text-amber-600 mt-0.5">This product has {receiveProduct.unverified_stock} {receiveProduct.unit} of unverified stock</span>
+                </label>
+              </div>
+            )}
             {receiveError && <p className="text-red-600 text-sm">{receiveError}</p>}
             <div className="flex gap-3 pt-1">
               <button type="submit" disabled={receiveSaving}

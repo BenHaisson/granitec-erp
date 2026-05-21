@@ -3,7 +3,7 @@ import { Plus, X, ShoppingBag, Download, Eye, Pencil, FileDown } from 'lucide-re
 import { getOrders, createOrder, updateOrder, generateOrderRef } from '@/services/orders.service';
 import { getProducts } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
-import type { SalesOrder, SalesOrderLine, Product, PaymentStatus, DeliveryStatus } from '@/types';
+import type { SalesOrder, SalesOrderLine, Product } from '@/types';
 
 // ── Color helpers (mirrors WarehousePage) ────────────────────────
 const COLOR_NAMES = ['Black', 'Gray', 'Cream', 'Blue', 'Red'] as const;
@@ -357,26 +357,6 @@ function downloadSalesReport(orders: SalesOrder[], products: Product[]) {
   URL.revokeObjectURL(url);
 }
 
-// ── Status badge helpers ──────────────────────────────────────────
-const PAYMENT_LABELS: Record<PaymentStatus, string> = { unpaid: 'Unpaid', partial: 'Partial', paid: 'Paid' };
-const DELIVERY_LABELS: Record<DeliveryStatus, string> = { pending: 'Pending', shipped: 'Shipped', delivered: 'Delivered' };
-
-const PAYMENT_STYLE: Record<PaymentStatus, string> = {
-  unpaid:  'bg-red-100 text-red-700 hover:bg-red-200',
-  partial: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200',
-  paid:    'bg-green-100 text-green-700 hover:bg-green-200',
-};
-const DELIVERY_STYLE: Record<DeliveryStatus, string> = {
-  pending:   'bg-slate-100 text-slate-600 hover:bg-slate-200',
-  shipped:   'bg-blue-100 text-blue-700 hover:bg-blue-200',
-  delivered: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200',
-};
-
-const PAYMENT_CYCLE: PaymentStatus[] = ['unpaid', 'partial', 'paid'];
-const DELIVERY_CYCLE: DeliveryStatus[] = ['pending', 'shipped', 'delivered'];
-
-function nextPayment(s?: PaymentStatus): PaymentStatus { const i = PAYMENT_CYCLE.indexOf(s ?? 'unpaid'); return PAYMENT_CYCLE[(i + 1) % 3]; }
-function nextDelivery(s?: DeliveryStatus): DeliveryStatus { const i = DELIVERY_CYCLE.indexOf(s ?? 'pending'); return DELIVERY_CYCLE[(i + 1) % 3]; }
 
 // ── Product picker (categories accordion) ────────────────────────
 const CATEGORY_ORDER = ['Sets & Packs', 'Marmite', 'Crepe & Specialty', 'Frypans', 'Saucepots', 'Cake & Molds'];
@@ -896,8 +876,6 @@ export default function SalesPage() {
                 <th className="px-4 py-3">Client</th>
                 <th className="px-4 py-3">Products</th>
                 <th className="px-4 py-3 text-right">Total pcs</th>
-                <th className="px-4 py-3">Payment</th>
-                <th className="px-4 py-3">Delivery</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
@@ -916,24 +894,6 @@ export default function SalesPage() {
                       {order.lines.map(l => l.sku).join(', ')}
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-800 tabular-nums">{totalQty}</td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => updateOrder({ ...order, paymentStatus: nextPayment(order.paymentStatus) }).then(load)}
-                        className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${PAYMENT_STYLE[order.paymentStatus ?? 'unpaid']}`}
-                        title="Click to cycle status"
-                      >
-                        {PAYMENT_LABELS[order.paymentStatus ?? 'unpaid']}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => updateOrder({ ...order, deliveryStatus: nextDelivery(order.deliveryStatus) }).then(load)}
-                        className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${DELIVERY_STYLE[order.deliveryStatus ?? 'pending']}`}
-                        title="Click to cycle status"
-                      >
-                        {DELIVERY_LABELS[order.deliveryStatus ?? 'pending']}
-                      </button>
-                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end">
                         <button onClick={() => setDetail(order)}
