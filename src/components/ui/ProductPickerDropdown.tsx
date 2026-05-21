@@ -114,7 +114,7 @@ export default function ProductPickerDropdown({
 
       {/* Dropdown panel */}
       {open && (
-        <div className={`absolute z-50 left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
+        <div className={`absolute z-[200] left-0 min-w-[280px] w-full bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
           {/* Search */}
           <div className="p-2 border-b border-slate-100">
             <div className="relative">
