@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Database, AlertTriangle, ShoppingBag, Layers, Wrench } from 'lucide-react';
+import { Database, AlertTriangle, ShoppingBag, Layers, Wrench, BookOpen, BookMarked, Cpu } from 'lucide-react';
 import { getProducts, upsertProduct, deleteAllProducts, seedDiscHistory, deleteDiscHistory, deleteAllAccessories } from '@/services/inventory.service';
 import { getOrders, seedHistoricalOrders, deleteAllOrders } from '@/services/orders.service';
+import { getRecipes, upsertRecipe, deleteAllRecipes } from '@/services/production.service';
+import { getMachines, upsertMachine, deleteAllMachines, getLibraryItems, upsertLibraryItem, deleteAllLibraryItems } from '@/services/library.service';
 import { SEED_PRODUCTS } from '@/data/seedProducts';
 import { SEED_ORDERS } from '@/data/seedOrders';
 import { DISC_PRODUCTS, DISC_MOVEMENTS } from '@/data/seedDiscs';
 import { ACCESSORIES } from '@/data/seedAccessories';
+import { SEED_RECIPES } from '@/data/seedRecipes';
+import { MACHINES } from '@/data/seedMachines';
+import { LIBRARY_ITEMS } from '@/data/seedLibrary';
 
 const isLive = import.meta.env.VITE_APP_MODE === 'live';
 
@@ -26,6 +31,18 @@ export default function SettingsPage() {
   const [discMessage, setDiscMessage] = useState('');
   const [accMessage, setAccMessage] = useState('');
   const [accCount, setAccCount] = useState<number | null>(null);
+  const [recipeRunning, setRecipeRunning] = useState(false);
+  const [recipeStatus, setRecipeStatus] = useState<'idle' | 'done' | 'error'>('idle');
+  const [recipeMessage, setRecipeMessage] = useState('');
+  const [recipeCount, setRecipeCount] = useState<number | null>(null);
+  const [machineRunning, setMachineRunning] = useState(false);
+  const [machineStatus, setMachineStatus] = useState<'idle' | 'done' | 'error'>('idle');
+  const [machineMessage, setMachineMessage] = useState('');
+  const [machineCount, setMachineCount] = useState<number | null>(null);
+  const [libRunning, setLibRunning] = useState(false);
+  const [libStatus, setLibStatus] = useState<'idle' | 'done' | 'error'>('idle');
+  const [libMessage, setLibMessage] = useState('');
+  const [libCount, setLibCount] = useState<number | null>(null);
 
   const refreshCounts = () => {
     getProducts().then(p => {
@@ -34,6 +51,9 @@ export default function SettingsPage() {
       setAccCount(p.filter(x => x.type === 'RAW' && x.category === 'Accessories').length);
     });
     getOrders().then(o => setOrderCount(o.length));
+    getRecipes().then(r => setRecipeCount(r.length));
+    getMachines().then(m => setMachineCount(m.length));
+    getLibraryItems().then(l => setLibCount(l.length));
   };
 
   useEffect(() => { refreshCounts(); }, []);
@@ -158,6 +178,83 @@ export default function SettingsPage() {
     } finally {
       setAccRunning(false);
     }
+  };
+
+  const handleSeedRecipes = async () => {
+    if (!confirm(`Delete all existing recipes and import ${SEED_RECIPES.length} from seed file?`)) return;
+    setRecipeRunning(true); setRecipeStatus('idle');
+    try {
+      await deleteAllRecipes();
+      for (const r of SEED_RECIPES) {
+        await upsertRecipe({ finishedProductId: r.finishedProductSku, components: r.components.map(c => ({ productId: c.productSku, quantity: c.quantity })) });
+      }
+      refreshCounts();
+      setRecipeStatus('done');
+      setRecipeMessage(`${SEED_RECIPES.length} recipes imported.`);
+    } catch {
+      setRecipeStatus('error');
+      setRecipeMessage('Failed to import recipes. Check Firestore rules.');
+    } finally { setRecipeRunning(false); }
+  };
+
+  const handleDeleteRecipes = async () => {
+    if (!confirm(`Delete all ${recipeCount} recipes? This cannot be undone.`)) return;
+    setRecipeRunning(true); setRecipeStatus('idle');
+    try {
+      await deleteAllRecipes(); refreshCounts();
+      setRecipeStatus('done'); setRecipeMessage('All recipes deleted.');
+    } catch { setRecipeStatus('error'); setRecipeMessage('Failed to delete recipes.'); }
+    finally { setRecipeRunning(false); }
+  };
+
+  const handleSeedMachines = async () => {
+    if (!confirm(`Delete all existing machines/tools and import ${MACHINES.length} entries?`)) return;
+    setMachineRunning(true); setMachineStatus('idle');
+    try {
+      await deleteAllMachines();
+      for (const m of MACHINES) await upsertMachine(m);
+      refreshCounts();
+      setMachineStatus('done');
+      setMachineMessage(`${MACHINES.length} machines & tools imported.`);
+    } catch {
+      setMachineStatus('error');
+      setMachineMessage('Failed to import machines. Check Firestore rules.');
+    } finally { setMachineRunning(false); }
+  };
+
+  const handleDeleteMachines = async () => {
+    if (!confirm(`Delete all ${machineCount} machines & tools?`)) return;
+    setMachineRunning(true); setMachineStatus('idle');
+    try {
+      await deleteAllMachines(); refreshCounts();
+      setMachineStatus('done'); setMachineMessage('All machines deleted.');
+    } catch { setMachineStatus('error'); setMachineMessage('Failed to delete machines.'); }
+    finally { setMachineRunning(false); }
+  };
+
+  const handleSeedLibrary = async () => {
+    if (!confirm(`Delete all existing library items and import ${LIBRARY_ITEMS.length} entries?`)) return;
+    setLibRunning(true); setLibStatus('idle');
+    try {
+      await deleteAllLibraryItems();
+      for (const item of LIBRARY_ITEMS) await upsertLibraryItem(item);
+      refreshCounts();
+      setLibStatus('done');
+      setLibMessage(`${LIBRARY_ITEMS.length} library items imported.`);
+    } catch {
+      setLibStatus('error');
+      setLibMessage('Failed to import library. Check Firestore rules.');
+    } finally { setLibRunning(false); }
+  };
+
+  const handleDeleteLibrary = async () => {
+    if (!confirm(`Delete all ${libCount} library items?`)) return;
+    setLibRunning(true); setLibStatus('idle');
+    try {
+      await deleteAllLibraryItems(); refreshCounts();
+      setLibStatus('done'); setLibMessage('All library items deleted.');
+    } catch { setLibStatus('error'); setLibMessage('Failed to delete library.'); }
+    finally { setLibRunning(false); }
   };
 
   const hasProducts  = productCount !== null && productCount > 0;
@@ -340,6 +437,99 @@ export default function SettingsPage() {
         {!isLive && ordersStatus === 'error' && (
           <p className="mt-4 text-red-600 text-sm">{ordersMessage}</p>
         )}
+      </div>
+
+      {/* BOM Recipes */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-violet-50 rounded-lg flex items-center justify-center shrink-0">
+              <BookOpen size={20} className="text-violet-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-800">BOM Recipes</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {recipeCount === null ? 'Loading...' : `${recipeCount} recipes in Firestore · Seed file has ${SEED_RECIPES.length} recipes`}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button onClick={handleSeedRecipes} disabled={recipeRunning || recipeCount === null}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-violet-600 text-white hover:bg-violet-700">
+              {recipeRunning ? 'Working…' : 'Delete & Re-import'}
+            </button>
+            {(recipeCount ?? 0) > 0 && (
+              <button onClick={handleDeleteRecipes} disabled={recipeRunning}
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">
+                Delete all
+              </button>
+            )}
+          </div>
+        </div>
+        {recipeStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{recipeMessage}</p>}
+        {recipeStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{recipeMessage}</p>}
+      </div>
+
+      {/* Machines & Tools */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-orange-50 rounded-lg flex items-center justify-center shrink-0">
+              <Cpu size={20} className="text-orange-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Machines & Tools</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {machineCount === null ? 'Loading...' : `${machineCount} entries in Firestore · Catalog has ${MACHINES.length} entries`}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button onClick={handleSeedMachines} disabled={machineRunning || machineCount === null}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-orange-600 text-white hover:bg-orange-700">
+              {machineRunning ? 'Working…' : 'Delete & Re-import'}
+            </button>
+            {(machineCount ?? 0) > 0 && (
+              <button onClick={handleDeleteMachines} disabled={machineRunning}
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">
+                Delete all
+              </button>
+            )}
+          </div>
+        </div>
+        {machineStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{machineMessage}</p>}
+        {machineStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{machineMessage}</p>}
+      </div>
+
+      {/* Library — Guides, SOPs, Standards */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-teal-50 rounded-lg flex items-center justify-center shrink-0">
+              <BookMarked size={20} className="text-teal-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Library — Guides, SOPs & Standards</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {libCount === null ? 'Loading...' : `${libCount} items in Firestore · Catalog has ${LIBRARY_ITEMS.length} items`}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button onClick={handleSeedLibrary} disabled={libRunning || libCount === null}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-teal-600 text-white hover:bg-teal-700">
+              {libRunning ? 'Working…' : 'Delete & Re-import'}
+            </button>
+            {(libCount ?? 0) > 0 && (
+              <button onClick={handleDeleteLibrary} disabled={libRunning}
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">
+                Delete all
+              </button>
+            )}
+          </div>
+        </div>
+        {libStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{libMessage}</p>}
+        {libStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{libMessage}</p>}
       </div>
     </div>
   );

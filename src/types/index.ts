@@ -74,3 +74,28 @@ export interface SalesOrder {
   paymentStatus?: PaymentStatus;
   deliveryStatus?: DeliveryStatus;
 }
+
+export type MachineType = 'machine' | 'tool';
+
+export interface Machine {
+  id: string;
+  name: string;
+  type: MachineType;
+  category?: string;
+  capacity?: string;
+  settings?: string;
+  notes?: string;
+  sort_order?: number;
+}
+
+export type LibraryCategory = 'guide' | 'sop' | 'standard' | 'spec';
+
+export interface LibraryItem {
+  id: string;
+  title: string;
+  category: LibraryCategory;
+  subcategory?: string;
+  content: string;
+  tags?: string[];
+  sort_order?: number;
+}

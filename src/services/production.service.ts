@@ -1,8 +1,8 @@
 import {
-  collection, addDoc, getDocs, doc, runTransaction, Timestamp, setDoc, deleteDoc, updateDoc,
+  collection, addDoc, getDocs, doc, runTransaction, Timestamp, setDoc, deleteDoc, updateDoc, writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
-import type { ProductionOrder, Recipe } from '@/types';
+import type { ProductionOrder, Recipe, RecipeItem } from '@/types';
 
 export const getRecipes = async (): Promise<Recipe[]> => {
   const snap = await getDocs(collection(db, 'recipes'));
@@ -55,6 +55,23 @@ export const createProductionOrder = (recipeId: string, quantity: number) =>
 
 export const startProductionOrder = (orderId: string) =>
   updateDoc(doc(db, 'production_orders', orderId), { status: 'IN_PROGRESS', updatedAt: Timestamp.now() });
+
+export const upsertRecipe = async (recipe: { finishedProductId: string; components: RecipeItem[] }): Promise<void> => {
+  await setDoc(doc(db, 'recipes', recipe.finishedProductId), {
+    finishedProductId: recipe.finishedProductId,
+    components: recipe.components,
+  });
+};
+
+export const deleteAllRecipes = async (): Promise<void> => {
+  const snap = await getDocs(collection(db, 'recipes'));
+  const BATCH_SIZE = 400;
+  for (let i = 0; i < snap.docs.length; i += BATCH_SIZE) {
+    const batch = writeBatch(db);
+    snap.docs.slice(i, i + BATCH_SIZE).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+};
 
 export const validateAndCompleteProduction = async (orderId: string) => {
   await runTransaction(db, async (tx) => {
