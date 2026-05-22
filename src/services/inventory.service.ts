@@ -1,11 +1,16 @@
 import {
-  collection, addDoc, getDocs, doc, setDoc, deleteDoc, updateDoc, runTransaction, Timestamp, writeBatch,
+  collection, addDoc, getDocs, getDocsFromServer, doc, setDoc, deleteDoc, updateDoc, runTransaction, Timestamp, writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { Product, InventoryMovement } from '@/types';
 
 export const getProducts = async (): Promise<Product[]> => {
   const snap = await getDocs(collection(db, 'products'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() } as Product));
+};
+
+export const getProductsFresh = async (): Promise<Product[]> => {
+  const snap = await getDocsFromServer(collection(db, 'products'));
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as Product));
 };
 

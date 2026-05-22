@@ -4,11 +4,11 @@ import {
   BookOpen, BookMarked, Cpu, CheckCircle2, RefreshCw, Bell,
 } from 'lucide-react';
 import {
-  getProducts, upsertProduct, deleteAllProducts,
+  getProducts, getProductsFresh, upsertProduct, deleteAllProducts,
   seedDiscHistory, deleteDiscHistory, deleteAllAccessories,
   recalculateStockFromMovements, deleteAllMovements, resetAllStockToZero,
 } from '@/services/inventory.service';
-import { getOrders, seedHistoricalOrders, deleteAllOrders, backfillSalesMovements } from '@/services/orders.service';
+import { getOrders, deleteAllOrders, backfillSalesMovements } from '@/services/orders.service';
 import {
   getRecipes, upsertRecipe, deleteAllRecipes,
   backfillCrepeProductionHistory, getProductionOrders, deleteAllProductionOrders,
@@ -41,15 +41,15 @@ export default function SettingsPage() {
   const [opRecipes,   setOpRecipes]   = useState<OpState>($idle);
   const [opMachines,  setOpMachines]  = useState<OpState>($idle);
   const [opLib,       setOpLib]       = useState<OpState>($idle);
-  const [opOrders,    setOpOrders]    = useState<OpState>($idle);
+
   const [opBackfill,  setOpBackfill]  = useState<OpState>($idle);
   const [opSync,      setOpSync]      = useState<OpState>($idle);
   const [opReset,     setOpReset]     = useState<OpState>($idle);
   const [resetText,   setResetText]   = useState('');
 
-  const refreshCounts = async () => {
+  const refreshCounts = async (fresh = false) => {
     const [products, orders, recipes, machines, libItems, prodOrders] = await Promise.all([
-      getProducts(), getOrders(), getRecipes(), getMachines(), getLibraryItems(), getProductionOrders(),
+      fresh ? getProductsFresh() : getProducts(), getOrders(), getRecipes(), getMachines(), getLibraryItems(), getProductionOrders(),
     ]);
     setProductCount(products.filter(x => x.type === 'FINISHED').length);
     setDiscCount(products.filter(x => x.type === 'RAW' && x.category !== 'Accessories').length);
@@ -70,7 +70,7 @@ export default function SettingsPage() {
     setter({ running: true, status: 'idle', msg: '' });
     try {
       const msg = await fn();
-      await refreshCounts();
+      await refreshCounts(true);
       setter({ running: false, status: 'done', msg });
       setTimeout(() => setter($idle), 3000);
     } catch (e) {
@@ -112,11 +112,6 @@ export default function SettingsPage() {
     await deleteAllLibraryItems();
     for (const item of LIBRARY_ITEMS) await upsertLibraryItem(item);
     return `${LIBRARY_ITEMS.length} library items synced.`;
-  });
-
-  const handleImportOrders = () => run(setOpOrders, async () => {
-    await seedHistoricalOrders(SEED_ORDERS);
-    return `${SEED_ORDERS.length} historical orders imported.`;
   });
 
   const handleBackfillCrepe = () => run(setOpBackfill, async () => {
@@ -213,13 +208,6 @@ export default function SettingsPage() {
       detail: `${libCount} in Firestore · ${LIBRARY_ITEMS.length} in catalog`,
       actionLabel: 'Sync Library',
       op: opLib, handler: handleSeedLibrary,
-    },
-    orderCount !== null && orderCount === 0 && {
-      id: 'orders', icon: <ShoppingBag size={18} />, color: 'blue',
-      title: 'No sales history found',
-      detail: `0 orders in Firestore · ${SEED_ORDERS.length} historical orders available`,
-      actionLabel: 'Import Historical Orders',
-      op: opOrders, handler: handleImportOrders,
     },
   ].filter(Boolean) as Notif[];
 
