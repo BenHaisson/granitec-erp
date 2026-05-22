@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, useRef, type FormEvent } from 'react';
 import { Plus, FlaskConical, ArrowDownToLine, ChevronDown, Search, FileText, X, Pencil, Trash2, PackagePlus, FileDown } from 'lucide-react';
 import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
 import { getProducts, addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch, reconcileUnverifiedStock } from '@/services/inventory.service';
@@ -456,7 +456,311 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
-type ReceiptLine = { productId: string; qty: string };
+type ReceiptLine = { productId: string; qty: string; search: string; showSuggestions: boolean; highlightIdx: number };
+
+// ── Supply Receipt Row — inline smart search ──────────────────────
+interface ReceiptRowProps {
+  line: ReceiptLine;
+  index: number;
+  rowNum: number;
+  products: Product[];
+  qtyRef: (el: HTMLInputElement | null) => void;
+  onUpdate: (patch: Partial<ReceiptLine>) => void;
+  onSelect: (p: Product) => void;
+  onRemove: () => void;
+  onQtyTab: () => void;
+}
+function ReceiptRow({ line, index, rowNum, products, qtyRef, onUpdate, onSelect, onRemove, onQtyTab }: ReceiptRowProps) {
+  const q = line.search.toLowerCase();
+  const suggestions = line.search.length > 0
+    ? products.filter(p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)).slice(0, 10)
+    : [];
+  const selectedProduct = products.find(p => p.id === line.productId);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!line.showSuggestions) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node))
+        onUpdate({ showSuggestions: false });
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [line.showSuggestions]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!line.showSuggestions || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      onUpdate({ highlightIdx: Math.min(line.highlightIdx + 1, suggestions.length - 1) });
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      onUpdate({ highlightIdx: Math.max(line.highlightIdx - 1, 0) });
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const picked = suggestions[line.highlightIdx >= 0 ? line.highlightIdx : 0];
+      if (picked) onSelect(picked);
+    } else if (e.key === 'Escape') {
+      onUpdate({ showSuggestions: false });
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3 items-center px-4 py-2.5 rounded-xl border border-slate-100 bg-white hover:border-indigo-200 hover:shadow-sm transition-all group">
+      {/* Row number */}
+      <span className="text-sm font-bold text-slate-300 tabular-nums text-center">{rowNum}</span>
+
+      {/* Smart search */}
+      <div ref={containerRef} className="relative">
+        {line.productId ? (
+          <div className="flex items-center gap-2 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg cursor-pointer"
+            onClick={() => onUpdate({ productId: '', search: '', showSuggestions: true, highlightIdx: -1 })}>
+            <span className="flex-1 text-sm font-semibold text-slate-800 truncate">{selectedProduct?.name}</span>
+            <X size={13} className="text-indigo-400 shrink-0" />
+          </div>
+        ) : (
+          <input
+            type="text"
+            value={line.search}
+            onChange={e => onUpdate({ search: e.target.value, showSuggestions: true, highlightIdx: -1 })}
+            onFocus={() => onUpdate({ showSuggestions: true })}
+            onKeyDown={handleKeyDown}
+            placeholder="Type to search material…"
+            autoComplete="off"
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white"
+          />
+        )}
+        {line.showSuggestions && suggestions.length > 0 && !line.productId && (
+          <div className="absolute z-[300] left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden">
+            <div className="max-h-56 overflow-y-auto divide-y divide-slate-50">
+              {suggestions.map((p, si) => (
+                <button
+                  key={p.id} type="button"
+                  onMouseDown={() => onSelect(p)}
+                  className={`w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors ${si === line.highlightIdx ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+                    <p className="text-xs text-slate-400 font-mono">{p.sku}</p>
+                  </div>
+                  <span className={`ml-3 text-xs font-semibold tabular-nums shrink-0 ${p.stock_level < 0 ? 'text-red-500' : p.stock_level === 0 ? 'text-orange-500' : 'text-slate-500'}`}>
+                    {p.stock_level} {p.unit}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* SKU */}
+      <span className="text-xs font-mono text-slate-400 truncate px-1">
+        {selectedProduct?.sku ?? '—'}
+      </span>
+
+      {/* Current stock */}
+      <span className={`text-sm font-bold tabular-nums text-right pr-2 ${
+        !selectedProduct ? 'text-slate-200' :
+        selectedProduct.stock_level < 0 ? 'text-red-500' :
+        selectedProduct.stock_level === 0 ? 'text-orange-400' : 'text-slate-600'
+      }`}>
+        {selectedProduct ? selectedProduct.stock_level.toLocaleString() : '—'}
+      </span>
+
+      {/* Qty input */}
+      <input
+        ref={qtyRef}
+        type="number" min="1" placeholder="0"
+        value={line.qty}
+        onChange={e => onUpdate({ qty: e.target.value })}
+        onKeyDown={e => { if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); onQtyTab(); } }}
+        className="w-full px-4 py-2 border border-slate-300 rounded-lg text-base font-bold text-right focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white tabular-nums"
+      />
+
+      {/* Remove */}
+      <button type="button" onClick={onRemove}
+        className="flex items-center justify-center w-9 h-9 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100">
+        <Trash2 size={15} />
+      </button>
+    </div>
+  );
+}
+
+// ── Full-Screen Supply Receipt ────────────────────────────────────
+interface SupplyReceiptScreenProps {
+  rawMaterials: Product[];
+  receiptRef: string; setReceiptRef: (v: string) => void;
+  receiptDate: string; setReceiptDate: (v: string) => void;
+  receiptLines: ReceiptLine[];
+  receiptTotal: number;
+  receiptSaving: boolean;
+  receiptError: string;
+  receiptRefInputRef: React.RefObject<HTMLInputElement>;
+  showImport: boolean; setShowImport: (v: boolean) => void;
+  importText: string; setImportText: (v: string) => void;
+  importWarnings: string[];
+  onAddLine: () => void;
+  onRemoveLine: (i: number) => void;
+  onUpdateLine: (i: number, patch: Partial<ReceiptLine>) => void;
+  onSelectProduct: (i: number, p: Product, refs: React.RefObject<HTMLInputElement[]>) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+  onParseImport: () => void;
+}
+function SupplyReceiptScreen({
+  rawMaterials, receiptRef, setReceiptRef, receiptDate, setReceiptDate,
+  receiptLines, receiptTotal, receiptSaving, receiptError, receiptRefInputRef,
+  showImport, setShowImport, importText, setImportText, importWarnings,
+  onAddLine, onRemoveLine, onUpdateLine, onSelectProduct, onConfirm, onClose, onParseImport,
+}: SupplyReceiptScreenProps) {
+  const qtyRefs = useRef<HTMLInputElement[]>([]);
+  const validCount = receiptLines.filter(l => l.productId && Number(l.qty) > 0).length;
+
+  const handleQtyTab = (i: number) => {
+    if (i === receiptLines.length - 1) {
+      onAddLine();
+      setTimeout(() => {
+        const inputs = document.querySelectorAll<HTMLInputElement>('[data-receipt-search]');
+        inputs[i + 1]?.focus();
+      }, 40);
+    } else {
+      qtyRefs.current[i + 1]?.focus();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-white flex flex-col overflow-hidden">
+
+      {/* ── Header ── */}
+      <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-6 py-4">
+        <div className="flex items-center gap-6 max-w-screen-xl mx-auto">
+          <button type="button" onClick={onClose}
+            className="flex items-center gap-2 text-slate-500 hover:text-slate-800 transition-colors font-medium text-sm shrink-0">
+            <X size={16} /> Cancel
+          </button>
+          <h1 className="text-lg font-bold text-slate-800 shrink-0">New Supply Receipt</h1>
+          <div className="flex items-center gap-3 flex-1">
+            <div className="flex-1 max-w-xs">
+              <input
+                ref={receiptRefInputRef}
+                type="text" value={receiptRef}
+                onChange={e => setReceiptRef(e.target.value)}
+                placeholder="Shipping Reference *"
+                className="w-full px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder:text-slate-400"
+              />
+            </div>
+            <input
+              type="date" value={receiptDate}
+              onChange={e => setReceiptDate(e.target.value)}
+              className="px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 shrink-0"
+            />
+          </div>
+          {validCount > 0 && (
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-sm font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-4 py-1.5 rounded-full">
+                {validCount} item{validCount !== 1 ? 's' : ''} · {receiptTotal.toLocaleString('fr-FR')} pcs
+              </span>
+            </div>
+          )}
+          <button
+            type="button" onClick={onConfirm} disabled={receiptSaving}
+            className="shrink-0 px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
+          >
+            {receiptSaving ? 'Saving…' : '✓ Confirm Receipt'}
+          </button>
+        </div>
+        {receiptError && (
+          <p className="mt-2 text-red-600 text-sm text-center bg-red-50 border border-red-200 rounded-lg px-4 py-2 max-w-screen-xl mx-auto">{receiptError}</p>
+        )}
+      </div>
+
+      {/* ── Column headers ── */}
+      <div className="shrink-0 bg-slate-50 border-b border-slate-200 px-6 py-2">
+        <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3 max-w-screen-xl mx-auto">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-center">#</span>
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Material</span>
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">SKU</span>
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right pr-2">Stock</span>
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right pr-1">Qty Received</span>
+          <span />
+        </div>
+      </div>
+
+      {/* ── Rows ── */}
+      <div className="flex-1 overflow-y-auto px-6 py-3">
+        <div className="space-y-1.5 max-w-screen-xl mx-auto">
+          {receiptLines.map((line, i) => (
+            <ReceiptRow
+              key={i}
+              line={line} index={i} rowNum={i + 1}
+              products={rawMaterials}
+              qtyRef={el => { if (el) qtyRefs.current[i] = el; }}
+              onUpdate={patch => onUpdateLine(i, patch)}
+              onSelect={p => onSelectProduct(i, p, qtyRefs)}
+              onRemove={() => onRemoveLine(i)}
+              onQtyTab={() => handleQtyTab(i)}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* ── Footer ── */}
+      <div className="shrink-0 border-t border-slate-200 bg-white px-6 py-3">
+        <div className="flex items-center gap-4 max-w-screen-xl mx-auto">
+          <button type="button" onClick={onAddLine}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl border-2 border-dashed border-indigo-200 text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50 transition-colors text-sm font-semibold">
+            <Plus size={15} /> Add Line
+          </button>
+          <button type="button" onClick={() => setShowImport(true)}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors text-sm font-medium">
+            <FileDown size={15} /> Import from TXT
+          </button>
+          <span className="ml-auto text-xs text-slate-400">Tab from Qty field to add next line · Esc to close search</span>
+        </div>
+      </div>
+
+      {/* ── Import TXT panel ── */}
+      {showImport && (
+        <div className="absolute inset-x-0 bottom-0 z-[110] bg-white border-t-2 border-indigo-200 shadow-2xl rounded-t-2xl px-6 pt-5 pb-6 max-w-2xl mx-auto left-0 right-0">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-base font-bold text-slate-800">Import from TXT</h3>
+            <button onClick={() => { setShowImport(false); setImportText(''); }}
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"><X size={16} /></button>
+          </div>
+          <p className="text-xs text-slate-500 mb-3">
+            One item per line — <code className="bg-slate-100 px-1 rounded">SKU QUANTITY</code> or <code className="bg-slate-100 px-1 rounded">SKU TAB QUANTITY</code>
+          </p>
+          <textarea
+            value={importText}
+            onChange={e => setImportText(e.target.value)}
+            placeholder={"DISC-175X2-B\t100\nDISC-200X2-CR\t50\nHCR-S-BK\t30"}
+            rows={6}
+            autoFocus
+            className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 resize-none"
+          />
+          {importWarnings.length > 0 && (
+            <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <p className="text-xs font-semibold text-amber-700 mb-1">⚠ Unmatched lines:</p>
+              {importWarnings.map((w, i) => <p key={i} className="text-xs text-amber-600 font-mono">{w}</p>)}
+            </div>
+          )}
+          <div className="flex gap-3 mt-4">
+            <button
+              type="button" onClick={onParseImport} disabled={!importText.trim()}
+              className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-40 transition-colors">
+              Parse &amp; Add Lines
+            </button>
+            <button
+              type="button" onClick={() => { setShowImport(false); setImportText(''); }}
+              className="flex-1 py-2.5 border-2 border-slate-200 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Main page ─────────────────────────────────────────────────────
 export default function InventoryPage() {
@@ -466,33 +770,71 @@ export default function InventoryPage() {
   const [rawCategory, setRawCategory] = useState('All');
   const [search, setSearch]           = useState('');
 
-  // ── New Supply Receipt modal ──────────────────────────────────
+  // ── New Supply Receipt full-screen ───────────────────────────
+  const EMPTY_LINE = (): ReceiptLine => ({ productId: '', qty: '', search: '', showSuggestions: false, highlightIdx: -1 });
+
   const [showReceipt, setShowReceipt] = useState(false);
   const [receiptRef, setReceiptRef]   = useState('');
   const [receiptDate, setReceiptDate] = useState(todayISO());
-  const [receiptLines, setReceiptLines] = useState<ReceiptLine[]>([{ productId: '', qty: '' }]);
+  const [receiptLines, setReceiptLines] = useState<ReceiptLine[]>([EMPTY_LINE()]);
   const [receiptSaving, setReceiptSaving] = useState(false);
   const [receiptError, setReceiptError]   = useState('');
+  const [showImport, setShowImport]       = useState(false);
+  const [importText, setImportText]       = useState('');
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+
+  const receiptRefInputRef = useRef<HTMLInputElement>(null);
 
   const openReceipt = () => {
     setReceiptRef('');
     setReceiptDate(todayISO());
-    setReceiptLines([{ productId: '', qty: '' }]);
+    setReceiptLines([EMPTY_LINE()]);
     setReceiptError('');
+    setShowImport(false);
+    setImportText('');
+    setImportWarnings([]);
     setShowReceipt(true);
+    setTimeout(() => receiptRefInputRef.current?.focus(), 80);
   };
 
-  const addReceiptLine = () => setReceiptLines(l => [...l, { productId: '', qty: '' }]);
-  const removeReceiptLine = (i: number) => setReceiptLines(l => l.filter((_, idx) => idx !== i));
+  const addReceiptLine = () => setReceiptLines(l => [...l, EMPTY_LINE()]);
+  const removeReceiptLine = (i: number) => setReceiptLines(l => l.length === 1 ? [EMPTY_LINE()] : l.filter((_, idx) => idx !== i));
   const updateReceiptLine = (i: number, patch: Partial<ReceiptLine>) =>
     setReceiptLines(l => l.map((row, idx) => idx === i ? { ...row, ...patch } : row));
 
-  const handleReceiptSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const selectReceiptProduct = (i: number, p: Product, qtyRefs: React.RefObject<HTMLInputElement[]>) => {
+    updateReceiptLine(i, { productId: p.id, search: p.name, showSuggestions: false, highlightIdx: -1 });
+    setTimeout(() => qtyRefs.current?.[i]?.focus(), 30);
+  };
+
+  const parseImportText = () => {
+    const skuMap = new Map(rawMaterials.map(p => [p.sku.toUpperCase(), p]));
+    const valid: ReceiptLine[] = [];
+    const warnings: string[] = [];
+    for (const line of importText.split('\n').map(l => l.trim()).filter(Boolean)) {
+      const parts = line.split(/[\s\t]+/);
+      const sku = parts[0];
+      const qty = Number(parts[1]);
+      const p = skuMap.get(sku?.toUpperCase());
+      if (p && qty > 0) valid.push({ productId: p.id, qty: String(qty), search: p.name, showSuggestions: false, highlightIdx: -1 });
+      else warnings.push(`${sku}: ${!p ? 'not found in catalog' : 'invalid quantity'}`);
+    }
+    setImportWarnings(warnings);
+    if (valid.length > 0) {
+      setReceiptLines(prev => {
+        const filled = prev.filter(l => l.productId);
+        return [...filled, ...valid];
+      });
+      setShowImport(false);
+      setImportText('');
+    }
+  };
+
+  const handleReceiptConfirm = async () => {
     setReceiptError('');
     if (!receiptRef.trim()) { setReceiptError('Shipping reference is required.'); return; }
     const validLines = receiptLines.filter(l => l.productId && Number(l.qty) > 0);
-    if (validLines.length === 0) { setReceiptError('Add at least one line with product and quantity.'); return; }
+    if (validLines.length === 0) { setReceiptError('Add at least one line with a product and quantity.'); return; }
     setReceiptSaving(true);
     try {
       await receiveSupplyBatch(
@@ -773,110 +1115,28 @@ export default function InventoryPage() {
         </>
       )}
 
-      {/* ── New Supply Receipt Modal ─────────────────────────────── */}
+      {/* ── New Supply Receipt — Full-Screen Overlay ─────────────── */}
       {showReceipt && (
-        <Modal title="New Supply Receipt" onClose={() => setShowReceipt(false)} className="max-w-[70vw]">
-          <form onSubmit={handleReceiptSubmit} className="flex flex-col gap-6">
-
-            {/* Ref + Date — top bar */}
-            <div className="grid grid-cols-2 gap-5">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">
-                  Shipping Reference <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text" value={receiptRef} required autoFocus
-                  onChange={e => setReceiptRef(e.target.value)}
-                  placeholder="e.g. DISC-2025-S5"
-                  className="w-full px-4 py-3 border border-slate-300 rounded-xl text-base font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">Receipt Date</label>
-                <input
-                  type="date" value={receiptDate}
-                  onChange={e => setReceiptDate(e.target.value)}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                />
-              </div>
-            </div>
-
-            {/* Lines table */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm font-semibold text-slate-700">
-                  Received Lines
-                  <span className="ml-2 text-slate-400 font-normal">({receiptLines.length} line{receiptLines.length !== 1 ? 's' : ''})</span>
-                </span>
-                {receiptTotal > 0 && (
-                  <span className="text-sm font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">
-                    {receiptLines.filter(l => l.productId && Number(l.qty) > 0).length} items · {receiptTotal.toLocaleString('fr-FR')} pcs total
-                  </span>
-                )}
-              </div>
-
-              {/* Column headers */}
-              <div className="grid grid-cols-[1fr_160px_44px] gap-3 px-3 mb-1">
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Material</span>
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right">Quantity</span>
-                <span />
-              </div>
-
-              <div className="space-y-2 max-h-[38vh] overflow-y-auto pr-1">
-                {receiptLines.map((line, i) => (
-                  <div key={i} className="grid grid-cols-[1fr_160px_44px] gap-3 items-center bg-slate-50 rounded-xl px-3 py-2 border border-slate-100 hover:border-indigo-200 transition-colors">
-                    <ProductPickerDropdown
-                      products={rawMaterials}
-                      value={line.productId}
-                      onChange={p => updateReceiptLine(i, { productId: p.id })}
-                      placeholder="Select material…"
-                    />
-                    <input
-                      type="number" min="1" placeholder="0"
-                      value={line.qty}
-                      onChange={e => updateReceiptLine(i, { qty: e.target.value })}
-                      className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base font-bold text-right focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-                    />
-                    <button
-                      type="button" onClick={() => removeReceiptLine(i)}
-                      disabled={receiptLines.length === 1}
-                      className="flex items-center justify-center w-10 h-10 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-20"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <button
-                type="button" onClick={addReceiptLine}
-                className="mt-3 flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-indigo-200 text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50 transition-colors text-sm font-semibold w-full justify-center"
-              >
-                <Plus size={16} /> Add Line
-              </button>
-            </div>
-
-            {receiptError && (
-              <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-4 py-3">{receiptError}</p>
-            )}
-
-            {/* Actions */}
-            <div className="flex gap-4 pt-2 border-t border-slate-100">
-              <button
-                type="submit" disabled={receiptSaving}
-                className="flex-1 py-3.5 bg-indigo-600 text-white rounded-xl text-base font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
-              >
-                {receiptSaving ? 'Saving…' : 'Confirm Receipt'}
-              </button>
-              <button
-                type="button" onClick={() => setShowReceipt(false)}
-                className="flex-1 py-3.5 border-2 border-slate-200 text-slate-700 rounded-xl text-base font-semibold hover:bg-slate-50 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </Modal>
+        <SupplyReceiptScreen
+          rawMaterials={rawMaterials}
+          receiptRef={receiptRef} setReceiptRef={setReceiptRef}
+          receiptDate={receiptDate} setReceiptDate={setReceiptDate}
+          receiptLines={receiptLines}
+          receiptTotal={receiptTotal}
+          receiptSaving={receiptSaving}
+          receiptError={receiptError}
+          receiptRefInputRef={receiptRefInputRef}
+          showImport={showImport} setShowImport={setShowImport}
+          importText={importText} setImportText={setImportText}
+          importWarnings={importWarnings}
+          onAddLine={addReceiptLine}
+          onRemoveLine={removeReceiptLine}
+          onUpdateLine={updateReceiptLine}
+          onSelectProduct={selectReceiptProduct}
+          onConfirm={handleReceiptConfirm}
+          onClose={() => setShowReceipt(false)}
+          onParseImport={parseImportText}
+        />
       )}
 
       {/* ── Add Raw Material Modal ───────────────────────────────── */}
