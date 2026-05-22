@@ -8,7 +8,7 @@ import {
   seedDiscHistory, deleteDiscHistory, deleteAllAccessories,
   recalculateStockFromMovements, deleteAllMovements, resetAllStockToZero,
 } from '@/services/inventory.service';
-import { getOrders, deleteAllOrders, backfillSalesMovements } from '@/services/orders.service';
+import { getOrders, seedHistoricalOrders, deleteAllOrders, backfillSalesMovements } from '@/services/orders.service';
 import {
   getRecipes, upsertRecipe, deleteAllRecipes,
   backfillCrepeProductionHistory, getProductionOrders, deleteAllProductionOrders,
@@ -42,6 +42,7 @@ export default function SettingsPage() {
   const [opMachines,  setOpMachines]  = useState<OpState>($idle);
   const [opLib,       setOpLib]       = useState<OpState>($idle);
 
+  const [opOrders,    setOpOrders]    = useState<OpState>($idle);
   const [opBackfill,  setOpBackfill]  = useState<OpState>($idle);
   const [opSync,      setOpSync]      = useState<OpState>($idle);
   const [opReset,     setOpReset]     = useState<OpState>($idle);
@@ -66,11 +67,12 @@ export default function SettingsPage() {
   const run = async (
     setter: React.Dispatch<React.SetStateAction<OpState>>,
     fn: () => Promise<string>,
+    onDone?: () => void,
   ) => {
     setter({ running: true, status: 'idle', msg: '' });
     try {
       const msg = await fn();
-      await refreshCounts(true);
+      onDone?.();
       setter({ running: false, status: 'done', msg });
       setTimeout(() => setter($idle), 3000);
     } catch (e) {
@@ -82,37 +84,47 @@ export default function SettingsPage() {
     if (productCount !== 0) await deleteAllProducts();
     for (const p of SEED_PRODUCTS) await upsertProduct(p);
     return `${SEED_PRODUCTS.length} products synced.`;
-  });
+  }, () => setProductCount(SEED_PRODUCTS.length));
 
   const handleSeedDiscs = () => run(setOpDiscs, async () => {
     await seedDiscHistory(DISC_PRODUCTS, DISC_MOVEMENTS);
     return `${DISC_PRODUCTS.length} disc products and ${DISC_MOVEMENTS.length} movements imported.`;
-  });
+  }, () => setDiscCount(DISC_PRODUCTS.length));
 
   const handleSeedAcc = () => run(setOpAcc, async () => {
     await deleteAllAccessories();
     for (const p of ACCESSORIES) await upsertProduct(p);
     return `${ACCESSORIES.length} accessories synced.`;
-  });
+  }, () => setAccCount(ACCESSORIES.length));
 
   const handleSeedRecipes = () => run(setOpRecipes, async () => {
     await deleteAllRecipes();
     for (const r of SEED_RECIPES)
       await upsertRecipe({ finishedProductId: r.finishedProductSku, components: r.components.map(c => ({ productId: c.productSku, quantity: c.quantity })) });
     return `${SEED_RECIPES.length} recipes synced.`;
-  });
+  }, () => setRecipeCount(SEED_RECIPES.length));
 
   const handleSeedMachines = () => run(setOpMachines, async () => {
     await deleteAllMachines();
     for (const m of MACHINES) await upsertMachine(m);
     return `${MACHINES.length} machines & tools synced.`;
-  });
+  }, () => setMachineCount(MACHINES.length));
 
   const handleSeedLibrary = () => run(setOpLib, async () => {
     await deleteAllLibraryItems();
     for (const item of LIBRARY_ITEMS) await upsertLibraryItem(item);
     return `${LIBRARY_ITEMS.length} library items synced.`;
-  });
+  }, () => setLibCount(LIBRARY_ITEMS.length));
+
+  const handleClearOrders = () => run(setOpOrders, async () => {
+    await deleteAllOrders();
+    return 'All sales orders deleted.';
+  }, () => setOrderCount(0));
+
+  const handleImportOrders = () => run(setOpOrders, async () => {
+    await seedHistoricalOrders(SEED_ORDERS);
+    return `${SEED_ORDERS.length} historical orders imported.`;
+  }, () => setOrderCount(prev => (prev ?? 0) + SEED_ORDERS.length));
 
   const handleBackfillCrepe = () => run(setOpBackfill, async () => {
     const count = await backfillCrepeProductionHistory();
@@ -209,6 +221,13 @@ export default function SettingsPage() {
       actionLabel: 'Sync Library',
       op: opLib, handler: handleSeedLibrary,
     },
+    orderCount !== null && orderCount > 0 && {
+      id: 'orders-clear', icon: <ShoppingBag size={18} />, color: 'red',
+      title: `Sales history has ${orderCount} orders`,
+      detail: 'Clear all historical orders to start fresh',
+      actionLabel: 'Delete All Orders',
+      op: opOrders, handler: handleClearOrders,
+    },
   ].filter(Boolean) as Notif[];
 
   const allLoaded = [productCount, discCount, accCount, recipeCount, machineCount, libCount, orderCount].every(c => c !== null);
@@ -255,17 +274,17 @@ export default function SettingsPage() {
             {notifs.map(n => (
               <div key={n.id}
                 className={`flex items-start justify-between gap-4 rounded-xl border px-5 py-4 ${
-                  n.color === 'blue'
-                    ? 'bg-blue-50 border-blue-200'
-                    : 'bg-amber-50 border-amber-200'
+                  n.color === 'red' ? 'bg-red-50 border-red-200'
+                  : n.color === 'blue' ? 'bg-blue-50 border-blue-200'
+                  : 'bg-amber-50 border-amber-200'
                 }`}>
                 <div className="flex items-start gap-3">
-                  <div className={`mt-0.5 shrink-0 ${n.color === 'blue' ? 'text-blue-500' : 'text-amber-500'}`}>
+                  <div className={`mt-0.5 shrink-0 ${n.color === 'red' ? 'text-red-500' : n.color === 'blue' ? 'text-blue-500' : 'text-amber-500'}`}>
                     {n.icon}
                   </div>
                   <div>
-                    <p className={`text-sm font-semibold ${n.color === 'blue' ? 'text-blue-800' : 'text-amber-800'}`}>{n.title}</p>
-                    <p className={`text-xs mt-0.5 ${n.color === 'blue' ? 'text-blue-600' : 'text-amber-600'}`}>{n.detail}</p>
+                    <p className={`text-sm font-semibold ${n.color === 'red' ? 'text-red-800' : n.color === 'blue' ? 'text-blue-800' : 'text-amber-800'}`}>{n.title}</p>
+                    <p className={`text-xs mt-0.5 ${n.color === 'red' ? 'text-red-600' : n.color === 'blue' ? 'text-blue-600' : 'text-amber-600'}`}>{n.detail}</p>
                     {n.op.status === 'done' && (
                       <p className="text-xs text-emerald-600 mt-1 font-medium">{n.op.msg}</p>
                     )}
@@ -278,9 +297,9 @@ export default function SettingsPage() {
                   onClick={n.handler}
                   disabled={n.op.running}
                   className={`shrink-0 px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${
-                    n.color === 'blue'
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : 'bg-amber-500 text-white hover:bg-amber-600'
+                    n.color === 'red' ? 'bg-red-600 text-white hover:bg-red-700'
+                    : n.color === 'blue' ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-amber-500 text-white hover:bg-amber-600'
                   }`}>
                   {n.op.running ? (
                     <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> Working…</span>
@@ -374,6 +393,31 @@ export default function SettingsPage() {
                 {opBackfill.running
                   ? <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> Running…</span>
                   : 'Run Backfill'}
+              </button>
+            </div>
+          </div>
+
+          {/* Import Historical Orders */}
+          <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Import Historical Orders</p>
+                <p className="text-xs text-slate-400 mt-1 max-w-md">
+                  Adds {SEED_ORDERS.length} pre-loaded historical sales orders to Firestore.
+                  Currently {orderCount ?? '…'} orders in database.
+                </p>
+                {opOrders.status === 'done' && (
+                  <p className="text-xs text-emerald-600 mt-2 font-medium">{opOrders.msg}</p>
+                )}
+                {opOrders.status === 'error' && (
+                  <p className="text-xs text-red-600 mt-2">{opOrders.msg}</p>
+                )}
+              </div>
+              <button onClick={handleImportOrders} disabled={opOrders.running}
+                className="shrink-0 px-4 py-2 rounded-lg text-sm font-semibold bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50 whitespace-nowrap">
+                {opOrders.running
+                  ? <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> Working…</span>
+                  : 'Import Historical Orders'}
               </button>
             </div>
           </div>
