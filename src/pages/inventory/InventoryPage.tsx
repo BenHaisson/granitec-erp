@@ -775,72 +775,103 @@ export default function InventoryPage() {
 
       {/* ── New Supply Receipt Modal ─────────────────────────────── */}
       {showReceipt && (
-        <Modal title="New Supply Receipt" onClose={() => setShowReceipt(false)}>
-          <form onSubmit={handleReceiptSubmit} className="space-y-5">
-            {/* Ref + Date */}
-            <div className="grid grid-cols-2 gap-3">
+        <Modal title="New Supply Receipt" onClose={() => setShowReceipt(false)} className="max-w-[70vw]">
+          <form onSubmit={handleReceiptSubmit} className="flex flex-col gap-6">
+
+            {/* Ref + Date — top bar */}
+            <div className="grid grid-cols-2 gap-5">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Shipping Ref <span className="text-red-500">*</span></label>
-                <input type="text" value={receiptRef} required
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Shipping Reference <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text" value={receiptRef} required autoFocus
                   onChange={e => setReceiptRef(e.target.value)}
                   placeholder="e.g. DISC-2025-S5"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  className="w-full px-4 py-3 border border-slate-300 rounded-xl text-base font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Date</label>
-                <input type="date" value={receiptDate}
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Receipt Date</label>
+                <input
+                  type="date" value={receiptDate}
                   onChange={e => setReceiptDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  className="w-full px-4 py-3 border border-slate-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
               </div>
             </div>
 
-            {/* Lines */}
+            {/* Lines table */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium text-slate-700">Lines</label>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-semibold text-slate-700">
+                  Received Lines
+                  <span className="ml-2 text-slate-400 font-normal">({receiptLines.length} line{receiptLines.length !== 1 ? 's' : ''})</span>
+                </span>
                 {receiptTotal > 0 && (
-                  <span className="text-xs text-indigo-600 font-semibold">
-                    {receiptLines.filter(l => l.productId && Number(l.qty) > 0).length} items · {receiptTotal.toLocaleString('fr-FR')} pcs
+                  <span className="text-sm font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">
+                    {receiptLines.filter(l => l.productId && Number(l.qty) > 0).length} items · {receiptTotal.toLocaleString('fr-FR')} pcs total
                   </span>
                 )}
               </div>
-              <div className="space-y-2">
+
+              {/* Column headers */}
+              <div className="grid grid-cols-[1fr_160px_44px] gap-3 px-3 mb-1">
+                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Material</span>
+                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right">Quantity</span>
+                <span />
+              </div>
+
+              <div className="space-y-2 max-h-[38vh] overflow-y-auto pr-1">
                 {receiptLines.map((line, i) => (
-                  <div key={i} className="flex gap-2 items-start">
-                    <div className="flex-1 min-w-0">
-                      <ProductPickerDropdown
-                        products={rawMaterials}
-                        value={line.productId}
-                        onChange={p => updateReceiptLine(i, { productId: p.id })}
-                        placeholder="Select material…"
-                      />
-                    </div>
-                    <input type="number" min="1" placeholder="Qty"
+                  <div key={i} className="grid grid-cols-[1fr_160px_44px] gap-3 items-center bg-slate-50 rounded-xl px-3 py-2 border border-slate-100 hover:border-indigo-200 transition-colors">
+                    <ProductPickerDropdown
+                      products={rawMaterials}
+                      value={line.productId}
+                      onChange={p => updateReceiptLine(i, { productId: p.id })}
+                      placeholder="Select material…"
+                    />
+                    <input
+                      type="number" min="1" placeholder="0"
                       value={line.qty}
                       onChange={e => updateReceiptLine(i, { qty: e.target.value })}
-                      className="w-24 px-3 py-2 border border-slate-300 rounded-lg text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-500 shrink-0" />
-                    <button type="button" onClick={() => removeReceiptLine(i)}
+                      className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base font-bold text-right focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                    />
+                    <button
+                      type="button" onClick={() => removeReceiptLine(i)}
                       disabled={receiptLines.length === 1}
-                      className="p-1.5 mt-1 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-30 shrink-0">
-                      <Trash2 size={14} />
+                      className="flex items-center justify-center w-10 h-10 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-20"
+                    >
+                      <Trash2 size={16} />
                     </button>
                   </div>
                 ))}
               </div>
-              <button type="button" onClick={addReceiptLine}
-                className="mt-2 flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                <Plus size={13} /> Add line
+
+              <button
+                type="button" onClick={addReceiptLine}
+                className="mt-3 flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-indigo-200 text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50 transition-colors text-sm font-semibold w-full justify-center"
+              >
+                <Plus size={16} /> Add Line
               </button>
             </div>
 
-            {receiptError && <p className="text-red-600 text-sm">{receiptError}</p>}
-            <div className="flex gap-3 pt-1">
-              <button type="submit" disabled={receiptSaving}
-                className="flex-1 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
+            {receiptError && (
+              <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-4 py-3">{receiptError}</p>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-4 pt-2 border-t border-slate-100">
+              <button
+                type="submit" disabled={receiptSaving}
+                className="flex-1 py-3.5 bg-indigo-600 text-white rounded-xl text-base font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
+              >
                 {receiptSaving ? 'Saving…' : 'Confirm Receipt'}
               </button>
-              <button type="button" onClick={() => setShowReceipt(false)}
-                className="flex-1 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
+              <button
+                type="button" onClick={() => setShowReceipt(false)}
+                className="flex-1 py-3.5 border-2 border-slate-200 text-slate-700 rounded-xl text-base font-semibold hover:bg-slate-50 transition-colors"
+              >
                 Cancel
               </button>
             </div>
