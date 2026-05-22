@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, type FormEvent } from 'react';
-import { Plus, FlaskConical, ArrowDownToLine, ChevronDown, Search, FileText, X, Pencil, Trash2, PackagePlus, FileDown } from 'lucide-react';
+import { Plus, FlaskConical, ArrowDownToLine, ChevronDown, Search, FileText, X, Pencil, Trash2, PackagePlus, FileDown, ChevronRight } from 'lucide-react';
 import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
 import { getProducts, addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch, reconcileUnverifiedStock } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
@@ -614,7 +614,20 @@ function SupplyReceiptScreen({
   onAddLine, onRemoveLine, onUpdateLine, onSelectProduct, onConfirm, onClose, onParseImport,
 }: SupplyReceiptScreenProps) {
   const qtyRefs = useRef<HTMLInputElement[]>([]);
+  const pendingQuickAdd = useRef<{ idx: number; data: Partial<ReceiptLine> } | null>(null);
+  const [quickSearch, setQuickSearch] = useState('');
   const validCount = receiptLines.filter(l => l.productId && Number(l.qty) > 0).length;
+
+  // Process pending quick-add after state updates
+  useEffect(() => {
+    if (!pendingQuickAdd.current) return;
+    const { idx, data } = pendingQuickAdd.current;
+    if (receiptLines.length > idx) {
+      onUpdateLine(idx, data);
+      pendingQuickAdd.current = null;
+      setTimeout(() => qtyRefs.current[idx]?.focus(), 40);
+    }
+  }, [receiptLines.length]);
 
   const handleQtyTab = (i: number) => {
     if (i === receiptLines.length - 1) {
@@ -628,133 +641,190 @@ function SupplyReceiptScreen({
     }
   };
 
+  const handleQuickAdd = (p: Product) => {
+    const data: Partial<ReceiptLine> = { productId: p.id, search: p.name, showSuggestions: false, highlightIdx: -1 };
+    const emptyIdx = receiptLines.findIndex(l => !l.productId);
+    if (emptyIdx >= 0) {
+      onUpdateLine(emptyIdx, data);
+      setTimeout(() => qtyRefs.current[emptyIdx]?.focus(), 40);
+    } else {
+      pendingQuickAdd.current = { idx: receiptLines.length, data };
+      onAddLine();
+    }
+  };
+
+  const qs = quickSearch.toLowerCase();
+  const sidebarProducts = qs
+    ? rawMaterials.filter(p => p.name.toLowerCase().includes(qs) || p.sku.toLowerCase().includes(qs))
+    : rawMaterials;
+  const sidebarCats = Array.from(new Set(sidebarProducts.map(p => p.category ?? 'Other')));
+  const addedIds = new Set(receiptLines.map(l => l.productId).filter(Boolean));
+
   return (
     <div className="fixed inset-0 z-[100] bg-white flex flex-col overflow-hidden">
 
       {/* ── Header ── */}
       <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-6 py-4">
-        <div className="flex items-center gap-6 max-w-screen-xl mx-auto">
+        <div className="flex items-center gap-4">
           <button type="button" onClick={onClose}
             className="flex items-center gap-2 text-slate-500 hover:text-slate-800 transition-colors font-medium text-sm shrink-0">
             <X size={16} /> Cancel
           </button>
           <h1 className="text-lg font-bold text-slate-800 shrink-0">New Supply Receipt</h1>
-          <div className="flex items-center gap-3 flex-1">
-            <div className="flex-1 max-w-xs">
-              <input
-                ref={receiptRefInputRef}
-                type="text" value={receiptRef}
-                onChange={e => setReceiptRef(e.target.value)}
-                placeholder="Shipping Reference *"
-                className="w-full px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder:text-slate-400"
-              />
-            </div>
-            <input
-              type="date" value={receiptDate}
-              onChange={e => setReceiptDate(e.target.value)}
-              className="px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 shrink-0"
-            />
-          </div>
+          <input
+            ref={receiptRefInputRef}
+            type="text" value={receiptRef}
+            onChange={e => setReceiptRef(e.target.value)}
+            placeholder="Shipping Reference *"
+            className="flex-1 max-w-xs px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder:text-slate-400"
+          />
+          <input
+            type="date" value={receiptDate}
+            onChange={e => setReceiptDate(e.target.value)}
+            className="px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 shrink-0"
+          />
           {validCount > 0 && (
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-sm font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-4 py-1.5 rounded-full">
-                {validCount} item{validCount !== 1 ? 's' : ''} · {receiptTotal.toLocaleString('fr-FR')} pcs
-              </span>
-            </div>
+            <span className="text-sm font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-4 py-1.5 rounded-full shrink-0">
+              {validCount} item{validCount !== 1 ? 's' : ''} · {receiptTotal.toLocaleString('fr-FR')} pcs
+            </span>
           )}
           <button
             type="button" onClick={onConfirm} disabled={receiptSaving}
-            className="shrink-0 px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
+            className="ml-auto shrink-0 px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
           >
             {receiptSaving ? 'Saving…' : '✓ Confirm Receipt'}
           </button>
         </div>
         {receiptError && (
-          <p className="mt-2 text-red-600 text-sm text-center bg-red-50 border border-red-200 rounded-lg px-4 py-2 max-w-screen-xl mx-auto">{receiptError}</p>
+          <p className="mt-2 text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-4 py-2">{receiptError}</p>
         )}
       </div>
 
-      {/* ── Column headers ── */}
-      <div className="shrink-0 bg-slate-50 border-b border-slate-200 px-6 py-2">
-        <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3 max-w-screen-xl mx-auto">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-center">#</span>
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Material</span>
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">SKU</span>
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right pr-2">Stock</span>
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right pr-1">Qty Received</span>
-          <span />
-        </div>
-      </div>
+      {/* ── Body: sidebar + main ── */}
+      <div className="flex flex-1 overflow-hidden">
 
-      {/* ── Rows ── */}
-      <div className="flex-1 overflow-y-auto px-6 py-3">
-        <div className="space-y-1.5 max-w-screen-xl mx-auto">
-          {receiptLines.map((line, i) => (
-            <ReceiptRow
-              key={i}
-              line={line} index={i} rowNum={i + 1}
-              products={rawMaterials}
-              qtyRef={el => { if (el) qtyRefs.current[i] = el; }}
-              onUpdate={patch => onUpdateLine(i, patch)}
-              onSelect={p => onSelectProduct(i, p, qtyRefs)}
-              onRemove={() => onRemoveLine(i)}
-              onQtyTab={() => handleQtyTab(i)}
-            />
-          ))}
+        {/* Quick Access Sidebar */}
+        <div className="w-72 shrink-0 border-r border-slate-200 flex flex-col bg-slate-50 overflow-hidden">
+          <div className="px-3 py-3 border-b border-slate-200">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Quick Add</p>
+            <div className="relative">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text" value={quickSearch}
+                onChange={e => setQuickSearch(e.target.value)}
+                placeholder="Search materials…"
+                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
+              />
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {sidebarCats.map(cat => {
+              const items = sidebarProducts
+                .filter(p => (p.category ?? 'Other') === cat)
+                .sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999));
+              return (
+                <div key={cat}>
+                  <p className="sticky top-0 px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 border-b border-slate-200">{cat}</p>
+                  {items.map(p => {
+                    const added = addedIds.has(p.id);
+                    return (
+                      <button key={p.id} type="button" onClick={() => handleQuickAdd(p)}
+                        className={`w-full text-left px-3 py-2 border-b border-slate-100 transition-colors ${added ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-white'}`}>
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-xs font-medium text-slate-700 truncate leading-tight">{p.name}</span>
+                          {added && <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />}
+                        </div>
+                        <div className="flex items-center justify-between mt-0.5">
+                          <span className="text-[10px] font-mono text-slate-400">{p.sku}</span>
+                          <span className={`text-[10px] font-bold tabular-nums ${p.stock_level < 0 ? 'text-red-500' : p.stock_level === 0 ? 'text-orange-400' : 'text-slate-400'}`}>
+                            {p.stock_level}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+          {/* Footer: import TXT */}
+          <div className="shrink-0 border-t border-slate-200 p-3">
+            <button type="button" onClick={() => setShowImport(true)}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-white transition-colors text-xs font-semibold">
+              <FileDown size={13} /> Import from TXT
+            </button>
+          </div>
         </div>
-      </div>
 
-      {/* ── Footer ── */}
-      <div className="shrink-0 border-t border-slate-200 bg-white px-6 py-3">
-        <div className="flex items-center gap-4 max-w-screen-xl mx-auto">
-          <button type="button" onClick={onAddLine}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl border-2 border-dashed border-indigo-200 text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50 transition-colors text-sm font-semibold">
-            <Plus size={15} /> Add Line
-          </button>
-          <button type="button" onClick={() => setShowImport(true)}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors text-sm font-medium">
-            <FileDown size={15} /> Import from TXT
-          </button>
-          <span className="ml-auto text-xs text-slate-400">Tab from Qty field to add next line · Esc to close search</span>
+        {/* Main: column headers + rows */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="shrink-0 bg-white border-b border-slate-100 px-4 py-2">
+            <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3">
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-center">#</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Material</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">SKU</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right pr-2">Stock</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right pr-1">Qty Received</span>
+              <span />
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1.5">
+            {receiptLines.map((line, i) => (
+              <ReceiptRow
+                key={i}
+                line={line} index={i} rowNum={i + 1}
+                products={rawMaterials}
+                qtyRef={el => { if (el) qtyRefs.current[i] = el; }}
+                onUpdate={patch => onUpdateLine(i, patch)}
+                onSelect={p => onSelectProduct(i, p, qtyRefs)}
+                onRemove={() => onRemoveLine(i)}
+                onQtyTab={() => handleQtyTab(i)}
+              />
+            ))}
+            <button type="button" onClick={onAddLine}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors text-sm font-medium mt-1">
+              <Plus size={14} /> Add Line
+            </button>
+          </div>
         </div>
       </div>
 
       {/* ── Import TXT panel ── */}
       {showImport && (
-        <div className="absolute inset-x-0 bottom-0 z-[110] bg-white border-t-2 border-indigo-200 shadow-2xl rounded-t-2xl px-6 pt-5 pb-6 max-w-2xl mx-auto left-0 right-0">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-base font-bold text-slate-800">Import from TXT</h3>
-            <button onClick={() => { setShowImport(false); setImportText(''); }}
-              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"><X size={16} /></button>
-          </div>
-          <p className="text-xs text-slate-500 mb-3">
-            One item per line — <code className="bg-slate-100 px-1 rounded">SKU QUANTITY</code> or <code className="bg-slate-100 px-1 rounded">SKU TAB QUANTITY</code>
-          </p>
-          <textarea
-            value={importText}
-            onChange={e => setImportText(e.target.value)}
-            placeholder={"DISC-175X2-B\t100\nDISC-200X2-CR\t50\nHCR-S-BK\t30"}
-            rows={6}
-            autoFocus
-            className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 resize-none"
-          />
-          {importWarnings.length > 0 && (
-            <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              <p className="text-xs font-semibold text-amber-700 mb-1">⚠ Unmatched lines:</p>
-              {importWarnings.map((w, i) => <p key={i} className="text-xs text-amber-600 font-mono">{w}</p>)}
+        <div className="absolute inset-0 z-[110] flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-bold text-slate-800">Import from TXT</h3>
+              <button onClick={() => { setShowImport(false); setImportText(''); }}
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"><X size={16} /></button>
             </div>
-          )}
-          <div className="flex gap-3 mt-4">
-            <button
-              type="button" onClick={onParseImport} disabled={!importText.trim()}
-              className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-40 transition-colors">
-              Parse &amp; Add Lines
-            </button>
-            <button
-              type="button" onClick={() => { setShowImport(false); setImportText(''); }}
-              className="flex-1 py-2.5 border-2 border-slate-200 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors">
-              Cancel
-            </button>
+            <p className="text-xs text-slate-500 mb-3">
+              One item per line — <code className="bg-slate-100 px-1 rounded">SKU QUANTITY</code> or <code className="bg-slate-100 px-1 rounded">SKU[tab]QUANTITY</code>
+            </p>
+            <textarea
+              value={importText}
+              onChange={e => setImportText(e.target.value)}
+              placeholder={"DISC-175X2-B\t100\nDISC-200X2-CR\t50\nHCR-S-BK\t30"}
+              rows={7}
+              autoFocus
+              className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 resize-none"
+            />
+            {importWarnings.length > 0 && (
+              <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <p className="text-xs font-semibold text-amber-700 mb-1">⚠ Unmatched:</p>
+                {importWarnings.map((w, wi) => <p key={wi} className="text-xs text-amber-600 font-mono">{w}</p>)}
+              </div>
+            )}
+            <div className="flex gap-3 mt-4">
+              <button type="button" onClick={onParseImport} disabled={!importText.trim()}
+                className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-40 transition-colors">
+                Parse &amp; Add Lines
+              </button>
+              <button type="button" onClick={() => { setShowImport(false); setImportText(''); }}
+                className="flex-1 py-2.5 border-2 border-slate-200 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors">
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

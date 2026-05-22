@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Plus, X, ShoppingBag, Download, Eye, Pencil, FileDown } from 'lucide-react';
+import { useEffect, useState, useRef, type FormEvent } from 'react';
+import { Plus, X, ShoppingBag, Download, Eye, Pencil, FileDown, Search } from 'lucide-react';
 import { getOrders, createOrder, updateOrder, generateOrderRef } from '@/services/orders.service';
 import { getProducts } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
@@ -358,56 +358,10 @@ function downloadSalesReport(orders: SalesOrder[], products: Product[]) {
 }
 
 
-// ── Product picker (categories accordion) ────────────────────────
+// ── Category order for finished goods ────────────────────────────
 const CATEGORY_ORDER = ['Sets & Packs', 'Marmite', 'Crepe & Specialty', 'Frypans', 'Saucepots', 'Cake & Molds'];
 
-const COLOR_DOT_PICKER: Record<ColorName, string> = {
-  Black: 'bg-gray-900', Gray: 'bg-gray-400', Cream: 'bg-amber-200',
-  Blue: 'bg-blue-500', Red: 'bg-red-500',
-};
-
-function ProductPicker({ products, onSelect }: { products: Product[]; onSelect: (p: Product) => void }) {
-  const [openCat, setOpenCat] = useState<string | null>(null);
-
-  const byCategory: Record<string, Product[]> = {};
-  for (const p of products) {
-    const cat = p.category ?? 'Other';
-    (byCategory[cat] ??= []).push(p);
-  }
-  const cats = [...CATEGORY_ORDER.filter(c => byCategory[c]), ...Object.keys(byCategory).filter(c => !CATEGORY_ORDER.includes(c))];
-
-  return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
-      {cats.map(cat => (
-        <div key={cat}>
-          <button type="button" onClick={() => setOpenCat(openCat === cat ? null : cat)}
-            className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-600 transition-colors border-b border-slate-200">
-            <span>{cat}</span>
-            <span className="text-slate-400">{openCat === cat ? '▲' : '▼'}</span>
-          </button>
-          {openCat === cat && (
-            <div className="bg-white">
-              {byCategory[cat].map(p => {
-                const parsed = extractColor(p.name);
-                const color = parsed?.color ?? null;
-                return (
-                  <button key={p.id} type="button" onClick={() => onSelect(p)}
-                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 text-left transition-colors border-b border-slate-100 last:border-0">
-                    {color && <span className={`w-3 h-3 rounded-full shrink-0 ${COLOR_DOT_PICKER[color]}`} />}
-                    <span className="text-xs text-slate-700 flex-1">{p.name}</span>
-                    <span className="text-xs font-mono text-slate-400">{p.sku}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Draft line type ───────────────────────────────────────────────
+// ── Draft line (internal form state) ─────────────────────────────
 interface DraftLine {
   productId: string;
   productName: string;
@@ -415,142 +369,380 @@ interface DraftLine {
   boxes: number;
   qtyPerBox: number;
   totalQty: number;
+  search: string;
+  showSuggestions: boolean;
+  highlightIdx: number;
 }
+const EMPTY_DRAFT = (): DraftLine => ({
+  productId: '', productName: '', sku: '',
+  boxes: 1, qtyPerBox: 1, totalQty: 1,
+  search: '', showSuggestions: false, highlightIdx: -1,
+});
 
-// ── New Order Modal ───────────────────────────────────────────────
-function NewOrderModal({ products, onClose, onSaved }: {
-  products: Product[];
-  onClose: () => void;
-  onSaved: () => void;
+// ── Sales Order Line Row ──────────────────────────────────────────
+function SalesOrderRow({ line, rowNum, products, boxesRef, onUpdate, onSelect, onRemove, onBoxesTab }: {
+  line: DraftLine; rowNum: number; products: Product[];
+  boxesRef: (el: HTMLInputElement | null) => void;
+  onUpdate: (patch: Partial<DraftLine>) => void;
+  onSelect: (p: Product) => void;
+  onRemove: () => void;
+  onBoxesTab: () => void;
 }) {
-  const [ref, setRef] = useState('');
-  const [client, setClient] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [lines, setLines] = useState<DraftLine[]>([]);
-  const [openPicker, setOpenPicker] = useState<number | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const q = line.search.toLowerCase();
+  const suggestions = line.search.length > 0
+    ? products.filter(p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)).slice(0, 10)
+    : [];
+  const selectedProduct = products.find(p => p.id === line.productId);
 
   useEffect(() => {
-    generateOrderRef().then(setRef);
-  }, []);
+    if (!line.showSuggestions) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node))
+        onUpdate({ showSuggestions: false });
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [line.showSuggestions]);
 
-  const addLine = () => {
-    const idx = lines.length;
-    setLines(prev => [...prev, { productId: '', productName: '', sku: '', boxes: 1, qtyPerBox: 1, totalQty: 1 }]);
-    setOpenPicker(idx);
-  };
-
-  const selectProduct = (idx: number, p: Product) => {
-    setLines(prev => prev.map((l, i) => i === idx
-      ? { ...l, productId: p.id, productName: p.name, sku: p.sku }
-      : l));
-    setOpenPicker(null);
-  };
-
-  const updateLine = (idx: number, field: 'boxes' | 'qtyPerBox', val: number) => {
-    setLines(prev => prev.map((l, i) => {
-      if (i !== idx) return l;
-      const boxes = field === 'boxes' ? val : l.boxes;
-      const qtyPerBox = field === 'qtyPerBox' ? val : l.qtyPerBox;
-      return { ...l, boxes, qtyPerBox, totalQty: boxes * qtyPerBox };
-    }));
-  };
-
-  const removeLine = (idx: number) => setLines(prev => prev.filter((_, i) => i !== idx));
-
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (lines.length === 0) { setError('Add at least one product line'); return; }
-    if (lines.some(l => !l.productId)) { setError('Select a product for each line'); return; }
-    setError('');
-    setSaving(true);
-    try {
-      await createOrder({ ref, client, date: new Date(date), lines: lines as SalesOrderLine[] });
-      onSaved();
-      onClose();
-    } catch {
-      setError('Failed to save order');
-    } finally {
-      setSaving(false);
-    }
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!line.showSuggestions || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); onUpdate({ highlightIdx: Math.min(line.highlightIdx + 1, suggestions.length - 1) }); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); onUpdate({ highlightIdx: Math.max(line.highlightIdx - 1, 0) }); }
+    else if (e.key === 'Enter') { e.preventDefault(); const p = suggestions[line.highlightIdx >= 0 ? line.highlightIdx : 0]; if (p) onSelect(p); }
+    else if (e.key === 'Escape') onUpdate({ showSuggestions: false });
   };
 
   return (
-    <Modal title="New Sales Order" onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-3 gap-3">
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Order Ref</label>
-            <input value={ref} readOnly className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-500 font-mono" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Client</label>
-            <input value={client} onChange={e => setClient(e.target.value)} required
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Date</label>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} required
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          </div>
-        </div>
+    <div className="grid grid-cols-[40px_1fr_140px_90px_110px_110px_90px_44px] gap-2 items-center px-4 py-2.5 rounded-xl border border-slate-100 bg-white hover:border-blue-200 hover:shadow-sm transition-all group">
+      <span className="text-sm font-bold text-slate-300 tabular-nums text-center">{rowNum}</span>
 
-        <div className="space-y-3">
-          {lines.map((line, idx) => (
-            <div key={idx} className="border border-slate-200 rounded-lg p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <button type="button" onClick={() => setOpenPicker(openPicker === idx ? null : idx)}
-                  className="flex-1 text-left text-sm px-2 py-1.5 rounded border border-slate-200 hover:bg-slate-50 transition-colors">
-                  {line.productName
-                    ? <span className="text-slate-700">{line.productName} <span className="text-slate-400 font-mono text-xs">{line.sku}</span></span>
-                    : <span className="text-slate-400">Click to select product…</span>}
+      {/* Smart search / selected chip */}
+      <div ref={containerRef} className="relative">
+        {line.productId ? (
+          <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer"
+            onClick={() => onUpdate({ productId: '', productName: '', sku: '', search: '', showSuggestions: true, highlightIdx: -1 })}>
+            <span className="flex-1 text-sm font-semibold text-slate-800 truncate">{selectedProduct?.name}</span>
+            <X size={13} className="text-blue-400 shrink-0" />
+          </div>
+        ) : (
+          <input
+            type="text" value={line.search}
+            onChange={e => onUpdate({ search: e.target.value, showSuggestions: true, highlightIdx: -1 })}
+            onFocus={() => onUpdate({ showSuggestions: true })}
+            onKeyDown={handleKeyDown}
+            placeholder="Type to search product…"
+            autoComplete="off"
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+          />
+        )}
+        {line.showSuggestions && suggestions.length > 0 && !line.productId && (
+          <div className="absolute z-[300] left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden">
+            <div className="max-h-56 overflow-y-auto divide-y divide-slate-50">
+              {suggestions.map((p, si) => (
+                <button key={p.id} type="button" onMouseDown={() => onSelect(p)}
+                  className={`w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors ${si === line.highlightIdx ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+                    <p className="text-xs text-slate-400 font-mono">{p.sku}</p>
+                  </div>
+                  <span className={`ml-3 text-xs font-semibold tabular-nums shrink-0 ${p.stock_level < 0 ? 'text-red-500' : p.stock_level === 0 ? 'text-orange-500' : 'text-slate-400'}`}>
+                    {p.stock_level}
+                  </span>
                 </button>
-                <button type="button" onClick={() => removeLine(idx)}
-                  className="ml-2 p-1.5 text-slate-400 hover:text-red-500 transition-colors">
-                  <X size={14} />
-                </button>
-              </div>
-              {openPicker === idx && (
-                <ProductPicker products={products} onSelect={p => selectProduct(idx, p)} />
-              )}
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                <div>
-                  <label className="block text-slate-500 mb-1">Boxes</label>
-                  <input type="number" min="1" value={line.boxes} onChange={e => updateLine(idx, 'boxes', Number(e.target.value))}
-                    className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                </div>
-                <div>
-                  <label className="block text-slate-500 mb-1">Qty/Box</label>
-                  <input type="number" min="1" value={line.qtyPerBox} onChange={e => updateLine(idx, 'qtyPerBox', Number(e.target.value))}
-                    className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                </div>
-                <div>
-                  <label className="block text-slate-500 mb-1">Total</label>
-                  <div className="px-2 py-1.5 border border-slate-200 rounded text-sm bg-slate-50 text-slate-700 font-semibold tabular-nums">{line.totalQty}</div>
-                </div>
-              </div>
+              ))}
             </div>
-          ))}
-          <button type="button" onClick={addLine}
-            className="w-full py-2 border-2 border-dashed border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600 rounded-lg text-sm transition-colors flex items-center justify-center gap-1.5">
-            <Plus size={14} /> Add product line
+          </div>
+        )}
+      </div>
+
+      <span className="text-xs font-mono text-slate-400 truncate px-1">{line.sku || '—'}</span>
+      <span className={`text-sm font-bold tabular-nums text-right pr-2 ${
+        !selectedProduct ? 'text-slate-200' :
+        selectedProduct.stock_level < 0 ? 'text-red-500' :
+        selectedProduct.stock_level === 0 ? 'text-orange-400' : 'text-slate-600'
+      }`}>{selectedProduct ? selectedProduct.stock_level.toLocaleString() : '—'}</span>
+
+      <input ref={boxesRef} type="number" min="1" value={line.boxes}
+        onChange={e => { const b = Math.max(1, Number(e.target.value) || 1); onUpdate({ boxes: b, totalQty: b * line.qtyPerBox }); }}
+        onKeyDown={e => { if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); onBoxesTab(); } }}
+        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-base font-bold text-right focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white tabular-nums" />
+
+      <input type="number" min="1" value={line.qtyPerBox}
+        onChange={e => { const q2 = Math.max(1, Number(e.target.value) || 1); onUpdate({ qtyPerBox: q2, totalQty: line.boxes * q2 }); }}
+        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-base font-bold text-right focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white tabular-nums" />
+
+      <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-base font-black text-right text-blue-700 tabular-nums">
+        {line.totalQty.toLocaleString()}
+      </div>
+
+      <button type="button" onClick={onRemove}
+        className="flex items-center justify-center w-9 h-9 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100">
+        <X size={15} />
+      </button>
+    </div>
+  );
+}
+
+// ── New Sales Order Full-Screen ───────────────────────────────────
+function NewOrderModal({ products, onClose, onSaved }: {
+  products: Product[]; onClose: () => void; onSaved: () => void;
+}) {
+  const [orderRef, setOrderRef] = useState('');
+  const [client, setClient]     = useState('');
+  const [date, setDate]         = useState(new Date().toISOString().slice(0, 10));
+  const [lines, setLines]       = useState<DraftLine[]>([EMPTY_DRAFT()]);
+  const [saving, setSaving]     = useState(false);
+  const [error, setError]       = useState('');
+  const [quickSearch, setQuickSearch] = useState('');
+  const [showImport, setShowImport]   = useState(false);
+  const [importText, setImportText]   = useState('');
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const clientRef = useRef<HTMLInputElement>(null);
+  const boxesRefs = useRef<HTMLInputElement[]>([]);
+  const pendingQuickAdd = useRef<{ idx: number; data: Partial<DraftLine> } | null>(null);
+
+  useEffect(() => { generateOrderRef().then(setOrderRef); }, []);
+  useEffect(() => { setTimeout(() => clientRef.current?.focus(), 80); }, []);
+
+  useEffect(() => {
+    if (!pendingQuickAdd.current) return;
+    const { idx, data } = pendingQuickAdd.current;
+    if (lines.length > idx) {
+      setLines(prev => prev.map((l, i) => i === idx ? { ...l, ...data } : l));
+      pendingQuickAdd.current = null;
+      setTimeout(() => boxesRefs.current[idx]?.focus(), 40);
+    }
+  }, [lines.length]);
+
+  const addLine = () => setLines(l => [...l, EMPTY_DRAFT()]);
+
+  const updateLine = (idx: number, patch: Partial<DraftLine>) =>
+    setLines(prev => prev.map((l, i) => i === idx ? { ...l, ...patch } : l));
+
+  const selectProduct = (idx: number, p: Product) => {
+    updateLine(idx, { productId: p.id, productName: p.name, sku: p.sku, search: p.name, showSuggestions: false, highlightIdx: -1 });
+    setTimeout(() => boxesRefs.current[idx]?.focus(), 30);
+  };
+
+  const removeLine = (idx: number) =>
+    setLines(prev => prev.length === 1 ? [EMPTY_DRAFT()] : prev.filter((_, i) => i !== idx));
+
+  const handleQuickAdd = (p: Product) => {
+    const data: Partial<DraftLine> = { productId: p.id, productName: p.name, sku: p.sku, search: p.name, showSuggestions: false, highlightIdx: -1 };
+    const emptyIdx = lines.findIndex(l => !l.productId);
+    if (emptyIdx >= 0) {
+      updateLine(emptyIdx, data);
+      setTimeout(() => boxesRefs.current[emptyIdx]?.focus(), 40);
+    } else {
+      pendingQuickAdd.current = { idx: lines.length, data };
+      addLine();
+    }
+  };
+
+  const parseImportText = () => {
+    const skuMap = new Map(products.map(p => [p.sku.toUpperCase(), p]));
+    const valid: DraftLine[] = [];
+    const warnings: string[] = [];
+    for (const line of importText.split('\n').map(l => l.trim()).filter(Boolean)) {
+      const parts = line.split(/[\s\t]+/);
+      const sku = parts[0]; const qty = Number(parts[1]);
+      const p = skuMap.get(sku?.toUpperCase());
+      if (p && qty > 0) valid.push({ ...EMPTY_DRAFT(), productId: p.id, productName: p.name, sku: p.sku, search: p.name, boxes: 1, qtyPerBox: qty, totalQty: qty });
+      else warnings.push(`${sku}: ${!p ? 'not found' : 'invalid qty'}`);
+    }
+    setImportWarnings(warnings);
+    if (valid.length > 0) {
+      setLines(prev => [...prev.filter(l => l.productId), ...valid]);
+      setShowImport(false); setImportText('');
+    }
+  };
+
+  const handleSave = async () => {
+    const validLines = lines.filter(l => l.productId && l.totalQty > 0);
+    if (!client.trim()) { setError('Client name is required.'); return; }
+    if (validLines.length === 0) { setError('Add at least one product line.'); return; }
+    setError(''); setSaving(true);
+    try {
+      await createOrder({ ref: orderRef, client, date: new Date(date), lines: validLines as SalesOrderLine[] });
+      onSaved(); onClose();
+    } catch { setError('Failed to save order.'); }
+    finally { setSaving(false); }
+  };
+
+  const totalPcs = lines.reduce((s, l) => s + (l.productId ? l.totalQty : 0), 0);
+  const validCount = lines.filter(l => l.productId && l.totalQty > 0).length;
+
+  const qs = quickSearch.toLowerCase();
+  const sidebarProducts = qs
+    ? products.filter(p => p.name.toLowerCase().includes(qs) || p.sku.toLowerCase().includes(qs))
+    : products;
+  const sidebarCats = [...CATEGORY_ORDER.filter(c => sidebarProducts.some(p => p.category === c)),
+    ...Array.from(new Set(sidebarProducts.map(p => p.category ?? 'Other'))).filter(c => !CATEGORY_ORDER.includes(c))];
+  const addedIds = new Set(lines.map(l => l.productId).filter(Boolean));
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-white flex flex-col overflow-hidden">
+
+      {/* Header */}
+      <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-6 py-4">
+        <div className="flex items-center gap-4">
+          <button type="button" onClick={onClose}
+            className="flex items-center gap-2 text-slate-500 hover:text-slate-800 transition-colors font-medium text-sm shrink-0">
+            <X size={16} /> Cancel
           </button>
+          <h1 className="text-lg font-bold text-slate-800 shrink-0">New Sales Order</h1>
+          <span className="text-sm font-mono text-slate-400 shrink-0 bg-white border border-slate-200 px-3 py-2 rounded-xl">{orderRef}</span>
+          <input
+            ref={clientRef}
+            type="text" value={client}
+            onChange={e => setClient(e.target.value)}
+            placeholder="Client name *"
+            className="flex-1 max-w-xs px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
+          />
+          <input type="date" value={date} onChange={e => setDate(e.target.value)}
+            className="px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shrink-0" />
+          {validCount > 0 && (
+            <span className="text-sm font-bold text-blue-600 bg-blue-50 border border-blue-100 px-4 py-1.5 rounded-full shrink-0">
+              {validCount} SKU{validCount !== 1 ? 's' : ''} · {totalPcs.toLocaleString('fr-FR')} pcs
+            </span>
+          )}
+          <button type="button" onClick={handleSave} disabled={saving}
+            className="ml-auto shrink-0 px-6 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-sm">
+            {saving ? 'Saving…' : '✓ Save Order'}
+          </button>
+        </div>
+        {error && <p className="mt-2 text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-4 py-2">{error}</p>}
+      </div>
+
+      {/* Body */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* Quick Access Sidebar */}
+        <div className="w-72 shrink-0 border-r border-slate-200 flex flex-col bg-slate-50 overflow-hidden">
+          <div className="px-3 py-3 border-b border-slate-200">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Quick Add</p>
+            <div className="relative">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input type="text" value={quickSearch} onChange={e => setQuickSearch(e.target.value)}
+                placeholder="Search products…"
+                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white" />
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {sidebarCats.map(cat => {
+              const items = sidebarProducts.filter(p => (p.category ?? 'Other') === cat)
+                .sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999));
+              return (
+                <div key={cat}>
+                  <p className="sticky top-0 px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 border-b border-slate-200">{cat}</p>
+                  {items.map(p => {
+                    const added = addedIds.has(p.id);
+                    const parsed = extractColor(p.name);
+                    return (
+                      <button key={p.id} type="button" onClick={() => handleQuickAdd(p)}
+                        className={`w-full text-left px-3 py-2 border-b border-slate-100 transition-colors ${added ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-white'}`}>
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {parsed?.color && <span className={`w-2 h-2 rounded-full shrink-0 ${COLOR_DOT[parsed.color]}`} />}
+                            <span className="text-xs font-medium text-slate-700 truncate">{p.name}</span>
+                          </div>
+                          {added && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />}
+                        </div>
+                        <div className="flex items-center justify-between mt-0.5">
+                          <span className="text-[10px] font-mono text-slate-400">{p.sku}</span>
+                          <span className={`text-[10px] font-bold tabular-nums ${p.stock_level < 0 ? 'text-red-500' : p.stock_level === 0 ? 'text-orange-400' : 'text-slate-400'}`}>
+                            {p.stock_level}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+          <div className="shrink-0 border-t border-slate-200 p-3">
+            <button type="button" onClick={() => setShowImport(true)}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-white transition-colors text-xs font-semibold">
+              <FileDown size={13} /> Import from TXT
+            </button>
+          </div>
         </div>
 
-        {error && <p className="text-red-600 text-sm">{error}</p>}
-        <div className="flex gap-3 pt-2">
-          <button type="submit" disabled={saving}
-            className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-            {saving ? 'Saving…' : 'Save Order'}
-          </button>
-          <button type="button" onClick={onClose}
-            className="flex-1 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
-            Cancel
-          </button>
+        {/* Main table */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="shrink-0 bg-white border-b border-slate-100 px-4 py-2">
+            <div className="grid grid-cols-[40px_1fr_140px_90px_110px_110px_90px_44px] gap-2">
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-center">#</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Product</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">SKU</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right pr-2">Stock</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right pr-1">Boxes</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right pr-1">Qty/Box</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-right pr-1">Total</span>
+              <span />
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1.5">
+            {lines.map((line, i) => (
+              <SalesOrderRow
+                key={i} line={line} rowNum={i + 1} products={products}
+                boxesRef={el => { if (el) boxesRefs.current[i] = el; }}
+                onUpdate={patch => updateLine(i, patch)}
+                onSelect={p => selectProduct(i, p)}
+                onRemove={() => removeLine(i)}
+                onBoxesTab={() => {
+                  if (i === lines.length - 1) { addLine(); setTimeout(() => { /* focus search of new row */ }, 40); }
+                  else boxesRefs.current[i + 1]?.focus();
+                }}
+              />
+            ))}
+            <button type="button" onClick={addLine}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-blue-300 hover:text-blue-500 transition-colors text-sm font-medium mt-1">
+              <Plus size={14} /> Add Line
+            </button>
+          </div>
         </div>
-      </form>
-    </Modal>
+      </div>
+
+      {/* Import TXT */}
+      {showImport && (
+        <div className="absolute inset-0 z-[110] flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-bold text-slate-800">Import from TXT</h3>
+              <button onClick={() => { setShowImport(false); setImportText(''); }}
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"><X size={16} /></button>
+            </div>
+            <p className="text-xs text-slate-500 mb-3">
+              One item per line — <code className="bg-slate-100 px-1 rounded">SKU TOTAL_QTY</code>
+              <span className="ml-2 text-slate-400">(qty treated as qty-per-box, boxes = 1)</span>
+            </p>
+            <textarea value={importText} onChange={e => setImportText(e.target.value)}
+              placeholder={"JSM-0905C\t20\nJSM-0905N\t20\nJSM-1109C\t20"}
+              rows={7} autoFocus
+              className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none" />
+            {importWarnings.length > 0 && (
+              <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <p className="text-xs font-semibold text-amber-700 mb-1">⚠ Unmatched:</p>
+                {importWarnings.map((w, wi) => <p key={wi} className="text-xs text-amber-600 font-mono">{w}</p>)}
+              </div>
+            )}
+            <div className="flex gap-3 mt-4">
+              <button type="button" onClick={parseImportText} disabled={!importText.trim()}
+                className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 disabled:opacity-40 transition-colors">
+                Parse &amp; Add Lines
+              </button>
+              <button type="button" onClick={() => { setShowImport(false); setImportText(''); }}
+                className="flex-1 py-2.5 border-2 border-slate-200 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
