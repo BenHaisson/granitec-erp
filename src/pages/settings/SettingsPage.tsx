@@ -47,17 +47,18 @@ export default function SettingsPage() {
   const [opReset,     setOpReset]     = useState<OpState>($idle);
   const [resetText,   setResetText]   = useState('');
 
-  const refreshCounts = () => {
-    getProducts().then(p => {
-      setProductCount(p.filter(x => x.type === 'FINISHED').length);
-      setDiscCount(p.filter(x => x.type === 'RAW' && x.category !== 'Accessories').length);
-      setAccCount(p.filter(x => x.type === 'RAW' && x.category === 'Accessories').length);
-    });
-    getOrders().then(o => setOrderCount(o.length));
-    getRecipes().then(r => setRecipeCount(r.length));
-    getMachines().then(m => setMachineCount(m.length));
-    getLibraryItems().then(l => setLibCount(l.length));
-    getProductionOrders().then(o => setProdOrderCount(o.filter(x => x.status === 'COMPLETED').length));
+  const refreshCounts = async () => {
+    const [products, orders, recipes, machines, libItems, prodOrders] = await Promise.all([
+      getProducts(), getOrders(), getRecipes(), getMachines(), getLibraryItems(), getProductionOrders(),
+    ]);
+    setProductCount(products.filter(x => x.type === 'FINISHED').length);
+    setDiscCount(products.filter(x => x.type === 'RAW' && x.category !== 'Accessories').length);
+    setAccCount(products.filter(x => x.type === 'RAW' && x.category === 'Accessories').length);
+    setOrderCount(orders.length);
+    setRecipeCount(recipes.length);
+    setMachineCount(machines.length);
+    setLibCount(libItems.length);
+    setProdOrderCount(prodOrders.filter(x => x.status === 'COMPLETED').length);
   };
 
   useEffect(() => { refreshCounts(); }, []);
@@ -69,7 +70,7 @@ export default function SettingsPage() {
     setter({ running: true, status: 'idle', msg: '' });
     try {
       const msg = await fn();
-      refreshCounts();
+      await refreshCounts();
       setter({ running: false, status: 'done', msg });
       setTimeout(() => setter($idle), 3000);
     } catch (e) {
@@ -131,7 +132,7 @@ export default function SettingsPage() {
       const saleCount = await backfillSalesMovements();
       setOpSync(s => ({ ...s, msg: `Step 3/3: recalculating stock levels…` }));
       const pCount = await recalculateStockFromMovements();
-      refreshCounts();
+      await refreshCounts();
       setOpSync({ running: false, status: 'done', msg: `Sync complete — ${prodCount} production lines, ${saleCount} sale movements, ${pCount} products updated.` });
       setTimeout(() => setOpSync($idle), 5000);
     } catch (e) {
@@ -150,7 +151,7 @@ export default function SettingsPage() {
       await deleteAllProductionOrders();
       setOpReset(s => ({ ...s, msg: 'Resetting stock levels to 0…' }));
       await resetAllStockToZero();
-      refreshCounts();
+      await refreshCounts();
       setResetText('');
       setOpReset({ running: false, status: 'done', msg: 'Reset complete — transaction data cleared, product catalog preserved.' });
     } catch (e) {
