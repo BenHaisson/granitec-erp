@@ -616,6 +616,7 @@ function SupplyReceiptScreen({
   const qtyRefs = useRef<HTMLInputElement[]>([]);
   const pendingQuickAdd = useRef<{ idx: number; data: Partial<ReceiptLine> } | null>(null);
   const [quickSearch, setQuickSearch] = useState('');
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const validCount = receiptLines.filter(l => l.productId && Number(l.qty) > 0).length;
 
   // Process pending quick-add after state updates
@@ -722,10 +723,20 @@ function SupplyReceiptScreen({
               const items = sidebarProducts
                 .filter(p => (p.category ?? 'Other') === cat)
                 .sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999));
+              const collapsed = collapsedCats.has(cat);
+              const toggle = () => setCollapsedCats(prev => {
+                const next = new Set(prev);
+                collapsed ? next.delete(cat) : next.add(cat);
+                return next;
+              });
               return (
                 <div key={cat}>
-                  <p className="sticky top-0 px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 border-b border-slate-200">{cat}</p>
-                  {items.map(p => {
+                  <button type="button" onClick={toggle}
+                    className="sticky top-0 w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-100 border-b border-slate-200 hover:bg-slate-200 transition-colors">
+                    <span>{cat}</span>
+                    <span className="text-slate-400">{collapsed ? '▸' : '▾'}</span>
+                  </button>
+                  {!collapsed && items.map(p => {
                     const added = addedIds.has(p.id);
                     return (
                       <button key={p.id} type="button" onClick={() => handleQuickAdd(p)}
