@@ -1,8 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Database, AlertTriangle, ShoppingBag, Layers, Wrench, BookOpen, BookMarked, Cpu } from 'lucide-react';
-import { getProducts, upsertProduct, deleteAllProducts, seedDiscHistory, deleteDiscHistory, deleteAllAccessories, recalculateStockFromMovements, deleteAllMovements, resetAllStockToZero } from '@/services/inventory.service';
+import {
+  Database, AlertTriangle, ShoppingBag, Layers, Wrench,
+  BookOpen, BookMarked, Cpu, CheckCircle2, RefreshCw, Bell,
+} from 'lucide-react';
+import {
+  getProducts, upsertProduct, deleteAllProducts,
+  seedDiscHistory, deleteDiscHistory, deleteAllAccessories,
+  recalculateStockFromMovements, deleteAllMovements, resetAllStockToZero,
+} from '@/services/inventory.service';
 import { getOrders, seedHistoricalOrders, deleteAllOrders, backfillSalesMovements } from '@/services/orders.service';
-import { getRecipes, upsertRecipe, deleteAllRecipes, backfillCrepeProductionHistory, getProductionOrders, deleteAllProductionOrders } from '@/services/production.service';
+import {
+  getRecipes, upsertRecipe, deleteAllRecipes,
+  backfillCrepeProductionHistory, getProductionOrders, deleteAllProductionOrders,
+} from '@/services/production.service';
 import { getMachines, upsertMachine, deleteAllMachines, getLibraryItems, upsertLibraryItem, deleteAllLibraryItems } from '@/services/library.service';
 import { SEED_PRODUCTS } from '@/data/seedProducts';
 import { SEED_ORDERS } from '@/data/seedOrders';
@@ -12,47 +22,30 @@ import { SEED_RECIPES } from '@/data/seedRecipes';
 import { MACHINES } from '@/data/seedMachines';
 import { LIBRARY_ITEMS } from '@/data/seedLibrary';
 
-const isLive = import.meta.env.VITE_APP_MODE === 'live';
+type OpState = { running: boolean; status: 'idle' | 'done' | 'error'; msg: string };
+const $idle: OpState = { running: false, status: 'idle', msg: '' };
 
 export default function SettingsPage() {
-  const [productCount, setProductCount] = useState<number | null>(null);
-  const [orderCount, setOrderCount] = useState<number | null>(null);
-  const [discCount, setDiscCount] = useState<number | null>(null);
-  const [running, setRunning] = useState(false);
-  const [ordersRunning, setOrdersRunning] = useState(false);
-  const [discRunning, setDiscRunning] = useState(false);
-  const [accRunning, setAccRunning] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'done' | 'error'>('idle');
-  const [ordersStatus, setOrdersStatus] = useState<'idle' | 'done' | 'error'>('idle');
-  const [discStatus, setDiscStatus] = useState<'idle' | 'done' | 'error'>('idle');
-  const [accStatus, setAccStatus] = useState<'idle' | 'done' | 'error'>('idle');
-  const [message, setMessage] = useState('');
-  const [ordersMessage, setOrdersMessage] = useState('');
-  const [discMessage, setDiscMessage] = useState('');
-  const [accMessage, setAccMessage] = useState('');
-  const [accCount, setAccCount] = useState<number | null>(null);
-  const [recipeRunning, setRecipeRunning] = useState(false);
-  const [recipeStatus, setRecipeStatus] = useState<'idle' | 'done' | 'error'>('idle');
-  const [recipeMessage, setRecipeMessage] = useState('');
-  const [recipeCount, setRecipeCount] = useState<number | null>(null);
-  const [machineRunning, setMachineRunning] = useState(false);
-  const [machineStatus, setMachineStatus] = useState<'idle' | 'done' | 'error'>('idle');
-  const [machineMessage, setMachineMessage] = useState('');
-  const [machineCount, setMachineCount] = useState<number | null>(null);
-  const [libRunning, setLibRunning] = useState(false);
-  const [libStatus, setLibStatus] = useState<'idle' | 'done' | 'error'>('idle');
-  const [libMessage, setLibMessage] = useState('');
-  const [libCount, setLibCount] = useState<number | null>(null);
-  const [backfillRunning, setBackfillRunning] = useState(false);
-  const [backfillStatus, setBackfillStatus] = useState<'idle' | 'done' | 'error'>('idle');
-  const [backfillMessage, setBackfillMessage] = useState('');
+  const [productCount,   setProductCount]   = useState<number | null>(null);
+  const [orderCount,     setOrderCount]     = useState<number | null>(null);
+  const [discCount,      setDiscCount]      = useState<number | null>(null);
+  const [accCount,       setAccCount]       = useState<number | null>(null);
+  const [recipeCount,    setRecipeCount]    = useState<number | null>(null);
+  const [machineCount,   setMachineCount]   = useState<number | null>(null);
+  const [libCount,       setLibCount]       = useState<number | null>(null);
   const [prodOrderCount, setProdOrderCount] = useState<number | null>(null);
-  const [syncRunning, setSyncRunning] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'done' | 'error'>('idle');
-  const [syncMessage, setSyncMessage] = useState('');
-  const [resetRunning, setResetRunning] = useState(false);
-  const [resetStatus, setResetStatus] = useState<'idle' | 'done' | 'error'>('idle');
-  const [resetMessage, setResetMessage] = useState('');
+
+  const [opProducts,  setOpProducts]  = useState<OpState>($idle);
+  const [opDiscs,     setOpDiscs]     = useState<OpState>($idle);
+  const [opAcc,       setOpAcc]       = useState<OpState>($idle);
+  const [opRecipes,   setOpRecipes]   = useState<OpState>($idle);
+  const [opMachines,  setOpMachines]  = useState<OpState>($idle);
+  const [opLib,       setOpLib]       = useState<OpState>($idle);
+  const [opOrders,    setOpOrders]    = useState<OpState>($idle);
+  const [opBackfill,  setOpBackfill]  = useState<OpState>($idle);
+  const [opSync,      setOpSync]      = useState<OpState>($idle);
+  const [opReset,     setOpReset]     = useState<OpState>($idle);
+  const [resetText,   setResetText]   = useState('');
 
   const refreshCounts = () => {
     getProducts().then(p => {
@@ -64,624 +57,380 @@ export default function SettingsPage() {
     getRecipes().then(r => setRecipeCount(r.length));
     getMachines().then(m => setMachineCount(m.length));
     getLibraryItems().then(l => setLibCount(l.length));
-    getProductionOrders().then(o => setProdOrderCount(o.filter(x => x.recipeId?.startsWith && x.status === 'COMPLETED').length));
+    getProductionOrders().then(o => setProdOrderCount(o.filter(x => x.status === 'COMPLETED').length));
   };
 
   useEffect(() => { refreshCounts(); }, []);
 
-  const handleReseed = async () => {
-    const action = productCount === 0 ? 'Import' : `Delete all ${productCount} products and re-import`;
-    if (!confirm(`${action} ${SEED_PRODUCTS.length} products? This cannot be undone.`)) return;
-    setRunning(true);
-    setStatus('idle');
+  const run = async (
+    setter: React.Dispatch<React.SetStateAction<OpState>>,
+    fn: () => Promise<string>,
+  ) => {
+    setter({ running: true, status: 'idle', msg: '' });
     try {
-      if (productCount !== 0) await deleteAllProducts();
-      for (const p of SEED_PRODUCTS) await upsertProduct(p);
+      const msg = await fn();
       refreshCounts();
-      setStatus('done');
-      setMessage(`${SEED_PRODUCTS.length} products imported successfully.`);
-    } catch {
-      setStatus('error');
-      setMessage('Something went wrong. Check Firestore rules and try again.');
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  const handleSeedDiscs = async () => {
-    if (!confirm(`Import ${DISC_PRODUCTS.length} disc products and ${DISC_MOVEMENTS.length} shipping entries? This will overwrite existing disc data.`)) return;
-    setDiscRunning(true);
-    setDiscStatus('idle');
-    try {
-      await seedDiscHistory(DISC_PRODUCTS, DISC_MOVEMENTS);
-      refreshCounts();
-      setDiscStatus('done');
-      setDiscMessage(`${DISC_PRODUCTS.length} disc products and ${DISC_MOVEMENTS.length} movements imported.`);
-    } catch {
-      setDiscStatus('error');
-      setDiscMessage('Failed to import disc history. Check Firestore rules.');
-    } finally {
-      setDiscRunning(false);
-    }
-  };
-
-  const handleDeleteDiscs = async () => {
-    if (!confirm(`Delete all ${discCount} disc products and their movement history? This cannot be undone.`)) return;
-    setDiscRunning(true);
-    setDiscStatus('idle');
-    try {
-      await deleteDiscHistory();
-      refreshCounts();
-      setDiscStatus('done');
-      setDiscMessage('All disc data deleted.');
-    } catch {
-      setDiscStatus('error');
-      setDiscMessage('Failed to delete disc data.');
-    } finally {
-      setDiscRunning(false);
-    }
-  };
-
-  const handleSeedOrders = async () => {
-    if (!confirm(`Import ${SEED_ORDERS.length} historical orders? This will add them on top of existing orders.`)) return;
-    setOrdersRunning(true);
-    setOrdersStatus('idle');
-    try {
-      await seedHistoricalOrders(SEED_ORDERS);
-      refreshCounts();
-      setOrdersStatus('done');
-      setOrdersMessage(`${SEED_ORDERS.length} historical orders imported.`);
-    } catch {
-      setOrdersStatus('error');
-      setOrdersMessage('Failed to import orders. Check Firestore rules.');
-    } finally {
-      setOrdersRunning(false);
-    }
-  };
-
-  const handleDeleteOrders = async () => {
-    if (!confirm(`Delete all ${orderCount} orders? This cannot be undone.`)) return;
-    setOrdersRunning(true);
-    setOrdersStatus('idle');
-    try {
-      await deleteAllOrders();
-      refreshCounts();
-      setOrdersStatus('done');
-      setOrdersMessage('All orders deleted.');
-    } catch {
-      setOrdersStatus('error');
-      setOrdersMessage('Failed to delete orders.');
-    } finally {
-      setOrdersRunning(false);
-    }
-  };
-
-  const handleSeedAccessories = async () => {
-    if (!confirm(`Delete all existing accessories and import ${ACCESSORIES.length} fresh entries?`)) return;
-    setAccRunning(true);
-    setAccStatus('idle');
-    try {
-      await deleteAllAccessories();
-      for (const p of ACCESSORIES) await upsertProduct(p);
-      refreshCounts();
-      setAccStatus('done');
-      setAccMessage(`${ACCESSORIES.length} accessories imported successfully.`);
-    } catch {
-      setAccStatus('error');
-      setAccMessage('Failed to import accessories. Check Firestore rules.');
-    } finally {
-      setAccRunning(false);
-    }
-  };
-
-  const handleDeleteAccessories = async () => {
-    if (!confirm(`Delete all ${accCount} accessories? This cannot be undone.`)) return;
-    setAccRunning(true);
-    setAccStatus('idle');
-    try {
-      await deleteAllAccessories();
-      refreshCounts();
-      setAccStatus('done');
-      setAccMessage('All accessories deleted.');
-    } catch {
-      setAccStatus('error');
-      setAccMessage('Failed to delete accessories.');
-    } finally {
-      setAccRunning(false);
-    }
-  };
-
-  const handleSeedRecipes = async () => {
-    if (!confirm(`Delete all existing recipes and import ${SEED_RECIPES.length} from seed file?`)) return;
-    setRecipeRunning(true); setRecipeStatus('idle');
-    try {
-      await deleteAllRecipes();
-      for (const r of SEED_RECIPES) {
-        await upsertRecipe({ finishedProductId: r.finishedProductSku, components: r.components.map(c => ({ productId: c.productSku, quantity: c.quantity })) });
-      }
-      refreshCounts();
-      setRecipeStatus('done');
-      setRecipeMessage(`${SEED_RECIPES.length} recipes imported.`);
-    } catch {
-      setRecipeStatus('error');
-      setRecipeMessage('Failed to import recipes. Check Firestore rules.');
-    } finally { setRecipeRunning(false); }
-  };
-
-  const handleDeleteRecipes = async () => {
-    if (!confirm(`Delete all ${recipeCount} recipes? This cannot be undone.`)) return;
-    setRecipeRunning(true); setRecipeStatus('idle');
-    try {
-      await deleteAllRecipes(); refreshCounts();
-      setRecipeStatus('done'); setRecipeMessage('All recipes deleted.');
-    } catch { setRecipeStatus('error'); setRecipeMessage('Failed to delete recipes.'); }
-    finally { setRecipeRunning(false); }
-  };
-
-  const handleSeedMachines = async () => {
-    if (!confirm(`Delete all existing machines/tools and import ${MACHINES.length} entries?`)) return;
-    setMachineRunning(true); setMachineStatus('idle');
-    try {
-      await deleteAllMachines();
-      for (const m of MACHINES) await upsertMachine(m);
-      refreshCounts();
-      setMachineStatus('done');
-      setMachineMessage(`${MACHINES.length} machines & tools imported.`);
-    } catch {
-      setMachineStatus('error');
-      setMachineMessage('Failed to import machines. Check Firestore rules.');
-    } finally { setMachineRunning(false); }
-  };
-
-  const handleDeleteMachines = async () => {
-    if (!confirm(`Delete all ${machineCount} machines & tools?`)) return;
-    setMachineRunning(true); setMachineStatus('idle');
-    try {
-      await deleteAllMachines(); refreshCounts();
-      setMachineStatus('done'); setMachineMessage('All machines deleted.');
-    } catch { setMachineStatus('error'); setMachineMessage('Failed to delete machines.'); }
-    finally { setMachineRunning(false); }
-  };
-
-  const handleSeedLibrary = async () => {
-    if (!confirm(`Delete all existing library items and import ${LIBRARY_ITEMS.length} entries?`)) return;
-    setLibRunning(true); setLibStatus('idle');
-    try {
-      await deleteAllLibraryItems();
-      for (const item of LIBRARY_ITEMS) await upsertLibraryItem(item);
-      refreshCounts();
-      setLibStatus('done');
-      setLibMessage(`${LIBRARY_ITEMS.length} library items imported.`);
-    } catch {
-      setLibStatus('error');
-      setLibMessage('Failed to import library. Check Firestore rules.');
-    } finally { setLibRunning(false); }
-  };
-
-  const handleDeleteLibrary = async () => {
-    if (!confirm(`Delete all ${libCount} library items?`)) return;
-    setLibRunning(true); setLibStatus('idle');
-    try {
-      await deleteAllLibraryItems(); refreshCounts();
-      setLibStatus('done'); setLibMessage('All library items deleted.');
-    } catch { setLibStatus('error'); setLibMessage('Failed to delete library.'); }
-    finally { setLibRunning(false); }
-  };
-
-  const handleBackfillCrepe = async () => {
-    if (!confirm('Generate production orders for all historical Crepe & Egg Pan sales (3 days before each sale date)? This also writes inventory movements. Idempotent — safe to re-run.')) return;
-    setBackfillRunning(true); setBackfillStatus('idle');
-    try {
-      const count = await backfillCrepeProductionHistory();
-      refreshCounts();
-      setBackfillStatus('done');
-      setBackfillMessage(`${count} production order lines backfilled successfully.`);
+      setter({ running: false, status: 'done', msg });
+      setTimeout(() => setter($idle), 3000);
     } catch (e) {
-      setBackfillStatus('error');
-      setBackfillMessage(`Backfill failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
-    } finally { setBackfillRunning(false); }
+      setter({ running: false, status: 'error', msg: e instanceof Error ? e.message : 'Something went wrong.' });
+    }
   };
+
+  const handleReseedProducts = () => run(setOpProducts, async () => {
+    if (productCount !== 0) await deleteAllProducts();
+    for (const p of SEED_PRODUCTS) await upsertProduct(p);
+    return `${SEED_PRODUCTS.length} products synced.`;
+  });
+
+  const handleSeedDiscs = () => run(setOpDiscs, async () => {
+    await seedDiscHistory(DISC_PRODUCTS, DISC_MOVEMENTS);
+    return `${DISC_PRODUCTS.length} disc products and ${DISC_MOVEMENTS.length} movements imported.`;
+  });
+
+  const handleSeedAcc = () => run(setOpAcc, async () => {
+    await deleteAllAccessories();
+    for (const p of ACCESSORIES) await upsertProduct(p);
+    return `${ACCESSORIES.length} accessories synced.`;
+  });
+
+  const handleSeedRecipes = () => run(setOpRecipes, async () => {
+    await deleteAllRecipes();
+    for (const r of SEED_RECIPES)
+      await upsertRecipe({ finishedProductId: r.finishedProductSku, components: r.components.map(c => ({ productId: c.productSku, quantity: c.quantity })) });
+    return `${SEED_RECIPES.length} recipes synced.`;
+  });
+
+  const handleSeedMachines = () => run(setOpMachines, async () => {
+    await deleteAllMachines();
+    for (const m of MACHINES) await upsertMachine(m);
+    return `${MACHINES.length} machines & tools synced.`;
+  });
+
+  const handleSeedLibrary = () => run(setOpLib, async () => {
+    await deleteAllLibraryItems();
+    for (const item of LIBRARY_ITEMS) await upsertLibraryItem(item);
+    return `${LIBRARY_ITEMS.length} library items synced.`;
+  });
+
+  const handleImportOrders = () => run(setOpOrders, async () => {
+    await seedHistoricalOrders(SEED_ORDERS);
+    return `${SEED_ORDERS.length} historical orders imported.`;
+  });
+
+  const handleBackfillCrepe = () => run(setOpBackfill, async () => {
+    const count = await backfillCrepeProductionHistory();
+    return `${count} production order lines backfilled.`;
+  });
 
   const handleSyncInventory = async () => {
-    if (!confirm(
-      'Sync full inventory from history? This will:\n' +
-      '1. Backfill crepe/egg pan production orders (3 days before each sale)\n' +
-      '2. Write SALE movements for all historical orders\n' +
-      '3. Recalculate every product\'s stock_level from all movements\n\n' +
-      'Safe to re-run — idempotent. Negative stock will be shown in the UI.'
-    )) return;
-    setSyncRunning(true); setSyncStatus('idle'); setSyncMessage('Step 1/3: backfilling production orders…');
+    setOpSync({ running: true, status: 'idle', msg: 'Step 1/3: backfilling production orders…' });
     try {
       const prodCount = await backfillCrepeProductionHistory();
-      setSyncMessage(`Step 2/3: writing sales movements… (${prodCount} production lines done)`);
+      setOpSync(s => ({ ...s, msg: `Step 2/3: writing sales movements… (${prodCount} production lines done)` }));
       const saleCount = await backfillSalesMovements();
-      setSyncMessage(`Step 3/3: recalculating stock levels… (${saleCount} sale movements written)`);
-      const productCount = await recalculateStockFromMovements();
+      setOpSync(s => ({ ...s, msg: `Step 3/3: recalculating stock levels…` }));
+      const pCount = await recalculateStockFromMovements();
       refreshCounts();
-      setSyncStatus('done');
-      setSyncMessage(`Sync complete — ${prodCount} production lines, ${saleCount} sale movements, ${productCount} products recalculated.`);
+      setOpSync({ running: false, status: 'done', msg: `Sync complete — ${prodCount} production lines, ${saleCount} sale movements, ${pCount} products updated.` });
+      setTimeout(() => setOpSync($idle), 5000);
     } catch (e) {
-      setSyncStatus('error');
-      setSyncMessage(`Sync failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
-    } finally { setSyncRunning(false); }
+      setOpSync({ running: false, status: 'error', msg: e instanceof Error ? e.message : 'Sync failed.' });
+    }
   };
 
-  const handleResetTransactionData = async () => {
-    if (!confirm(
-      'RESET ALL TRANSACTION DATA?\n\n' +
-      'This will permanently delete:\n' +
-      '  • All sales orders (sales history)\n' +
-      '  • All inventory movements (supply receipt history)\n' +
-      '  • All production orders (backfilled + manual)\n' +
-      '  • Reset all product stock levels to 0\n\n' +
-      'Products, names, SKUs, packaging catalog → KEPT.\n\n' +
-      'This cannot be undone. Continue?'
-    )) return;
-    setResetRunning(true); setResetStatus('idle'); setResetMessage('Deleting sales orders…');
+  const handleResetAll = async () => {
+    if (resetText !== 'RESET') return;
+    setOpReset({ running: true, status: 'idle', msg: 'Deleting sales orders…' });
     try {
       await deleteAllOrders();
-      setResetMessage('Deleting inventory movements…');
+      setOpReset(s => ({ ...s, msg: 'Deleting inventory movements…' }));
       await deleteAllMovements();
-      setResetMessage('Deleting production orders…');
+      setOpReset(s => ({ ...s, msg: 'Deleting production orders…' }));
       await deleteAllProductionOrders();
-      setResetMessage('Resetting stock levels to 0…');
+      setOpReset(s => ({ ...s, msg: 'Resetting stock levels to 0…' }));
       await resetAllStockToZero();
       refreshCounts();
-      setResetStatus('done');
-      setResetMessage('Reset complete — all transaction data cleared, product catalog preserved.');
+      setResetText('');
+      setOpReset({ running: false, status: 'done', msg: 'Reset complete — transaction data cleared, product catalog preserved.' });
     } catch (e) {
-      setResetStatus('error');
-      setResetMessage(`Reset failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
-    } finally { setResetRunning(false); }
+      setOpReset({ running: false, status: 'error', msg: e instanceof Error ? e.message : 'Reset failed.' });
+    }
   };
 
-  const hasProducts  = productCount !== null && productCount > 0;
-  const isDuplicated = productCount !== null && productCount > SEED_PRODUCTS.length;
-  const hasOrders    = orderCount !== null && orderCount > 0;
-  const hasDiscs     = discCount !== null && discCount > 0;
+  // ── Notification definitions (only rendered when drift is detected) ──────
+  type Notif = {
+    id: string;
+    icon: React.ReactNode;
+    color: string;
+    title: string;
+    detail: string;
+    actionLabel: string;
+    op: OpState;
+    handler: () => void;
+  };
+
+  const notifs: Notif[] = [
+    productCount !== null && productCount !== SEED_PRODUCTS.length && {
+      id: 'products', icon: <Database size={18} />, color: 'amber',
+      title: 'Product Catalog out of sync',
+      detail: `${productCount} in Firestore · ${SEED_PRODUCTS.length} in catalog`,
+      actionLabel: productCount === 0 ? 'Import Products' : 'Re-sync Catalog',
+      op: opProducts, handler: handleReseedProducts,
+    },
+    discCount !== null && discCount !== DISC_PRODUCTS.length && {
+      id: 'discs', icon: <Layers size={18} />, color: 'amber',
+      title: 'Disc Inventory out of sync',
+      detail: `${discCount} in Firestore · ${DISC_PRODUCTS.length} in catalog`,
+      actionLabel: 'Import Disc History',
+      op: opDiscs, handler: handleSeedDiscs,
+    },
+    accCount !== null && accCount !== ACCESSORIES.length && {
+      id: 'accessories', icon: <Wrench size={18} />, color: 'amber',
+      title: 'Accessories Catalog out of sync',
+      detail: `${accCount} in Firestore · ${ACCESSORIES.length} in catalog`,
+      actionLabel: 'Sync Accessories',
+      op: opAcc, handler: handleSeedAcc,
+    },
+    recipeCount !== null && recipeCount !== SEED_RECIPES.length && {
+      id: 'recipes', icon: <BookOpen size={18} />, color: 'amber',
+      title: 'BOM Recipes out of sync',
+      detail: `${recipeCount} in Firestore · ${SEED_RECIPES.length} in catalog`,
+      actionLabel: 'Sync Recipes',
+      op: opRecipes, handler: handleSeedRecipes,
+    },
+    machineCount !== null && machineCount !== MACHINES.length && {
+      id: 'machines', icon: <Cpu size={18} />, color: 'amber',
+      title: 'Machines & Tools out of sync',
+      detail: `${machineCount} in Firestore · ${MACHINES.length} in catalog`,
+      actionLabel: 'Sync Machines',
+      op: opMachines, handler: handleSeedMachines,
+    },
+    libCount !== null && libCount !== LIBRARY_ITEMS.length && {
+      id: 'library', icon: <BookMarked size={18} />, color: 'amber',
+      title: 'Library out of sync',
+      detail: `${libCount} in Firestore · ${LIBRARY_ITEMS.length} in catalog`,
+      actionLabel: 'Sync Library',
+      op: opLib, handler: handleSeedLibrary,
+    },
+    orderCount !== null && orderCount === 0 && {
+      id: 'orders', icon: <ShoppingBag size={18} />, color: 'blue',
+      title: 'No sales history found',
+      detail: `0 orders in Firestore · ${SEED_ORDERS.length} historical orders available`,
+      actionLabel: 'Import Historical Orders',
+      op: opOrders, handler: handleImportOrders,
+    },
+  ].filter(Boolean) as Notif[];
+
+  const allLoaded = [productCount, discCount, accCount, recipeCount, machineCount, libCount, orderCount].every(c => c !== null);
+
+  // ── Info rows for the data overview grid ────────────────────────────────
+  const dataRows = [
+    { icon: <Database size={16} className="text-blue-500" />,   label: 'Products',         value: productCount,   seed: SEED_PRODUCTS.length  },
+    { icon: <Layers size={16} className="text-indigo-500" />,   label: 'Disc Products',    value: discCount,      seed: DISC_PRODUCTS.length  },
+    { icon: <Wrench size={16} className="text-amber-500" />,    label: 'Accessories',      value: accCount,       seed: ACCESSORIES.length    },
+    { icon: <BookOpen size={16} className="text-violet-500" />, label: 'BOM Recipes',      value: recipeCount,    seed: SEED_RECIPES.length   },
+    { icon: <Cpu size={16} className="text-orange-500" />,      label: 'Machines & Tools', value: machineCount,   seed: MACHINES.length       },
+    { icon: <BookMarked size={16} className="text-teal-500" />, label: 'Library Items',    value: libCount,       seed: LIBRARY_ITEMS.length  },
+    { icon: <ShoppingBag size={16} className="text-green-500" />, label: 'Sales Orders',   value: orderCount,     seed: null                  },
+    { icon: <Layers size={16} className="text-cyan-500" />,     label: 'Completed Production', value: prodOrderCount, seed: null             },
+  ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 max-w-3xl">
+
+      {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-slate-800">Settings</h1>
-        <p className="text-slate-500 text-sm mt-1">System configuration</p>
+        <p className="text-slate-500 text-sm mt-1">System configuration and data management</p>
       </div>
 
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
-              <Database size={20} className="text-blue-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-800">Product Catalog</p>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {productCount === null
-                  ? 'Loading...'
-                  : `${productCount} products in Firestore · Catalog has ${SEED_PRODUCTS.length} references`}
-              </p>
-            </div>
-          </div>
-          {!isLive && (
-            <button
-              onClick={handleReseed}
-              disabled={running || productCount === null}
-              className={`shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
-                hasProducts
-                  ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
-                  : 'bg-blue-600 text-white hover:bg-blue-700'
-              }`}
-            >
-              {running ? 'Working...' : hasProducts ? 'Delete all & Re-seed' : 'Import Products'}
-            </button>
-          )}
+      {/* ── Notification cards ─────────────────────────────────────── */}
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <Bell size={14} className="text-slate-400" />
+          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Updates</h2>
         </div>
 
-        {!isLive && isDuplicated && (
-          <div className="mt-4 flex items-center gap-2 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm">
-            <AlertTriangle size={16} className="shrink-0" />
-            <span>Duplicates detected ({productCount} instead of {SEED_PRODUCTS.length}). Click "Delete all & Re-seed" to fix.</span>
+        {!allLoaded ? (
+          <div className="bg-white rounded-xl border border-slate-100 p-5 text-sm text-slate-400 animate-pulse">
+            Checking data status…
           </div>
-        )}
-
-        {!isLive && status === 'done' && (
-          <p className="mt-4 text-green-600 text-sm">{message}</p>
-        )}
-        {!isLive && status === 'error' && (
-          <p className="mt-4 text-red-600 text-sm">{message}</p>
-        )}
-      </div>
-
-      {/* Disc inventory */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center shrink-0">
-              <Layers size={20} className="text-indigo-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-800">Disc Inventory</p>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {discCount === null
-                  ? 'Loading...'
-                  : `${discCount} disc products in Firestore · Catalog has ${DISC_PRODUCTS.length} references · ${DISC_MOVEMENTS.length} shipping entries`}
-              </p>
-            </div>
+        ) : notifs.length === 0 ? (
+          <div className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4">
+            <CheckCircle2 size={18} className="text-emerald-500 shrink-0" />
+            <p className="text-sm font-medium text-emerald-700">All catalogs are up to date.</p>
           </div>
-          {!isLive && (
-            <div className="flex gap-2 shrink-0">
-              <button
-                onClick={handleSeedDiscs}
-                disabled={discRunning || discCount === null}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-indigo-600 text-white hover:bg-indigo-700">
-                {discRunning ? 'Importing…' : 'Import Disc History'}
-              </button>
-              {hasDiscs && (
+        ) : (
+          <div className="space-y-3">
+            {notifs.map(n => (
+              <div key={n.id}
+                className={`flex items-start justify-between gap-4 rounded-xl border px-5 py-4 ${
+                  n.color === 'blue'
+                    ? 'bg-blue-50 border-blue-200'
+                    : 'bg-amber-50 border-amber-200'
+                }`}>
+                <div className="flex items-start gap-3">
+                  <div className={`mt-0.5 shrink-0 ${n.color === 'blue' ? 'text-blue-500' : 'text-amber-500'}`}>
+                    {n.icon}
+                  </div>
+                  <div>
+                    <p className={`text-sm font-semibold ${n.color === 'blue' ? 'text-blue-800' : 'text-amber-800'}`}>{n.title}</p>
+                    <p className={`text-xs mt-0.5 ${n.color === 'blue' ? 'text-blue-600' : 'text-amber-600'}`}>{n.detail}</p>
+                    {n.op.status === 'done' && (
+                      <p className="text-xs text-emerald-600 mt-1 font-medium">{n.op.msg}</p>
+                    )}
+                    {n.op.status === 'error' && (
+                      <p className="text-xs text-red-600 mt-1">{n.op.msg}</p>
+                    )}
+                  </div>
+                </div>
                 <button
-                  onClick={handleDeleteDiscs}
-                  disabled={discRunning}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">
-                  Delete disc data
+                  onClick={n.handler}
+                  disabled={n.op.running}
+                  className={`shrink-0 px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${
+                    n.color === 'blue'
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-amber-500 text-white hover:bg-amber-600'
+                  }`}>
+                  {n.op.running ? (
+                    <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> Working…</span>
+                  ) : n.actionLabel}
                 </button>
-              )}
-            </div>
-          )}
-        </div>
-        {!isLive && discStatus === 'done' && (
-          <p className="mt-4 text-green-600 text-sm">{discMessage}</p>
+              </div>
+            ))}
+          </div>
         )}
-        {!isLive && discStatus === 'error' && (
-          <p className="mt-4 text-red-600 text-sm">{discMessage}</p>
-        )}
-      </div>
+      </section>
 
-      {/* Accessories */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center shrink-0">
-              <Wrench size={20} className="text-amber-600" />
+      {/* ── Data Overview ──────────────────────────────────────────── */}
+      <section>
+        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Data Overview</h2>
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm divide-y divide-slate-50">
+          {dataRows.map(row => {
+            const synced = row.seed !== null && row.value !== null && row.value === row.seed;
+            const drifted = row.seed !== null && row.value !== null && row.value !== row.seed;
+            return (
+              <div key={row.label} className="flex items-center justify-between px-5 py-3">
+                <div className="flex items-center gap-2.5">
+                  {row.icon}
+                  <span className="text-sm font-medium text-slate-700">{row.label}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`text-sm font-bold tabular-nums ${drifted ? 'text-amber-600' : 'text-slate-700'}`}>
+                    {row.value === null ? '—' : row.value.toLocaleString('fr-FR')}
+                  </span>
+                  {row.seed !== null && (
+                    <span className="text-xs text-slate-400">/ {row.seed}</span>
+                  )}
+                  {synced && <CheckCircle2 size={13} className="text-emerald-400" />}
+                  {drifted && <AlertTriangle size={13} className="text-amber-400" />}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* ── Maintenance ────────────────────────────────────────────── */}
+      <section>
+        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Maintenance</h2>
+        <div className="space-y-3">
+
+          {/* Sync Inventory */}
+          <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Sync Inventory from History</p>
+                <p className="text-xs text-slate-400 mt-1 max-w-md">
+                  Backfills production orders (3 days before each crepe/egg pan sale), writes SALE movements for all historical orders, then recalculates every product's stock level. Safe to re-run — idempotent.
+                </p>
+                {opSync.running && (
+                  <p className="text-xs text-slate-500 mt-2 animate-pulse">{opSync.msg}</p>
+                )}
+                {opSync.status === 'done' && (
+                  <p className="text-xs text-emerald-600 mt-2 font-medium">{opSync.msg}</p>
+                )}
+                {opSync.status === 'error' && (
+                  <p className="text-xs text-red-600 mt-2">{opSync.msg}</p>
+                )}
+              </div>
+              <button onClick={handleSyncInventory} disabled={opSync.running}
+                className="shrink-0 px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 whitespace-nowrap">
+                {opSync.running
+                  ? <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> Running…</span>
+                  : 'Sync Inventory'}
+              </button>
             </div>
+          </div>
+
+          {/* Backfill Crepe */}
+          <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Backfill Production History</p>
+                <p className="text-xs text-slate-400 mt-1 max-w-md">
+                  Generates completed production orders for all historical crepe & egg pan sales, dated 3 days before each sale. Idempotent.
+                  {prodOrderCount !== null && ` ${prodOrderCount} completed orders already in Firestore.`}
+                </p>
+                {opBackfill.status === 'done' && (
+                  <p className="text-xs text-emerald-600 mt-2 font-medium">{opBackfill.msg}</p>
+                )}
+                {opBackfill.status === 'error' && (
+                  <p className="text-xs text-red-600 mt-2">{opBackfill.msg}</p>
+                )}
+              </div>
+              <button onClick={handleBackfillCrepe} disabled={opBackfill.running}
+                className="shrink-0 px-4 py-2 rounded-lg text-sm font-semibold bg-cyan-600 text-white hover:bg-cyan-700 transition-colors disabled:opacity-50 whitespace-nowrap">
+                {opBackfill.running
+                  ? <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> Running…</span>
+                  : 'Run Backfill'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Danger Zone ────────────────────────────────────────────── */}
+      <section>
+        <h2 className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Danger Zone</h2>
+        <div className="bg-red-50 rounded-xl border border-red-200 shadow-sm p-5">
+          <div className="flex items-start gap-3 mb-4">
+            <AlertTriangle size={18} className="text-red-500 shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-semibold text-slate-800">Accessories Catalog</p>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {accCount === null
-                  ? 'Loading...'
-                  : `${accCount} accessories in Firestore · Catalog has ${ACCESSORIES.length} references`}
+              <p className="text-sm font-semibold text-red-800">Reset All Transaction Data</p>
+              <p className="text-xs text-red-500 mt-1 max-w-md">
+                Permanently deletes all sales orders, inventory movements, and production orders. Resets every product's stock to 0.{' '}
+                <strong>Product catalog, names, SKUs, and packaging definitions are preserved.</strong> This cannot be undone.
               </p>
             </div>
           </div>
-          <div className="flex gap-2 shrink-0">
+          <div className="flex items-center gap-3">
+            <input
+              type="text"
+              value={resetText}
+              onChange={e => setResetText(e.target.value)}
+              placeholder='Type "RESET" to confirm'
+              className="flex-1 max-w-xs px-4 py-2 border-2 border-red-200 bg-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-400 placeholder:text-slate-400"
+            />
             <button
-              onClick={handleSeedAccessories}
-              disabled={accRunning || accCount === null}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-amber-600 text-white hover:bg-amber-700"
-            >
-              {accRunning ? 'Working…' : 'Delete & Re-import'}
+              onClick={handleResetAll}
+              disabled={opReset.running || resetText !== 'RESET'}
+              className="shrink-0 px-5 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              {opReset.running
+                ? <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> {opReset.msg.split('…')[0]}…</span>
+                : 'Reset All Data'}
             </button>
-            {(accCount ?? 0) > 0 && (
-              <button
-                onClick={handleDeleteAccessories}
-                disabled={accRunning}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
-              >
-                Delete all
-              </button>
-            )}
           </div>
-        </div>
-        {accStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{accMessage}</p>}
-        {accStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{accMessage}</p>}
-      </div>
-
-      {/* Historical orders */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center shrink-0">
-              <ShoppingBag size={20} className="text-green-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-800">Sales History</p>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {orderCount === null
-                  ? 'Loading...'
-                  : `${orderCount} orders in Firestore`}
-              </p>
-            </div>
-          </div>
-          {!isLive && (
-            <div className="flex gap-2 shrink-0">
-              <button
-                onClick={handleSeedOrders}
-                disabled={ordersRunning || orderCount === null}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-green-600 text-white hover:bg-green-700">
-                {ordersRunning ? 'Importing…' : 'Import Historical Data'}
-              </button>
-              {hasOrders && (
-                <button
-                  onClick={handleDeleteOrders}
-                  disabled={ordersRunning}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">
-                  Delete all orders
-                </button>
-              )}
-            </div>
+          {opReset.status === 'done' && (
+            <p className="text-xs text-emerald-600 mt-3 font-medium">{opReset.msg}</p>
+          )}
+          {opReset.status === 'error' && (
+            <p className="text-xs text-red-600 mt-3">{opReset.msg}</p>
           )}
         </div>
-        {!isLive && ordersStatus === 'done' && (
-          <p className="mt-4 text-green-600 text-sm">{ordersMessage}</p>
-        )}
-        {!isLive && ordersStatus === 'error' && (
-          <p className="mt-4 text-red-600 text-sm">{ordersMessage}</p>
-        )}
-      </div>
+      </section>
 
-      {/* BOM Recipes */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-violet-50 rounded-lg flex items-center justify-center shrink-0">
-              <BookOpen size={20} className="text-violet-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-800">BOM Recipes</p>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {recipeCount === null ? 'Loading...' : `${recipeCount} recipes in Firestore · Seed file has ${SEED_RECIPES.length} recipes`}
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2 shrink-0">
-            <button onClick={handleSeedRecipes} disabled={recipeRunning || recipeCount === null}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-violet-600 text-white hover:bg-violet-700">
-              {recipeRunning ? 'Working…' : 'Delete & Re-import'}
-            </button>
-            {(recipeCount ?? 0) > 0 && (
-              <button onClick={handleDeleteRecipes} disabled={recipeRunning}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">
-                Delete all
-              </button>
-            )}
-          </div>
-        </div>
-        {recipeStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{recipeMessage}</p>}
-        {recipeStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{recipeMessage}</p>}
-      </div>
-
-      {/* Crepe & Egg Pan Production History */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-cyan-50 rounded-lg flex items-center justify-center shrink-0">
-              <Layers size={20} className="text-cyan-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-800">Crepe & Egg Pan Production History</p>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Generates a completed production order 3 days before each crepe/egg pan sale. Idempotent.
-                {prodOrderCount !== null && ` · ${prodOrderCount} completed orders already in Firestore`}
-              </p>
-            </div>
-          </div>
-          <button onClick={handleBackfillCrepe} disabled={backfillRunning}
-            className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-cyan-600 text-white hover:bg-cyan-700">
-            {backfillRunning ? 'Running…' : 'Backfill Production Orders'}
-          </button>
-        </div>
-        {backfillStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{backfillMessage}</p>}
-        {backfillStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{backfillMessage}</p>}
-      </div>
-
-      {/* Reset Transaction Data */}
-      <div className="bg-red-50 rounded-xl p-6 shadow-sm border border-red-200 border-l-4 border-l-red-500">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center shrink-0">
-              <AlertTriangle size={20} className="text-red-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-red-800">Reset Transaction Data</p>
-              <p className="text-xs text-red-500 mt-0.5 max-w-lg">
-                Deletes all sales orders, inventory movements (supply receipts), and production orders.
-                Resets every product's stock to 0. <strong>Product catalog, names, SKUs, packaging → kept.</strong> Cannot be undone.
-              </p>
-            </div>
-          </div>
-          <button onClick={handleResetTransactionData} disabled={resetRunning}
-            className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-600 text-white hover:bg-red-700 whitespace-nowrap">
-            {resetRunning ? 'Resetting…' : 'Reset All Data'}
-          </button>
-        </div>
-        {resetRunning && <p className="mt-3 text-red-500 text-sm animate-pulse">{resetMessage}</p>}
-        {resetStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{resetMessage}</p>}
-        {resetStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{resetMessage}</p>}
-      </div>
-
-      {/* Sync Inventory from History */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100 border-l-4 border-l-emerald-500">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-50 rounded-lg flex items-center justify-center shrink-0">
-              <Database size={20} className="text-emerald-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-800">Sync Inventory from History</p>
-              <p className="text-xs text-slate-400 mt-0.5 max-w-lg">
-                Full 3-step sync: backfill crepe/egg pan production orders → write SALE movements for all historical sales → recalculate every product's stock_level from movements. Negative stock is allowed and shown in red.
-              </p>
-            </div>
-          </div>
-          <button onClick={handleSyncInventory} disabled={syncRunning}
-            className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-emerald-600 text-white hover:bg-emerald-700 whitespace-nowrap">
-            {syncRunning ? syncMessage.split(':')[0] + '…' : 'Sync Inventory'}
-          </button>
-        </div>
-        {syncRunning && <p className="mt-3 text-slate-500 text-sm animate-pulse">{syncMessage}</p>}
-        {syncStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{syncMessage}</p>}
-        {syncStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{syncMessage}</p>}
-      </div>
-
-      {/* Machines & Tools */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-orange-50 rounded-lg flex items-center justify-center shrink-0">
-              <Cpu size={20} className="text-orange-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-800">Machines & Tools</p>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {machineCount === null ? 'Loading...' : `${machineCount} entries in Firestore · Catalog has ${MACHINES.length} entries`}
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2 shrink-0">
-            <button onClick={handleSeedMachines} disabled={machineRunning || machineCount === null}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-orange-600 text-white hover:bg-orange-700">
-              {machineRunning ? 'Working…' : 'Delete & Re-import'}
-            </button>
-            {(machineCount ?? 0) > 0 && (
-              <button onClick={handleDeleteMachines} disabled={machineRunning}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">
-                Delete all
-              </button>
-            )}
-          </div>
-        </div>
-        {machineStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{machineMessage}</p>}
-        {machineStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{machineMessage}</p>}
-      </div>
-
-      {/* Library — Guides, SOPs, Standards */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-teal-50 rounded-lg flex items-center justify-center shrink-0">
-              <BookMarked size={20} className="text-teal-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-800">Library — Guides, SOPs & Standards</p>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {libCount === null ? 'Loading...' : `${libCount} items in Firestore · Catalog has ${LIBRARY_ITEMS.length} items`}
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2 shrink-0">
-            <button onClick={handleSeedLibrary} disabled={libRunning || libCount === null}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-teal-600 text-white hover:bg-teal-700">
-              {libRunning ? 'Working…' : 'Delete & Re-import'}
-            </button>
-            {(libCount ?? 0) > 0 && (
-              <button onClick={handleDeleteLibrary} disabled={libRunning}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">
-                Delete all
-              </button>
-            )}
-          </div>
-        </div>
-        {libStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{libMessage}</p>}
-        {libStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{libMessage}</p>}
-      </div>
     </div>
   );
 }
