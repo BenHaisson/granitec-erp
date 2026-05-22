@@ -178,7 +178,7 @@ export default function SettingsPage() {
       actionLabel: productCount === 0 ? 'Import Products' : 'Re-sync Catalog',
       op: opProducts, handler: handleReseedProducts,
     },
-    discCount !== null && discCount !== DISC_PRODUCTS.length && {
+    discCount !== null && discCount < DISC_PRODUCTS.length && {
       id: 'discs', icon: <Layers size={18} />, color: 'amber',
       title: 'Disc Inventory out of sync',
       detail: `${discCount} in Firestore · ${DISC_PRODUCTS.length} in catalog`,
@@ -226,14 +226,14 @@ export default function SettingsPage() {
 
   // ── Info rows for the data overview grid ────────────────────────────────
   const dataRows = [
-    { icon: <Database size={16} className="text-blue-500" />,   label: 'Products',         value: productCount,   seed: SEED_PRODUCTS.length  },
-    { icon: <Layers size={16} className="text-indigo-500" />,   label: 'Disc Products',    value: discCount,      seed: DISC_PRODUCTS.length  },
-    { icon: <Wrench size={16} className="text-amber-500" />,    label: 'Accessories',      value: accCount,       seed: ACCESSORIES.length    },
-    { icon: <BookOpen size={16} className="text-violet-500" />, label: 'BOM Recipes',      value: recipeCount,    seed: SEED_RECIPES.length   },
-    { icon: <Cpu size={16} className="text-orange-500" />,      label: 'Machines & Tools', value: machineCount,   seed: MACHINES.length       },
-    { icon: <BookMarked size={16} className="text-teal-500" />, label: 'Library Items',    value: libCount,       seed: LIBRARY_ITEMS.length  },
-    { icon: <ShoppingBag size={16} className="text-green-500" />, label: 'Sales Orders',   value: orderCount,     seed: null                  },
-    { icon: <Layers size={16} className="text-cyan-500" />,     label: 'Completed Production', value: prodOrderCount, seed: null             },
+    { icon: <Database size={16} className="text-blue-500" />,   label: 'Products',         value: productCount,   seed: SEED_PRODUCTS.length,  onlyWarnLow: false },
+    { icon: <Layers size={16} className="text-indigo-500" />,   label: 'Disc Products',    value: discCount,      seed: DISC_PRODUCTS.length,  onlyWarnLow: true  },
+    { icon: <Wrench size={16} className="text-amber-500" />,    label: 'Accessories',      value: accCount,       seed: ACCESSORIES.length,    onlyWarnLow: false },
+    { icon: <BookOpen size={16} className="text-violet-500" />, label: 'BOM Recipes',      value: recipeCount,    seed: SEED_RECIPES.length,   onlyWarnLow: false },
+    { icon: <Cpu size={16} className="text-orange-500" />,      label: 'Machines & Tools', value: machineCount,   seed: MACHINES.length,       onlyWarnLow: false },
+    { icon: <BookMarked size={16} className="text-teal-500" />, label: 'Library Items',    value: libCount,       seed: LIBRARY_ITEMS.length,  onlyWarnLow: false },
+    { icon: <ShoppingBag size={16} className="text-green-500" />, label: 'Sales Orders',   value: orderCount,     seed: null,                  onlyWarnLow: false },
+    { icon: <Layers size={16} className="text-cyan-500" />,     label: 'Completed Production', value: prodOrderCount, seed: null,              onlyWarnLow: false },
   ];
 
   return (
@@ -308,8 +308,8 @@ export default function SettingsPage() {
         <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Data Overview</h2>
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm divide-y divide-slate-50">
           {dataRows.map(row => {
-            const synced = row.seed !== null && row.value !== null && row.value === row.seed;
-            const drifted = row.seed !== null && row.value !== null && row.value !== row.seed;
+            const synced  = row.seed !== null && row.value !== null && row.value >= row.seed;
+            const drifted = row.seed !== null && row.value !== null && (row.onlyWarnLow ? row.value < row.seed : row.value !== row.seed);
             return (
               <div key={row.label} className="flex items-center justify-between px-5 py-3">
                 <div className="flex items-center gap-2.5">
