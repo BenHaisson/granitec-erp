@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Database, AlertTriangle, ShoppingBag, Layers, Wrench, BookOpen, BookMarked, Cpu } from 'lucide-react';
-import { getProducts, upsertProduct, deleteAllProducts, seedDiscHistory, deleteDiscHistory, deleteAllAccessories, recalculateStockFromMovements } from '@/services/inventory.service';
+import { getProducts, upsertProduct, deleteAllProducts, seedDiscHistory, deleteDiscHistory, deleteAllAccessories, recalculateStockFromMovements, deleteAllMovements, resetAllStockToZero } from '@/services/inventory.service';
 import { getOrders, seedHistoricalOrders, deleteAllOrders, backfillSalesMovements } from '@/services/orders.service';
-import { getRecipes, upsertRecipe, deleteAllRecipes, backfillCrepeProductionHistory } from '@/services/production.service';
-import { getProductionOrders } from '@/services/production.service';
+import { getRecipes, upsertRecipe, deleteAllRecipes, backfillCrepeProductionHistory, getProductionOrders, deleteAllProductionOrders } from '@/services/production.service';
 import { getMachines, upsertMachine, deleteAllMachines, getLibraryItems, upsertLibraryItem, deleteAllLibraryItems } from '@/services/library.service';
 import { SEED_PRODUCTS } from '@/data/seedProducts';
 import { SEED_ORDERS } from '@/data/seedOrders';
@@ -51,6 +50,9 @@ export default function SettingsPage() {
   const [syncRunning, setSyncRunning] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'done' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState('');
+  const [resetRunning, setResetRunning] = useState(false);
+  const [resetStatus, setResetStatus] = useState<'idle' | 'done' | 'error'>('idle');
+  const [resetMessage, setResetMessage] = useState('');
 
   const refreshCounts = () => {
     getProducts().then(p => {
@@ -304,6 +306,35 @@ export default function SettingsPage() {
     } finally { setSyncRunning(false); }
   };
 
+  const handleResetTransactionData = async () => {
+    if (!confirm(
+      'RESET ALL TRANSACTION DATA?\n\n' +
+      'This will permanently delete:\n' +
+      '  • All sales orders (sales history)\n' +
+      '  • All inventory movements (supply receipt history)\n' +
+      '  • All production orders (backfilled + manual)\n' +
+      '  • Reset all product stock levels to 0\n\n' +
+      'Products, names, SKUs, packaging catalog → KEPT.\n\n' +
+      'This cannot be undone. Continue?'
+    )) return;
+    setResetRunning(true); setResetStatus('idle'); setResetMessage('Deleting sales orders…');
+    try {
+      await deleteAllOrders();
+      setResetMessage('Deleting inventory movements…');
+      await deleteAllMovements();
+      setResetMessage('Deleting production orders…');
+      await deleteAllProductionOrders();
+      setResetMessage('Resetting stock levels to 0…');
+      await resetAllStockToZero();
+      refreshCounts();
+      setResetStatus('done');
+      setResetMessage('Reset complete — all transaction data cleared, product catalog preserved.');
+    } catch (e) {
+      setResetStatus('error');
+      setResetMessage(`Reset failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally { setResetRunning(false); }
+  };
+
   const hasProducts  = productCount !== null && productCount > 0;
   const isDuplicated = productCount !== null && productCount > SEED_PRODUCTS.length;
   const hasOrders    = orderCount !== null && orderCount > 0;
@@ -539,6 +570,31 @@ export default function SettingsPage() {
         </div>
         {backfillStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{backfillMessage}</p>}
         {backfillStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{backfillMessage}</p>}
+      </div>
+
+      {/* Reset Transaction Data */}
+      <div className="bg-red-50 rounded-xl p-6 shadow-sm border border-red-200 border-l-4 border-l-red-500">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center shrink-0">
+              <AlertTriangle size={20} className="text-red-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-red-800">Reset Transaction Data</p>
+              <p className="text-xs text-red-500 mt-0.5 max-w-lg">
+                Deletes all sales orders, inventory movements (supply receipts), and production orders.
+                Resets every product's stock to 0. <strong>Product catalog, names, SKUs, packaging → kept.</strong> Cannot be undone.
+              </p>
+            </div>
+          </div>
+          <button onClick={handleResetTransactionData} disabled={resetRunning}
+            className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 bg-red-600 text-white hover:bg-red-700 whitespace-nowrap">
+            {resetRunning ? 'Resetting…' : 'Reset All Data'}
+          </button>
+        </div>
+        {resetRunning && <p className="mt-3 text-red-500 text-sm animate-pulse">{resetMessage}</p>}
+        {resetStatus === 'done' && <p className="mt-4 text-green-600 text-sm">{resetMessage}</p>}
+        {resetStatus === 'error' && <p className="mt-4 text-red-600 text-sm">{resetMessage}</p>}
       </div>
 
       {/* Sync Inventory from History */}

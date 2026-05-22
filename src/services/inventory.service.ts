@@ -139,6 +139,26 @@ export const seedDiscHistory = async (
   }
 };
 
+export const deleteAllMovements = async (): Promise<void> => {
+  const snap = await getDocs(collection(db, 'inventory_movements'));
+  const CHUNK = 400;
+  for (let i = 0; i < snap.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    snap.docs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+};
+
+export const resetAllStockToZero = async (): Promise<void> => {
+  const snap = await getDocs(collection(db, 'products'));
+  const CHUNK = 400;
+  for (let i = 0; i < snap.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    snap.docs.slice(i, i + CHUNK).forEach(d => batch.update(d.ref, { stock_level: 0, unverified_stock: 0 }));
+    await batch.commit();
+  }
+};
+
 export const recalculateStockFromMovements = async (): Promise<number> => {
   const [movSnap, prodSnap] = await Promise.all([
     getDocs(collection(db, 'inventory_movements')),

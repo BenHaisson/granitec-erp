@@ -63,6 +63,16 @@ export const upsertRecipe = async (recipe: { finishedProductId: string; componen
   });
 };
 
+export const deleteAllProductionOrders = async (): Promise<void> => {
+  const snap = await getDocs(collection(db, 'production_orders'));
+  const CHUNK = 400;
+  for (let i = 0; i < snap.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    snap.docs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+};
+
 export const deleteAllRecipes = async (): Promise<void> => {
   const snap = await getDocs(collection(db, 'recipes'));
   const BATCH_SIZE = 400;
