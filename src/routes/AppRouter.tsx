@@ -11,6 +11,7 @@ import ReportsPage from '@/pages/reports/ReportsPage';
 import SettingsPage from '@/pages/settings/SettingsPage';
 import AnalyticsPage from '@/pages/analytics/AnalyticsPage';
 import LibraryPage from '@/pages/library/LibraryPage';
+import ShippingPage from '@/pages/shipping/ShippingPage';
 
 export default function AppRouter() {
   return (
@@ -18,6 +19,7 @@ export default function AppRouter() {
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/shipping" element={<ShippingPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/warehouse" element={<WarehousePage />} />
         <Route path="/sales" element={<SalesPage />} />

@@ -5,18 +5,16 @@ import {
 } from 'lucide-react';
 import {
   getProducts, getProductsFresh, upsertProduct, deleteAllProducts,
-  seedDiscHistory, deleteDiscHistory, deleteAllAccessories,
-  recalculateStockFromMovements, deleteAllMovements, resetAllStockToZero,
+  deleteAllAccessories, deleteAllMovements, resetAllStockToZero,
 } from '@/services/inventory.service';
-import { getOrders, seedHistoricalOrders, deleteAllOrders, backfillSalesMovements } from '@/services/orders.service';
+import { getOrders, deleteAllOrders } from '@/services/orders.service';
 import {
   getRecipes, upsertRecipe, deleteAllRecipes,
-  backfillCrepeProductionHistory, getProductionOrders, deleteAllProductionOrders,
+  getProductionOrders, deleteAllProductionOrders,
 } from '@/services/production.service';
 import { getMachines, upsertMachine, deleteAllMachines, getLibraryItems, upsertLibraryItem, deleteAllLibraryItems } from '@/services/library.service';
 import { SEED_PRODUCTS } from '@/data/seedProducts';
-import { SEED_ORDERS } from '@/data/seedOrders';
-import { DISC_PRODUCTS, DISC_MOVEMENTS } from '@/data/seedDiscs';
+import { DISC_PRODUCTS } from '@/data/seedDiscs';
 import { ACCESSORIES } from '@/data/seedAccessories';
 import { SEED_RECIPES } from '@/data/seedRecipes';
 import { MACHINES } from '@/data/seedMachines';
@@ -42,9 +40,6 @@ export default function SettingsPage() {
   const [opMachines,  setOpMachines]  = useState<OpState>($idle);
   const [opLib,       setOpLib]       = useState<OpState>($idle);
 
-  const [opOrders,    setOpOrders]    = useState<OpState>($idle);
-  const [opBackfill,  setOpBackfill]  = useState<OpState>($idle);
-  const [opSync,      setOpSync]      = useState<OpState>($idle);
   const [opReset,     setOpReset]     = useState<OpState>($idle);
   const [resetText,   setResetText]   = useState('');
 
@@ -54,7 +49,7 @@ export default function SettingsPage() {
     ]);
     setProductCount(products.filter(x => x.type === 'FINISHED').length);
     setDiscCount(products.filter(x => x.type === 'RAW' && x.category !== 'Accessories').length);
-    setAccCount(products.filter(x => x.type === 'RAW' && x.category === 'Accessories').length);
+    setAccCount(products.filter(x => x.type === 'RAW' && (x.category === 'Accessories' || x.category === 'Packaging')).length);
     setOrderCount(orders.length);
     setRecipeCount(recipes.length);
     setMachineCount(machines.length);
@@ -87,8 +82,8 @@ export default function SettingsPage() {
   }, () => setProductCount(SEED_PRODUCTS.length));
 
   const handleSeedDiscs = () => run(setOpDiscs, async () => {
-    await seedDiscHistory(DISC_PRODUCTS, DISC_MOVEMENTS);
-    return `${DISC_PRODUCTS.length} disc products and ${DISC_MOVEMENTS.length} movements imported.`;
+    for (const p of DISC_PRODUCTS) await upsertProduct(p);
+    return `${DISC_PRODUCTS.length} disc products synced.`;
   }, () => setDiscCount(DISC_PRODUCTS.length));
 
   const handleSeedAcc = () => run(setOpAcc, async () => {
@@ -115,37 +110,6 @@ export default function SettingsPage() {
     for (const item of LIBRARY_ITEMS) await upsertLibraryItem(item);
     return `${LIBRARY_ITEMS.length} library items synced.`;
   }, () => setLibCount(LIBRARY_ITEMS.length));
-
-  const handleClearOrders = () => run(setOpOrders, async () => {
-    await deleteAllOrders();
-    return 'All sales orders deleted.';
-  }, () => setOrderCount(0));
-
-  const handleImportOrders = () => run(setOpOrders, async () => {
-    await seedHistoricalOrders(SEED_ORDERS);
-    return `${SEED_ORDERS.length} historical orders imported.`;
-  }, () => setOrderCount(prev => (prev ?? 0) + SEED_ORDERS.length));
-
-  const handleBackfillCrepe = () => run(setOpBackfill, async () => {
-    const count = await backfillCrepeProductionHistory();
-    return `${count} production order lines backfilled.`;
-  });
-
-  const handleSyncInventory = async () => {
-    setOpSync({ running: true, status: 'idle', msg: 'Step 1/3: backfilling production orders…' });
-    try {
-      const prodCount = await backfillCrepeProductionHistory();
-      setOpSync(s => ({ ...s, msg: `Step 2/3: writing sales movements… (${prodCount} production lines done)` }));
-      const saleCount = await backfillSalesMovements();
-      setOpSync(s => ({ ...s, msg: `Step 3/3: recalculating stock levels…` }));
-      const pCount = await recalculateStockFromMovements();
-      await refreshCounts();
-      setOpSync({ running: false, status: 'done', msg: `Sync complete — ${prodCount} production lines, ${saleCount} sale movements, ${pCount} products updated.` });
-      setTimeout(() => setOpSync($idle), 5000);
-    } catch (e) {
-      setOpSync({ running: false, status: 'error', msg: e instanceof Error ? e.message : 'Sync failed.' });
-    }
-  };
 
   const handleResetAll = async () => {
     if (resetText !== 'RESET') return;
@@ -190,7 +154,7 @@ export default function SettingsPage() {
       id: 'discs', icon: <Layers size={18} />, color: 'amber',
       title: 'Disc Inventory out of sync',
       detail: `${discCount} in Firestore · ${DISC_PRODUCTS.length} in catalog`,
-      actionLabel: 'Import Disc History',
+      actionLabel: 'Sync Disc Catalog',
       op: opDiscs, handler: handleSeedDiscs,
     },
     accCount !== null && accCount !== ACCESSORIES.length && {
@@ -220,13 +184,6 @@ export default function SettingsPage() {
       detail: `${libCount} in Firestore · ${LIBRARY_ITEMS.length} in catalog`,
       actionLabel: 'Sync Library',
       op: opLib, handler: handleSeedLibrary,
-    },
-    orderCount !== null && orderCount > 0 && {
-      id: 'orders-clear', icon: <ShoppingBag size={18} />, color: 'red',
-      title: `Sales history has ${orderCount} orders`,
-      detail: 'Clear all historical orders to start fresh',
-      actionLabel: 'Delete All Orders',
-      op: opOrders, handler: handleClearOrders,
     },
   ].filter(Boolean) as Notif[];
 
@@ -337,90 +294,6 @@ export default function SettingsPage() {
               </div>
             );
           })}
-        </div>
-      </section>
-
-      {/* ── Maintenance ────────────────────────────────────────────── */}
-      <section>
-        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Maintenance</h2>
-        <div className="space-y-3">
-
-          {/* Sync Inventory */}
-          <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold text-slate-800">Sync Inventory from History</p>
-                <p className="text-xs text-slate-400 mt-1 max-w-md">
-                  Backfills production orders (3 days before each crepe/egg pan sale), writes SALE movements for all historical orders, then recalculates every product's stock level. Safe to re-run — idempotent.
-                </p>
-                {opSync.running && (
-                  <p className="text-xs text-slate-500 mt-2 animate-pulse">{opSync.msg}</p>
-                )}
-                {opSync.status === 'done' && (
-                  <p className="text-xs text-emerald-600 mt-2 font-medium">{opSync.msg}</p>
-                )}
-                {opSync.status === 'error' && (
-                  <p className="text-xs text-red-600 mt-2">{opSync.msg}</p>
-                )}
-              </div>
-              <button onClick={handleSyncInventory} disabled={opSync.running}
-                className="shrink-0 px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 whitespace-nowrap">
-                {opSync.running
-                  ? <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> Running…</span>
-                  : 'Sync Inventory'}
-              </button>
-            </div>
-          </div>
-
-          {/* Backfill Crepe */}
-          <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold text-slate-800">Backfill Production History</p>
-                <p className="text-xs text-slate-400 mt-1 max-w-md">
-                  Generates completed production orders for all historical crepe & egg pan sales, dated 3 days before each sale. Idempotent.
-                  {prodOrderCount !== null && ` ${prodOrderCount} completed orders already in Firestore.`}
-                </p>
-                {opBackfill.status === 'done' && (
-                  <p className="text-xs text-emerald-600 mt-2 font-medium">{opBackfill.msg}</p>
-                )}
-                {opBackfill.status === 'error' && (
-                  <p className="text-xs text-red-600 mt-2">{opBackfill.msg}</p>
-                )}
-              </div>
-              <button onClick={handleBackfillCrepe} disabled={opBackfill.running}
-                className="shrink-0 px-4 py-2 rounded-lg text-sm font-semibold bg-cyan-600 text-white hover:bg-cyan-700 transition-colors disabled:opacity-50 whitespace-nowrap">
-                {opBackfill.running
-                  ? <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> Running…</span>
-                  : 'Run Backfill'}
-              </button>
-            </div>
-          </div>
-
-          {/* Import Historical Orders */}
-          <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold text-slate-800">Import Historical Orders</p>
-                <p className="text-xs text-slate-400 mt-1 max-w-md">
-                  Adds {SEED_ORDERS.length} pre-loaded historical sales orders to Firestore.
-                  Currently {orderCount ?? '…'} orders in database.
-                </p>
-                {opOrders.status === 'done' && (
-                  <p className="text-xs text-emerald-600 mt-2 font-medium">{opOrders.msg}</p>
-                )}
-                {opOrders.status === 'error' && (
-                  <p className="text-xs text-red-600 mt-2">{opOrders.msg}</p>
-                )}
-              </div>
-              <button onClick={handleImportOrders} disabled={opOrders.running}
-                className="shrink-0 px-4 py-2 rounded-lg text-sm font-semibold bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50 whitespace-nowrap">
-                {opOrders.running
-                  ? <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> Working…</span>
-                  : 'Import Historical Orders'}
-              </button>
-            </div>
-          </div>
         </div>
       </section>
 

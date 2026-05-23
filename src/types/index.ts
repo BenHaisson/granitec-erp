@@ -136,3 +136,23 @@ export interface LibraryItem {
   tags?: string[];
   sort_order?: number;
 }
+
+export type ShippingOrderStatus = 'PLANNED' | 'RECEIVED';
+
+export interface ShippingOrderLine {
+  productId: string;
+  productName: string;
+  sku: string;
+  qty: number;
+}
+
+export interface ShippingOrder {
+  id: string;
+  ref: string;
+  supplier?: string;
+  date: string;
+  status: ShippingOrderStatus;
+  lines: ShippingOrderLine[];
+  receivedAt?: Date;
+  createdAt: Date;
+}
