@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Truck, Plus, ChevronDown, CheckCircle2, Clock, Trash2,
-  Search, X, FileText, PackagePlus, AlertCircle,
+  Search, X, FileText, PackagePlus, AlertCircle, Sparkles,
+  ArrowLeft, ToggleLeft, ToggleRight,
 } from 'lucide-react';
 import { getProducts } from '@/services/inventory.service';
 import {
   getShippingOrders, createShippingOrder, receiveShippingOrder, deleteShippingOrder,
 } from '@/services/shipping.service';
-import type { Product, ShippingOrder, ShippingOrderLine } from '@/types';
+import { getRecipes } from '@/services/production.service';
+import type { Product, ShippingOrder, ShippingOrderLine, Recipe } from '@/types';
 
 // ── Helpers ───────────────────────────────────────────────────────
 function todayISO() {
@@ -18,7 +20,7 @@ function fmtDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function autoRef(orders: ShippingOrder[]) {
+function autoRef(orders: ShippingOrder[], offset = 0) {
   const year = new Date().getFullYear();
   const prefix = `SH-${year}-`;
   const max = orders
@@ -27,7 +29,58 @@ function autoRef(orders: ShippingOrder[]) {
     .map(r => parseInt(r.slice(prefix.length), 10))
     .filter(n => !isNaN(n))
     .reduce((m, n) => Math.max(m, n), 0);
-  return `${prefix}${String(max + 1).padStart(4, '0')}`;
+  return `${prefix}${String(max + 1 + offset).padStart(4, '0')}`;
+}
+
+// ── Smart Order types ─────────────────────────────────────────────
+type ComponentRow = {
+  productId: string;
+  productName: string;
+  sku: string;
+  category: string;
+  needed: number;
+  inStock: number;
+  toOrder: number;
+};
+
+type CategoryGroup = {
+  category: string;
+  rows: ComponentRow[];
+  ref: string;
+  supplier: string;
+  enabled: boolean;
+};
+
+const CAT_ORDER = ['Aluminium Disc', 'Accessories', 'Packaging'];
+
+function calcRequirements(
+  recipe: Recipe,
+  targetQty: number,
+  allProducts: Product[],
+  orders: ShippingOrder[],
+): CategoryGroup[] {
+  const prodMap = new Map(allProducts.map(p => [p.id, p]));
+  const rows: ComponentRow[] = recipe.components.flatMap(c => {
+    const p = prodMap.get(c.productId);
+    if (!p) return [];
+    const needed = targetQty * c.quantity;
+    return [{ productId: p.id, productName: p.name, sku: p.sku, category: p.category ?? 'Other', needed, inStock: p.stock_level, toOrder: Math.max(0, needed - p.stock_level) }];
+  });
+  const catMap = new Map<string, ComponentRow[]>();
+  for (const r of rows) {
+    if (!catMap.has(r.category)) catMap.set(r.category, []);
+    catMap.get(r.category)!.push(r);
+  }
+  const cats = Array.from(catMap.keys()).sort((a, b) => {
+    const ai = CAT_ORDER.indexOf(a), bi = CAT_ORDER.indexOf(b);
+    if (ai === -1 && bi === -1) return a.localeCompare(b);
+    if (ai === -1) return 1; if (bi === -1) return -1;
+    return ai - bi;
+  });
+  return cats.map((cat, i) => {
+    const catRows = catMap.get(cat)!;
+    return { category: cat, rows: catRows, ref: autoRef(orders, i), supplier: '', enabled: catRows.some(r => r.toOrder > 0) };
+  });
 }
 
 // ── Draft line type ───────────────────────────────────────────────
@@ -423,11 +476,286 @@ function OrderDetail({ lines }: { lines: ShippingOrderLine[] }) {
   );
 }
 
+// ── Smart Order Wizard ────────────────────────────────────────────
+interface SmartWizardProps {
+  finishedProducts: Product[];
+  allProducts: Product[];
+  recipes: Recipe[];
+  orders: ShippingOrder[];
+  onClose: () => void;
+  onCreated: () => void;
+}
+function SmartOrderWizard({ finishedProducts, allProducts, recipes, orders, onClose, onCreated }: SmartWizardProps) {
+  const [step, setStep]               = useState<'select' | 'review'>('select');
+  const [search, setSearch]           = useState('');
+  const [showPicker, setShowPicker]   = useState(false);
+  const [pickedProduct, setPickedProduct] = useState<Product | null>(null);
+  const [targetQty, setTargetQty]     = useState('');
+  const [calcError, setCalcError]     = useState('');
+  const [groups, setGroups]           = useState<CategoryGroup[]>([]);
+  const [saving, setSaving]           = useState(false);
+  const [saveError, setSaveError]     = useState('');
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setShowPicker(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showPicker]);
+
+  const filteredProducts = search.trim()
+    ? finishedProducts.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase()))
+    : finishedProducts;
+
+  const handleCalculate = () => {
+    setCalcError('');
+    if (!pickedProduct) { setCalcError('Select a finished product.'); return; }
+    const qty = Number(targetQty);
+    if (!qty || qty <= 0) { setCalcError('Enter a valid target quantity.'); return; }
+    const recipe = recipes.find(r => r.id === pickedProduct.id || r.finishedProductId === pickedProduct.id);
+    if (!recipe) { setCalcError(`No BOM recipe found for ${pickedProduct.sku}. Add one in BOM Recipes first.`); return; }
+    if (recipe.components.length === 0) { setCalcError('This recipe has no components.'); return; }
+    setGroups(calcRequirements(recipe, qty, allProducts, orders));
+    setStep('review');
+  };
+
+  const updateGroup = (i: number, patch: Partial<CategoryGroup>) =>
+    setGroups(gs => gs.map((g, idx) => idx === i ? { ...g, ...patch } : g));
+
+  const handleCreate = async () => {
+    setSaveError('');
+    const toCreate = groups.filter(g => g.enabled);
+    if (toCreate.length === 0) { setSaveError('Enable at least one category group.'); return; }
+    setSaving(true);
+    try {
+      for (const g of toCreate) {
+        const lines = g.rows.filter(r => r.toOrder > 0).map(r => ({ productId: r.productId, productName: r.productName, sku: r.sku, qty: r.toOrder }));
+        if (lines.length === 0) continue;
+        await createShippingOrder({ ref: g.ref.trim(), supplier: g.supplier.trim() || undefined, date: todayISO(), lines });
+      }
+      onCreated();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Failed to create orders.');
+      setSaving(false);
+    }
+  };
+
+  const enabledCount = groups.filter(g => g.enabled && g.rows.some(r => r.toOrder > 0)).length;
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-white flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+        <div className="flex items-center gap-3">
+          <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+            <X size={20} />
+          </button>
+          <div className="flex items-center gap-2">
+            <Sparkles size={18} className="text-violet-500" />
+            <h1 className="text-lg font-bold text-slate-800">Smart Order</h1>
+          </div>
+          <span className="text-slate-300">—</span>
+          <span className="text-sm text-slate-400">{step === 'select' ? 'Select product & quantity' : 'Review requirements'}</span>
+        </div>
+        {step === 'review' && (
+          <button onClick={handleCreate} disabled={saving || enabledCount === 0}
+            className="flex items-center gap-2 px-5 py-2 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 transition-colors disabled:opacity-50 shadow-sm shadow-violet-200">
+            {saving ? 'Creating…' : `Create ${enabledCount} Order${enabledCount !== 1 ? 's' : ''}`}
+          </button>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+
+        {/* ── Step 1: Select ── */}
+        {step === 'select' && (
+          <div className="max-w-lg mx-auto px-6 py-12">
+            <h2 className="text-xl font-bold text-slate-800 mb-1">What do you want to produce?</h2>
+            <p className="text-sm text-slate-400 mb-8">Select a finished product and enter the production target. The system will calculate all raw materials needed from the BOM recipe.</p>
+
+            <div className="space-y-5">
+              {/* Product picker */}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Finished Product</label>
+                <div ref={pickerRef} className="relative">
+                  {pickedProduct ? (
+                    <div className="flex items-center gap-3 px-4 py-3 bg-violet-50 border-2 border-violet-300 rounded-xl">
+                      <div className="flex-1">
+                        <p className="text-sm font-bold text-slate-800">{pickedProduct.name}</p>
+                        <p className="text-xs font-mono text-slate-400">{pickedProduct.sku}</p>
+                      </div>
+                      <button onClick={() => { setPickedProduct(null); setSearch(''); }}
+                        className="p-1 rounded-lg text-violet-400 hover:text-violet-700 hover:bg-violet-100 transition-colors">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text" value={search}
+                        onChange={e => { setSearch(e.target.value); setShowPicker(true); }}
+                        onFocus={() => setShowPicker(true)}
+                        placeholder="Search by name or SKU…"
+                        className="w-full pl-10 pr-4 py-3 border-2 border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
+                      />
+                    </div>
+                  )}
+                  {showPicker && !pickedProduct && (
+                    <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden">
+                      <div className="max-h-64 overflow-y-auto divide-y divide-slate-50">
+                        {filteredProducts.length === 0 ? (
+                          <p className="px-4 py-3 text-sm text-slate-400">No products found</p>
+                        ) : filteredProducts.map(p => (
+                          <button key={p.id} type="button"
+                            onMouseDown={() => { setPickedProduct(p); setSearch(p.name); setShowPicker(false); }}
+                            className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-violet-50 transition-colors">
+                            <div>
+                              <p className="text-sm font-medium text-slate-800">{p.name}</p>
+                              <p className="text-xs font-mono text-slate-400">{p.sku}</p>
+                            </div>
+                            <span className="text-xs text-slate-400 ml-3">{p.category}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Target qty */}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Target Production Quantity</label>
+                <input type="number" min="1" value={targetQty} onChange={e => setTargetQty(e.target.value)}
+                  placeholder="e.g. 3000"
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-lg font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
+                  onKeyDown={e => { if (e.key === 'Enter') handleCalculate(); }}
+                />
+              </div>
+
+              {calcError && (
+                <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+                  <AlertCircle size={15} className="shrink-0" /> {calcError}
+                </div>
+              )}
+
+              <button onClick={handleCalculate}
+                className="w-full py-3 rounded-xl bg-violet-600 text-white font-bold hover:bg-violet-700 transition-colors text-sm flex items-center justify-center gap-2 shadow-sm shadow-violet-200">
+                <Sparkles size={15} /> Calculate Requirements
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 2: Review ── */}
+        {step === 'review' && (
+          <div className="max-w-4xl mx-auto px-6 py-8 space-y-5">
+            <div className="flex items-center gap-3">
+              <button onClick={() => setStep('select')}
+                className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-700 transition-colors">
+                <ArrowLeft size={14} /> Back
+              </button>
+              <h2 className="text-base font-bold text-slate-700">
+                To produce{' '}
+                <span className="text-violet-700">{Number(targetQty).toLocaleString('fr-FR')} × {pickedProduct?.sku}</span>
+                {' '}({pickedProduct?.name}) you need:
+              </h2>
+            </div>
+
+            {saveError && (
+              <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+                <AlertCircle size={15} className="shrink-0" /> {saveError}
+              </div>
+            )}
+
+            {groups.map((g, gi) => {
+              const totalToOrder = g.rows.reduce((s, r) => s + r.toOrder, 0);
+              const allCovered = totalToOrder === 0;
+              return (
+                <div key={g.category}
+                  className={`rounded-xl border overflow-hidden transition-opacity ${g.enabled ? 'border-slate-200' : 'border-slate-100 opacity-60'}`}>
+                  {/* Group header */}
+                  <div className={`flex items-center gap-3 px-4 py-3 ${g.enabled ? 'bg-slate-50' : 'bg-slate-50/50'}`}>
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${
+                      g.category === 'Aluminium Disc' ? 'bg-indigo-400' :
+                      g.category === 'Accessories' ? 'bg-amber-400' :
+                      g.category === 'Packaging' ? 'bg-teal-400' : 'bg-slate-400'
+                    }`} />
+                    <span className="font-bold text-slate-700 text-sm">{g.category}</span>
+                    <span className="text-xs text-slate-400">{g.rows.length} item{g.rows.length !== 1 ? 's' : ''}</span>
+                    {allCovered && <span className="ml-1 text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">All in stock</span>}
+                    {totalToOrder > 0 && <span className="ml-1 text-xs font-bold text-violet-600 tabular-nums">{totalToOrder.toLocaleString('fr-FR')} pcs to order</span>}
+                    <div className="ml-auto flex items-center gap-3">
+                      {/* Ref */}
+                      <input type="text" value={g.ref} onChange={e => updateGroup(gi, { ref: e.target.value })}
+                        onClick={e => e.stopPropagation()}
+                        className="w-36 px-2 py-1 border border-slate-200 rounded-lg text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                        disabled={!g.enabled}
+                      />
+                      {/* Supplier */}
+                      <input type="text" value={g.supplier} onChange={e => updateGroup(gi, { supplier: e.target.value })}
+                        onClick={e => e.stopPropagation()}
+                        placeholder="Supplier"
+                        className="w-32 px-2 py-1 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                        disabled={!g.enabled}
+                      />
+                      {/* Toggle */}
+                      <button onClick={() => updateGroup(gi, { enabled: !g.enabled })}
+                        className={`flex items-center gap-1 text-xs font-semibold transition-colors ${g.enabled ? 'text-violet-600' : 'text-slate-400'}`}>
+                        {g.enabled ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+                        {g.enabled ? 'On' : 'Off'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Rows */}
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="text-left px-4 py-2 text-xs font-bold text-slate-400 uppercase tracking-widest">Material</th>
+                        <th className="text-left px-4 py-2 text-xs font-bold text-slate-400 uppercase tracking-widest">SKU</th>
+                        <th className="text-right px-4 py-2 text-xs font-bold text-slate-400 uppercase tracking-widest">Needed</th>
+                        <th className="text-right px-4 py-2 text-xs font-bold text-slate-400 uppercase tracking-widest">In Stock</th>
+                        <th className="text-right px-4 py-2 text-xs font-bold text-slate-400 uppercase tracking-widest">To Order</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {g.rows.map(r => (
+                        <tr key={r.sku} className={r.toOrder === 0 ? 'opacity-40' : ''}>
+                          <td className="px-4 py-2.5 text-slate-700 font-medium">{r.productName}</td>
+                          <td className="px-4 py-2.5 font-mono text-xs text-slate-400">{r.sku}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{r.needed.toLocaleString('fr-FR')}</td>
+                          <td className={`px-4 py-2.5 text-right tabular-nums font-semibold ${r.inStock <= 0 ? 'text-red-500' : r.inStock >= r.needed ? 'text-emerald-600' : 'text-amber-600'}`}>
+                            {r.inStock.toLocaleString('fr-FR')}
+                          </td>
+                          <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${r.toOrder > 0 ? 'text-violet-700' : 'text-slate-300'}`}>
+                            {r.toOrder > 0 ? r.toOrder.toLocaleString('fr-FR') : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────
 export default function ShippingPage() {
   const [orders, setOrders]           = useState<ShippingOrder[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [rawMaterials, setRawMaterials] = useState<Product[]>([]);
+  const [recipes, setRecipes]         = useState<Recipe[]>([]);
   const [loading, setLoading]         = useState(true);
+  const [showSmartOrder, setShowSmartOrder] = useState(false);
   const [expanded, setExpanded]       = useState<Set<string>>(new Set());
   const [receiving, setReceiving]     = useState<Set<string>>(new Set());
   const [deleting, setDeleting]       = useState<Set<string>>(new Set());
@@ -447,9 +775,11 @@ export default function ShippingPage() {
 
   const load = async () => {
     setLoading(true);
-    const [ords, prods] = await Promise.all([getShippingOrders(), getProducts()]);
+    const [ords, prods, recs] = await Promise.all([getShippingOrders(), getProducts(), getRecipes()]);
     setOrders(ords);
+    setAllProducts(prods);
     setRawMaterials(prods.filter(p => p.type === 'RAW'));
+    setRecipes(recs);
     setLoading(false);
   };
 
@@ -562,10 +892,16 @@ export default function ShippingPage() {
             {loading ? 'Loading…' : `${planned.length} planned · ${received.length} received`}
           </p>
         </div>
-        <button onClick={openCreate}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-200">
-          <Plus size={16} /> New Order
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowSmartOrder(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 transition-colors shadow-sm shadow-violet-200">
+            <Sparkles size={15} /> Smart Order
+          </button>
+          <button onClick={openCreate}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-200">
+            <Plus size={16} /> New Order
+          </button>
+        </div>
       </div>
 
       {/* Table */}
@@ -664,6 +1000,18 @@ export default function ShippingPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Smart Order Wizard */}
+      {showSmartOrder && (
+        <SmartOrderWizard
+          finishedProducts={allProducts.filter(p => p.type === 'FINISHED')}
+          allProducts={allProducts}
+          recipes={recipes}
+          orders={orders}
+          onClose={() => setShowSmartOrder(false)}
+          onCreated={async () => { setShowSmartOrder(false); await load(); }}
+        />
       )}
 
       {/* Create Order Overlay */}

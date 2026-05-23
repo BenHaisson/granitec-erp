@@ -15,11 +15,15 @@ export const getShippingOrders = async (): Promise<ShippingOrder[]> => {
 export const createShippingOrder = async (
   order: Omit<ShippingOrder, 'id' | 'createdAt' | 'status'>
 ): Promise<void> => {
-  await addDoc(collection(db, 'shipping_orders'), {
-    ...order,
+  const data: Record<string, unknown> = {
+    ref: order.ref,
+    date: order.date,
+    lines: order.lines,
     status: 'PLANNED',
     createdAt: Timestamp.now(),
-  });
+  };
+  if (order.supplier) data.supplier = order.supplier;
+  await addDoc(collection(db, 'shipping_orders'), data);
 };
 
 export const receiveShippingOrder = async (order: ShippingOrder): Promise<void> => {

@@ -35,7 +35,18 @@ export const deleteProduct = (id: string) => deleteDoc(doc(db, 'products', id));
 
 export const deleteAllAccessories = async () => {
   const snap = await getDocs(collection(db, 'products'));
-  const toDelete = snap.docs.filter(d => d.data().category === 'Accessories' || d.data().category === 'Packaging');
+  const toDelete = snap.docs.filter(d => d.data().category === 'Accessories');
+  const BATCH_SIZE = 400;
+  for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
+    const batch = writeBatch(db);
+    toDelete.slice(i, i + BATCH_SIZE).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+};
+
+export const deleteAllPackaging = async () => {
+  const snap = await getDocs(collection(db, 'products'));
+  const toDelete = snap.docs.filter(d => d.data().category === 'Packaging');
   const BATCH_SIZE = 400;
   for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
     const batch = writeBatch(db);

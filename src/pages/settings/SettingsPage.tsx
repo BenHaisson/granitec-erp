@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
-  Database, AlertTriangle, ShoppingBag, Layers, Wrench,
+  Database, AlertTriangle, ShoppingBag, Layers, Wrench, Package,
   BookOpen, BookMarked, Cpu, CheckCircle2, RefreshCw, Bell,
 } from 'lucide-react';
 import {
   getProducts, getProductsFresh, upsertProduct, deleteAllProducts,
-  deleteAllAccessories, deleteAllMovements, resetAllStockToZero,
+  deleteAllAccessories, deleteAllPackaging, deleteAllMovements, resetAllStockToZero,
 } from '@/services/inventory.service';
 import { getOrders, deleteAllOrders } from '@/services/orders.service';
 import {
@@ -15,7 +15,7 @@ import {
 import { getMachines, upsertMachine, deleteAllMachines, getLibraryItems, upsertLibraryItem, deleteAllLibraryItems } from '@/services/library.service';
 import { SEED_PRODUCTS } from '@/data/seedProducts';
 import { DISC_PRODUCTS } from '@/data/seedDiscs';
-import { ACCESSORIES } from '@/data/seedAccessories';
+import { ACCESSORIES, PACKAGING } from '@/data/seedAccessories';
 import { SEED_RECIPES } from '@/data/seedRecipes';
 import { MACHINES } from '@/data/seedMachines';
 import { LIBRARY_ITEMS } from '@/data/seedLibrary';
@@ -28,6 +28,7 @@ export default function SettingsPage() {
   const [orderCount,     setOrderCount]     = useState<number | null>(null);
   const [discCount,      setDiscCount]      = useState<number | null>(null);
   const [accCount,       setAccCount]       = useState<number | null>(null);
+  const [pkgCount,       setPkgCount]       = useState<number | null>(null);
   const [recipeCount,    setRecipeCount]    = useState<number | null>(null);
   const [machineCount,   setMachineCount]   = useState<number | null>(null);
   const [libCount,       setLibCount]       = useState<number | null>(null);
@@ -36,6 +37,7 @@ export default function SettingsPage() {
   const [opProducts,  setOpProducts]  = useState<OpState>($idle);
   const [opDiscs,     setOpDiscs]     = useState<OpState>($idle);
   const [opAcc,       setOpAcc]       = useState<OpState>($idle);
+  const [opPkg,       setOpPkg]       = useState<OpState>($idle);
   const [opRecipes,   setOpRecipes]   = useState<OpState>($idle);
   const [opMachines,  setOpMachines]  = useState<OpState>($idle);
   const [opLib,       setOpLib]       = useState<OpState>($idle);
@@ -48,8 +50,9 @@ export default function SettingsPage() {
       fresh ? getProductsFresh() : getProducts(), getOrders(), getRecipes(), getMachines(), getLibraryItems(), getProductionOrders(),
     ]);
     setProductCount(products.filter(x => x.type === 'FINISHED').length);
-    setDiscCount(products.filter(x => x.type === 'RAW' && x.category !== 'Accessories').length);
-    setAccCount(products.filter(x => x.type === 'RAW' && (x.category === 'Accessories' || x.category === 'Packaging')).length);
+    setDiscCount(products.filter(x => x.type === 'RAW' && x.category !== 'Accessories' && x.category !== 'Packaging').length);
+    setAccCount(products.filter(x => x.type === 'RAW' && x.category === 'Accessories').length);
+    setPkgCount(products.filter(x => x.category === 'Packaging').length);
     setOrderCount(orders.length);
     setRecipeCount(recipes.length);
     setMachineCount(machines.length);
@@ -91,6 +94,12 @@ export default function SettingsPage() {
     for (const p of ACCESSORIES) await upsertProduct(p);
     return `${ACCESSORIES.length} accessories synced.`;
   }, () => setAccCount(ACCESSORIES.length));
+
+  const handleSeedPkg = () => run(setOpPkg, async () => {
+    await deleteAllPackaging();
+    for (const p of PACKAGING) await upsertProduct(p);
+    return `${PACKAGING.length} packaging items synced.`;
+  }, () => setPkgCount(PACKAGING.length));
 
   const handleSeedRecipes = () => run(setOpRecipes, async () => {
     await deleteAllRecipes();
@@ -164,6 +173,13 @@ export default function SettingsPage() {
       actionLabel: 'Sync Accessories',
       op: opAcc, handler: handleSeedAcc,
     },
+    pkgCount !== null && pkgCount !== PACKAGING.length && {
+      id: 'packaging', icon: <Package size={18} />, color: 'amber',
+      title: 'Packaging Catalog out of sync',
+      detail: `${pkgCount} in Firestore · ${PACKAGING.length} in catalog`,
+      actionLabel: 'Sync Packaging',
+      op: opPkg, handler: handleSeedPkg,
+    },
     recipeCount !== null && recipeCount !== SEED_RECIPES.length && {
       id: 'recipes', icon: <BookOpen size={18} />, color: 'amber',
       title: 'BOM Recipes out of sync',
@@ -187,13 +203,14 @@ export default function SettingsPage() {
     },
   ].filter(Boolean) as Notif[];
 
-  const allLoaded = [productCount, discCount, accCount, recipeCount, machineCount, libCount, orderCount].every(c => c !== null);
+  const allLoaded = [productCount, discCount, accCount, pkgCount, recipeCount, machineCount, libCount, orderCount].every(c => c !== null);
 
   // ── Info rows for the data overview grid ────────────────────────────────
   const dataRows = [
     { icon: <Database size={16} className="text-blue-500" />,   label: 'Products',         value: productCount,   seed: SEED_PRODUCTS.length,  onlyWarnLow: false },
     { icon: <Layers size={16} className="text-indigo-500" />,   label: 'Disc Products',    value: discCount,      seed: DISC_PRODUCTS.length,  onlyWarnLow: true  },
     { icon: <Wrench size={16} className="text-amber-500" />,    label: 'Accessories',      value: accCount,       seed: ACCESSORIES.length,    onlyWarnLow: false },
+    { icon: <Package size={16} className="text-purple-500" />, label: 'Packaging',        value: pkgCount,       seed: PACKAGING.length,      onlyWarnLow: false },
     { icon: <BookOpen size={16} className="text-violet-500" />, label: 'BOM Recipes',      value: recipeCount,    seed: SEED_RECIPES.length,   onlyWarnLow: false },
     { icon: <Cpu size={16} className="text-orange-500" />,      label: 'Machines & Tools', value: machineCount,   seed: MACHINES.length,       onlyWarnLow: false },
     { icon: <BookMarked size={16} className="text-teal-500" />, label: 'Library Items',    value: libCount,       seed: LIBRARY_ITEMS.length,  onlyWarnLow: false },
