@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, type FormEvent } from 'react';
-import { Plus, FlaskConical, ArrowDownToLine, ChevronDown, Search, FileText, X, Pencil, Trash2, PackagePlus, FileDown, ChevronRight } from 'lucide-react';
+import { Plus, FlaskConical, ArrowDownToLine, ChevronDown, Search, FileText, X, Pencil, Trash2, PackagePlus, FileDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
 import { getProducts, addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch, reconcileUnverifiedStock } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
@@ -850,6 +850,7 @@ export default function InventoryPage() {
   const [loading, setLoading]     = useState(true);
   const [rawCategory, setRawCategory] = useState('All');
   const [search, setSearch]           = useState('');
+  const [stockFilter, setStockFilter] = useState<'all' | 'hide-zero' | 'zero-only' | 'alarm'>('all');
 
   // ── New Supply Receipt full-screen ───────────────────────────
   const EMPTY_LINE = (): ReceiptLine => ({ productId: '', qty: '', search: '', showSuggestions: false, highlightIdx: -1 });
@@ -1006,10 +1007,17 @@ export default function InventoryPage() {
     Array.from(new Set(rawMaterials.map(p => p.category ?? 'Other'))),
     RAW_CATEGORY_ORDER
   )];
+  const rawAlarmCount = rawMaterials.filter(p => p.stock_level <= p.min_stock).length;
   const filteredRaw = rawMaterials.filter(p => {
     const matchCat = rawCategory === 'All' || (p.category ?? 'Other') === rawCategory;
     const q = search.toLowerCase();
-    return matchCat && (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
+    const matchSearch = !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
+    const matchStock =
+      stockFilter === 'hide-zero' ? p.stock_level > 0 :
+      stockFilter === 'zero-only' ? p.stock_level <= 0 :
+      stockFilter === 'alarm'     ? p.stock_level <= p.min_stock :
+      true;
+    return matchCat && matchSearch && matchStock;
   });
   const rawGrouped = sortCategories(
     Array.from(new Set(filteredRaw.map(p => p.category ?? 'Other'))), RAW_CATEGORY_ORDER
@@ -1087,6 +1095,27 @@ export default function InventoryPage() {
             <X size={14} />
           </button>
         )}
+      </div>
+
+      {/* Stock filter */}
+      <div className="flex flex-wrap gap-2">
+        {(['all', 'hide-zero', 'zero-only', 'alarm'] as const).map(key => {
+          const labels = { all: 'All Stock', 'hide-zero': 'Hide Zero', 'zero-only': 'Zero Only', alarm: `Alarm${rawAlarmCount > 0 ? ` (${rawAlarmCount})` : ''}` };
+          const isActive = stockFilter === key;
+          const isAlarm = key === 'alarm';
+          return (
+            <button key={key} onClick={() => setStockFilter(key)}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                isActive && isAlarm ? 'bg-red-600 text-white shadow-sm' :
+                isActive ? 'bg-indigo-600 text-white shadow-sm' :
+                isAlarm && rawAlarmCount > 0 ? 'bg-red-50 border border-red-200 text-red-600 hover:bg-red-100' :
+                'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}>
+              {isAlarm && <AlertTriangle size={10} />}
+              {labels[key]}
+            </button>
+          );
+        })}
       </div>
 
       {/* Category filter */}

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
   Database, AlertTriangle, ShoppingBag, Layers, Wrench, Package,
-  BookOpen, BookMarked, Cpu, CheckCircle2, RefreshCw, Bell,
+  BookOpen, BookMarked, Cpu, CheckCircle2, RefreshCw, Bell, UserPlus,
+  Trash2, BadgeCheck, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import {
   getProducts, getProductsFresh, upsertProduct, deleteAllProducts,
   deleteAllAccessories, deleteAllPackaging, deleteAllMovements, resetAllStockToZero,
+  updateProduct, deleteProduct,
 } from '@/services/inventory.service';
 import { getOrders, deleteAllOrders } from '@/services/orders.service';
 import {
@@ -19,9 +21,24 @@ import { ACCESSORIES, PACKAGING } from '@/data/seedAccessories';
 import { SEED_RECIPES } from '@/data/seedRecipes';
 import { MACHINES } from '@/data/seedMachines';
 import { LIBRARY_ITEMS } from '@/data/seedLibrary';
+import type { Product } from '@/types';
 
 type OpState = { running: boolean; status: 'idle' | 'done' | 'error'; msg: string };
 const $idle: OpState = { running: false, status: 'idle', msg: '' };
+
+const ALL_CATALOG_SKUS = new Set([
+  ...SEED_PRODUCTS.map(p => p.sku),
+  ...DISC_PRODUCTS.map(p => p.sku),
+  ...ACCESSORIES.map(p => p.sku),
+  ...PACKAGING.map(p => p.sku),
+]);
+
+function fmtDate(iso?: string) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  } catch { return iso; }
+}
 
 export default function SettingsPage() {
   const [productCount,   setProductCount]   = useState<number | null>(null);
@@ -33,6 +50,8 @@ export default function SettingsPage() {
   const [machineCount,   setMachineCount]   = useState<number | null>(null);
   const [libCount,       setLibCount]       = useState<number | null>(null);
   const [prodOrderCount, setProdOrderCount] = useState<number | null>(null);
+  const [extraItems,     setExtraItems]     = useState<Product[] | null>(null);
+  const [extrasOpen,     setExtrasOpen]     = useState(true);
 
   const [opProducts,  setOpProducts]  = useState<OpState>($idle);
   const [opDiscs,     setOpDiscs]     = useState<OpState>($idle);
@@ -49,10 +68,15 @@ export default function SettingsPage() {
     const [products, orders, recipes, machines, libItems, prodOrders] = await Promise.all([
       fresh ? getProductsFresh() : getProducts(), getOrders(), getRecipes(), getMachines(), getLibraryItems(), getProductionOrders(),
     ]);
-    setProductCount(products.filter(x => x.type === 'FINISHED').length);
-    setDiscCount(products.filter(x => x.type === 'RAW' && x.category !== 'Accessories' && x.category !== 'Packaging').length);
-    setAccCount(products.filter(x => x.type === 'RAW' && x.category === 'Accessories').length);
-    setPkgCount(products.filter(x => x.category === 'Packaging').length);
+
+    const firestoreSkus = new Set(products.map(p => p.sku));
+    setProductCount(SEED_PRODUCTS.filter(p => firestoreSkus.has(p.sku)).length);
+    setDiscCount(   DISC_PRODUCTS.filter(p => firestoreSkus.has(p.sku)).length);
+    setAccCount(    ACCESSORIES.filter(p => firestoreSkus.has(p.sku)).length);
+    setPkgCount(    PACKAGING.filter(p => firestoreSkus.has(p.sku)).length);
+
+    setExtraItems(products.filter(p => !ALL_CATALOG_SKUS.has(p.sku) && p.source !== 'catalog'));
+
     setOrderCount(orders.length);
     setRecipeCount(recipes.length);
     setMachineCount(machines.length);
@@ -79,25 +103,22 @@ export default function SettingsPage() {
   };
 
   const handleReseedProducts = () => run(setOpProducts, async () => {
-    if (productCount !== 0) await deleteAllProducts();
-    for (const p of SEED_PRODUCTS) await upsertProduct(p);
+    for (const p of SEED_PRODUCTS) await upsertProduct({ ...p, source: 'catalog' });
     return `${SEED_PRODUCTS.length} products synced.`;
   }, () => setProductCount(SEED_PRODUCTS.length));
 
   const handleSeedDiscs = () => run(setOpDiscs, async () => {
-    for (const p of DISC_PRODUCTS) await upsertProduct(p);
+    for (const p of DISC_PRODUCTS) await upsertProduct({ ...p, source: 'catalog' });
     return `${DISC_PRODUCTS.length} disc products synced.`;
   }, () => setDiscCount(DISC_PRODUCTS.length));
 
   const handleSeedAcc = () => run(setOpAcc, async () => {
-    await deleteAllAccessories();
-    for (const p of ACCESSORIES) await upsertProduct(p);
+    for (const p of ACCESSORIES) await upsertProduct({ ...p, source: 'catalog' });
     return `${ACCESSORIES.length} accessories synced.`;
   }, () => setAccCount(ACCESSORIES.length));
 
   const handleSeedPkg = () => run(setOpPkg, async () => {
-    await deleteAllPackaging();
-    for (const p of PACKAGING) await upsertProduct(p);
+    for (const p of PACKAGING) await upsertProduct({ ...p, source: 'catalog' });
     return `${PACKAGING.length} packaging items synced.`;
   }, () => setPkgCount(PACKAGING.length));
 
@@ -120,6 +141,17 @@ export default function SettingsPage() {
     return `${LIBRARY_ITEMS.length} library items synced.`;
   }, () => setLibCount(LIBRARY_ITEMS.length));
 
+  const handleApproveExtra = async (item: Product) => {
+    await updateProduct(item.id, { source: 'catalog' });
+    await refreshCounts(true);
+  };
+
+  const handleDeleteExtra = async (item: Product) => {
+    if (!confirm(`Delete "${item.name}" (${item.sku})? This cannot be undone.`)) return;
+    await deleteProduct(item.id);
+    await refreshCounts(true);
+  };
+
   const handleResetAll = async () => {
     if (resetText !== 'RESET') return;
     setOpReset({ running: true, status: 'idle', msg: 'Deleting sales orders…' });
@@ -139,44 +171,39 @@ export default function SettingsPage() {
     }
   };
 
-  // ── Notification definitions (only rendered when drift is detected) ──────
+  // ── Notification definitions ─────────────────────────────────────────────
   type Notif = {
-    id: string;
-    icon: React.ReactNode;
-    color: string;
-    title: string;
-    detail: string;
-    actionLabel: string;
-    op: OpState;
-    handler: () => void;
+    id: string; icon: React.ReactNode; color: string;
+    title: string; detail: string; actionLabel: string;
+    op: OpState; handler: () => void;
   };
 
   const notifs: Notif[] = [
-    productCount !== null && productCount !== SEED_PRODUCTS.length && {
+    productCount !== null && productCount < SEED_PRODUCTS.length && {
       id: 'products', icon: <Database size={18} />, color: 'amber',
       title: 'Product Catalog out of sync',
-      detail: `${productCount} in Firestore · ${SEED_PRODUCTS.length} in catalog`,
+      detail: `${productCount} of ${SEED_PRODUCTS.length} catalog items present`,
       actionLabel: productCount === 0 ? 'Import Products' : 'Re-sync Catalog',
       op: opProducts, handler: handleReseedProducts,
     },
     discCount !== null && discCount < DISC_PRODUCTS.length && {
       id: 'discs', icon: <Layers size={18} />, color: 'amber',
       title: 'Disc Inventory out of sync',
-      detail: `${discCount} in Firestore · ${DISC_PRODUCTS.length} in catalog`,
+      detail: `${discCount} of ${DISC_PRODUCTS.length} catalog items present`,
       actionLabel: 'Sync Disc Catalog',
       op: opDiscs, handler: handleSeedDiscs,
     },
-    accCount !== null && accCount !== ACCESSORIES.length && {
+    accCount !== null && accCount < ACCESSORIES.length && {
       id: 'accessories', icon: <Wrench size={18} />, color: 'amber',
       title: 'Accessories Catalog out of sync',
-      detail: `${accCount} in Firestore · ${ACCESSORIES.length} in catalog`,
+      detail: `${accCount} of ${ACCESSORIES.length} catalog items present`,
       actionLabel: 'Sync Accessories',
       op: opAcc, handler: handleSeedAcc,
     },
-    pkgCount !== null && pkgCount !== PACKAGING.length && {
+    pkgCount !== null && pkgCount < PACKAGING.length && {
       id: 'packaging', icon: <Package size={18} />, color: 'amber',
       title: 'Packaging Catalog out of sync',
-      detail: `${pkgCount} in Firestore · ${PACKAGING.length} in catalog`,
+      detail: `${pkgCount} of ${PACKAGING.length} catalog items present`,
       actionLabel: 'Sync Packaging',
       op: opPkg, handler: handleSeedPkg,
     },
@@ -203,19 +230,20 @@ export default function SettingsPage() {
     },
   ].filter(Boolean) as Notif[];
 
-  const allLoaded = [productCount, discCount, accCount, pkgCount, recipeCount, machineCount, libCount, orderCount].every(c => c !== null);
+  const allLoaded = [productCount, discCount, accCount, pkgCount, recipeCount, machineCount, libCount, orderCount].every(c => c !== null) && extraItems !== null;
+  const hasAlerts = notifs.length > 0 || (extraItems?.length ?? 0) > 0;
 
-  // ── Info rows for the data overview grid ────────────────────────────────
+  // ── Info rows for the data overview grid ─────────────────────────────────
   const dataRows = [
-    { icon: <Database size={16} className="text-blue-500" />,   label: 'Products',         value: productCount,   seed: SEED_PRODUCTS.length,  onlyWarnLow: false },
-    { icon: <Layers size={16} className="text-indigo-500" />,   label: 'Disc Products',    value: discCount,      seed: DISC_PRODUCTS.length,  onlyWarnLow: true  },
-    { icon: <Wrench size={16} className="text-amber-500" />,    label: 'Accessories',      value: accCount,       seed: ACCESSORIES.length,    onlyWarnLow: false },
-    { icon: <Package size={16} className="text-purple-500" />, label: 'Packaging',        value: pkgCount,       seed: PACKAGING.length,      onlyWarnLow: false },
-    { icon: <BookOpen size={16} className="text-violet-500" />, label: 'BOM Recipes',      value: recipeCount,    seed: SEED_RECIPES.length,   onlyWarnLow: false },
-    { icon: <Cpu size={16} className="text-orange-500" />,      label: 'Machines & Tools', value: machineCount,   seed: MACHINES.length,       onlyWarnLow: false },
-    { icon: <BookMarked size={16} className="text-teal-500" />, label: 'Library Items',    value: libCount,       seed: LIBRARY_ITEMS.length,  onlyWarnLow: false },
-    { icon: <ShoppingBag size={16} className="text-green-500" />, label: 'Sales Orders',   value: orderCount,     seed: null,                  onlyWarnLow: false },
-    { icon: <Layers size={16} className="text-cyan-500" />,     label: 'Completed Production', value: prodOrderCount, seed: null,              onlyWarnLow: false },
+    { icon: <Database size={16} className="text-blue-500" />,    label: 'Products',            value: productCount,   seed: SEED_PRODUCTS.length,  onlyWarnLow: true  },
+    { icon: <Layers size={16} className="text-indigo-500" />,    label: 'Disc Products',        value: discCount,      seed: DISC_PRODUCTS.length,  onlyWarnLow: true  },
+    { icon: <Wrench size={16} className="text-amber-500" />,     label: 'Accessories',          value: accCount,       seed: ACCESSORIES.length,    onlyWarnLow: true  },
+    { icon: <Package size={16} className="text-purple-500" />,   label: 'Packaging',            value: pkgCount,       seed: PACKAGING.length,      onlyWarnLow: true  },
+    { icon: <BookOpen size={16} className="text-violet-500" />,  label: 'BOM Recipes',          value: recipeCount,    seed: SEED_RECIPES.length,   onlyWarnLow: false },
+    { icon: <Cpu size={16} className="text-orange-500" />,       label: 'Machines & Tools',     value: machineCount,   seed: MACHINES.length,       onlyWarnLow: false },
+    { icon: <BookMarked size={16} className="text-teal-500" />,  label: 'Library Items',        value: libCount,       seed: LIBRARY_ITEMS.length,  onlyWarnLow: false },
+    { icon: <ShoppingBag size={16} className="text-green-500" />,label: 'Sales Orders',         value: orderCount,     seed: null,                  onlyWarnLow: false },
+    { icon: <Layers size={16} className="text-cyan-500" />,      label: 'Completed Production', value: prodOrderCount, seed: null,                  onlyWarnLow: false },
   ];
 
   return (
@@ -227,7 +255,7 @@ export default function SettingsPage() {
         <p className="text-slate-500 text-sm mt-1">System configuration and data management</p>
       </div>
 
-      {/* ── Notification cards ─────────────────────────────────────── */}
+      {/* ── Notification cards ────────────────────────────────────── */}
       <section>
         <div className="flex items-center gap-2 mb-3">
           <Bell size={14} className="text-slate-400" />
@@ -238,13 +266,15 @@ export default function SettingsPage() {
           <div className="bg-white rounded-xl border border-slate-100 p-5 text-sm text-slate-400 animate-pulse">
             Checking data status…
           </div>
-        ) : notifs.length === 0 ? (
+        ) : !hasAlerts ? (
           <div className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4">
             <CheckCircle2 size={18} className="text-emerald-500 shrink-0" />
             <p className="text-sm font-medium text-emerald-700">All catalogs are up to date.</p>
           </div>
         ) : (
           <div className="space-y-3">
+
+            {/* Standard sync notifications */}
             {notifs.map(n => (
               <div key={n.id}
                 className={`flex items-start justify-between gap-4 rounded-xl border px-5 py-4 ${
@@ -259,33 +289,83 @@ export default function SettingsPage() {
                   <div>
                     <p className={`text-sm font-semibold ${n.color === 'red' ? 'text-red-800' : n.color === 'blue' ? 'text-blue-800' : 'text-amber-800'}`}>{n.title}</p>
                     <p className={`text-xs mt-0.5 ${n.color === 'red' ? 'text-red-600' : n.color === 'blue' ? 'text-blue-600' : 'text-amber-600'}`}>{n.detail}</p>
-                    {n.op.status === 'done' && (
-                      <p className="text-xs text-emerald-600 mt-1 font-medium">{n.op.msg}</p>
-                    )}
-                    {n.op.status === 'error' && (
-                      <p className="text-xs text-red-600 mt-1">{n.op.msg}</p>
-                    )}
+                    {n.op.status === 'done' && <p className="text-xs text-emerald-600 mt-1 font-medium">{n.op.msg}</p>}
+                    {n.op.status === 'error' && <p className="text-xs text-red-600 mt-1">{n.op.msg}</p>}
                   </div>
                 </div>
-                <button
-                  onClick={n.handler}
-                  disabled={n.op.running}
-                  className={`shrink-0 px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${
-                    n.color === 'red' ? 'bg-red-600 text-white hover:bg-red-700'
-                    : n.color === 'blue' ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : 'bg-amber-500 text-white hover:bg-amber-600'
-                  }`}>
-                  {n.op.running ? (
-                    <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> Working…</span>
-                  ) : n.actionLabel}
+                <button onClick={n.handler} disabled={n.op.running}
+                  className="shrink-0 px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 bg-amber-500 text-white hover:bg-amber-600">
+                  {n.op.running ? <span className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin" /> Working…</span> : n.actionLabel}
                 </button>
               </div>
             ))}
+
+            {/* User-Added Items card */}
+            {extraItems && extraItems.length > 0 && (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 overflow-hidden">
+                <button
+                  onClick={() => setExtrasOpen(o => !o)}
+                  className="w-full flex items-center justify-between px-5 py-4 text-left">
+                  <div className="flex items-center gap-3">
+                    <UserPlus size={18} className="text-blue-500 shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-blue-800">
+                        User-Added Items ({extraItems.length})
+                      </p>
+                      <p className="text-xs text-blue-600 mt-0.5">
+                        Items added manually — not part of the code catalog. Review and keep or remove.
+                      </p>
+                    </div>
+                  </div>
+                  {extrasOpen ? <ChevronUp size={16} className="text-blue-400 shrink-0" /> : <ChevronDown size={16} className="text-blue-400 shrink-0" />}
+                </button>
+
+                {extrasOpen && (
+                  <div className="border-t border-blue-200 divide-y divide-blue-100">
+                    {/* Header row */}
+                    <div className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-3 px-5 py-2 text-[10px] font-semibold uppercase tracking-widest text-blue-400">
+                      <span>Name</span>
+                      <span>SKU</span>
+                      <span>Added by</span>
+                      <span>Date</span>
+                      <span className="w-28" />
+                    </div>
+
+                    {extraItems.map(item => (
+                      <div key={item.id} className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-3 items-center px-5 py-3 bg-white/60">
+                        <div>
+                          <p className="text-sm font-medium text-slate-800 leading-snug">{item.name}</p>
+                          {item.category && <p className="text-xs text-slate-400">{item.category}</p>}
+                        </div>
+                        <span className="text-xs font-mono text-slate-600">{item.sku}</span>
+                        <span className="text-xs text-slate-600 truncate">{item.createdBy ?? '—'}</span>
+                        <span className="text-xs text-slate-500">{fmtDate(item.createdAt)}</span>
+                        <div className="flex items-center gap-2 w-28 justify-end">
+                          <button
+                            onClick={() => handleApproveExtra(item)}
+                            title="Approve — add to official catalog"
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors">
+                            <BadgeCheck size={12} /> Keep
+                          </button>
+                          <button
+                            onClick={() => handleDeleteExtra(item)}
+                            title="Delete from Firestore"
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-600 hover:bg-red-200 transition-colors">
+                            <Trash2 size={12} /> Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
         )}
       </section>
 
-      {/* ── Data Overview ──────────────────────────────────────────── */}
+      {/* ── Data Overview ─────────────────────────────────────────── */}
       <section>
         <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Data Overview</h2>
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm divide-y divide-slate-50">
@@ -314,7 +394,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* ── Danger Zone ────────────────────────────────────────────── */}
+      {/* ── Danger Zone ───────────────────────────────────────────── */}
       <section>
         <h2 className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Danger Zone</h2>
         <div className="bg-red-50 rounded-xl border border-red-200 shadow-sm p-5">
@@ -345,12 +425,8 @@ export default function SettingsPage() {
                 : 'Reset All Data'}
             </button>
           </div>
-          {opReset.status === 'done' && (
-            <p className="text-xs text-emerald-600 mt-3 font-medium">{opReset.msg}</p>
-          )}
-          {opReset.status === 'error' && (
-            <p className="text-xs text-red-600 mt-3">{opReset.msg}</p>
-          )}
+          {opReset.status === 'done' && <p className="text-xs text-emerald-600 mt-3 font-medium">{opReset.msg}</p>}
+          {opReset.status === 'error' && <p className="text-xs text-red-600 mt-3">{opReset.msg}</p>}
         </div>
       </section>
 

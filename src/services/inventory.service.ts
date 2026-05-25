@@ -1,7 +1,7 @@
 import {
   collection, addDoc, getDocs, getDocsFromServer, doc, setDoc, deleteDoc, updateDoc, runTransaction, Timestamp, writeBatch,
 } from 'firebase/firestore';
-import { db } from '@/firebase/config';
+import { db, auth } from '@/firebase/config';
 import type { Product, InventoryMovement } from '@/types';
 
 export const getProducts = async (): Promise<Product[]> => {
@@ -15,7 +15,12 @@ export const getProductsFresh = async (): Promise<Product[]> => {
 };
 
 export const addProduct = (product: Omit<Product, 'id'>) =>
-  addDoc(collection(db, 'products'), product);
+  addDoc(collection(db, 'products'), {
+    ...product,
+    source: 'user',
+    createdBy: auth.currentUser?.email ?? auth.currentUser?.displayName ?? 'Unknown',
+    createdAt: new Date().toISOString(),
+  });
 
 export const upsertProduct = (product: Omit<Product, 'id'>) =>
   setDoc(doc(db, 'products', product.sku), product);

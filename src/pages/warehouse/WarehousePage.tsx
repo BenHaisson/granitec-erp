@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, type FormEvent } from 'react';
-import { Plus, Search, Package, ImageOff, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Search, Package, ImageOff, Pencil, Trash2, AlertTriangle } from 'lucide-react';
 import { getProducts, addProduct, updateProduct, deleteProduct } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
@@ -175,6 +175,7 @@ export default function WarehousePage() {
   const [loading, setLoading]         = useState(true);
   const [search, setSearch]           = useState('');
   const [category, setCategory]       = useState('All');
+  const [stockFilter, setStockFilter] = useState<'all' | 'hide-zero' | 'zero-only' | 'alarm'>('all');
 
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving]       = useState(false);
@@ -227,7 +228,13 @@ export default function WarehousePage() {
   const filteredFinished = finishedProducts.filter(p => {
     const matchCat = category === 'All' || (p.category ?? 'Other') === category;
     const q = search.toLowerCase();
-    return matchCat && (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
+    const matchSearch = !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
+    const matchStock =
+      stockFilter === 'hide-zero' ? p.stock_level > 0 :
+      stockFilter === 'zero-only' ? p.stock_level <= 0 :
+      stockFilter === 'alarm'     ? p.stock_level <= p.min_stock :
+      true;
+    return matchCat && matchSearch && matchStock;
   });
   const groups = groupProducts(filteredFinished).sort((a, b) => {
     const ao = Math.min(...a.variants.map(v => v.product.sort_order ?? 999));
@@ -235,8 +242,9 @@ export default function WarehousePage() {
     return ao - bo;
   });
 
-  const empty = finishedProducts.filter(p => p.stock_level <= 0).length;
-  const low   = finishedProducts.filter(p => p.stock_level > 0 && p.stock_level <= p.min_stock).length;
+  const empty     = finishedProducts.filter(p => p.stock_level <= 0).length;
+  const low       = finishedProducts.filter(p => p.stock_level > 0 && p.stock_level <= p.min_stock).length;
+  const alarmCount = finishedProducts.filter(p => p.stock_level <= p.min_stock).length;
 
   const handleAddProduct = async (e: FormEvent) => {
     e.preventDefault();
@@ -281,6 +289,27 @@ export default function WarehousePage() {
         <input type="text" placeholder="Search by name or reference…"
           value={search} onChange={e => setSearch(e.target.value)}
           className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm" />
+      </div>
+
+      {/* Stock filter */}
+      <div className="flex flex-wrap gap-2">
+        {(['all', 'hide-zero', 'zero-only', 'alarm'] as const).map(key => {
+          const labels = { all: 'All Stock', 'hide-zero': 'Hide Zero', 'zero-only': 'Zero Only', alarm: `Alarm${alarmCount > 0 ? ` (${alarmCount})` : ''}` };
+          const isActive = stockFilter === key;
+          const isAlarm = key === 'alarm';
+          return (
+            <button key={key} onClick={() => setStockFilter(key)}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                isActive && isAlarm ? 'bg-red-600 text-white shadow-sm' :
+                isActive ? 'bg-blue-600 text-white shadow-sm' :
+                isAlarm && alarmCount > 0 ? 'bg-red-50 border border-red-200 text-red-600 hover:bg-red-100' :
+                'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}>
+              {isAlarm && <AlertTriangle size={10} />}
+              {labels[key]}
+            </button>
+          );
+        })}
       </div>
 
       {/* Category filter */}
