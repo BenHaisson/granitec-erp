@@ -18,6 +18,9 @@ import {
   getMachines, upsertMachine, deleteAllMachines,
   getLibraryItems, upsertLibraryItem, deleteAllLibraryItems,
 } from '@/services/library.service';
+import {
+  getShippingOrders, deleteShippingOrder, updateShippingOrderRef,
+} from '@/services/shipping.service';
 import { SEED_PRODUCTS } from '@/data/seedProducts';
 import { DISC_PRODUCTS } from '@/data/seedDiscs';
 import { ACCESSORIES, PACKAGING } from '@/data/seedAccessories';
@@ -61,6 +64,7 @@ export default function SettingsPage() {
   const [opRecipes,   setOpRecipes]   = useState<OpState>($idle);
   const [opMachines,  setOpMachines]  = useState<OpState>($idle);
   const [opLib,       setOpLib]       = useState<OpState>($idle);
+  const [opCleanup,   setOpCleanup]   = useState<OpState>($idle);
   const [opReset,     setOpReset]     = useState<OpState>($idle);
   const [resetText,   setResetText]   = useState('');
 
@@ -138,6 +142,27 @@ export default function SettingsPage() {
     return `${LIBRARY_ITEMS.length} library items imported.`;
   });
 
+  const PACKAGING_SKUS = new Set(PACKAGING.map(p => p.sku));
+
+  const handleCleanupShipping = () => run(setOpCleanup, async () => {
+    const orders = await getShippingOrders();
+    let deleted = 0, renamed = 0;
+    for (const order of orders) {
+      const isPackaging = order.lines.length > 0 && order.lines.every(l => PACKAGING_SKUS.has(l.productId));
+      if (isPackaging) {
+        await deleteShippingOrder(order.id);
+        deleted++;
+      } else {
+        const newRef = order.ref.replace(/^SH-\d{4}-/, 'Disc-2024-');
+        if (newRef !== order.ref) {
+          await updateShippingOrderRef(order.id, newRef);
+          renamed++;
+        }
+      }
+    }
+    return `Deleted ${deleted} packaging orders · Renamed ${renamed} disc orders.`;
+  });
+
   const handleApproveExtra = async (item: Product) => {
     await updateProduct(item.id, { source: 'catalog' });
     await loadStats(true);
@@ -179,6 +204,16 @@ export default function SettingsPage() {
     { icon: <ShoppingBag size={15} className="text-green-500" />,label: 'Sales Orders',          value: stats.orders },
     { icon: <Layers size={15} className="text-cyan-500" />,      label: 'Completed Production',  value: stats.prodCompleted },
   ] : [];
+
+  const cleanupButtons = [
+    {
+      label: 'Clean Shipping History',
+      description: 'Delete all packaging shipping orders · Rename disc orders from SH-YYYY- to Disc-2024-',
+      op: opCleanup, handler: handleCleanupShipping,
+      icon: <Trash2 size={14} />,
+      actionLabel: 'Run Cleanup',
+    },
+  ];
 
   const importButtons = [
     { label: 'Finished Products', count: SEED_PRODUCTS.length,  op: opProducts, handler: handleImportProducts, icon: <Database size={14} /> },
@@ -327,6 +362,38 @@ export default function SettingsPage() {
                       {btn.op.running
                         ? <><RefreshCw size={11} className="animate-spin" /> Importing…</>
                         : <><Download size={11} /> Import</>}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Data cleanup operations */}
+            <div className="border-t border-slate-100">
+              <div className="px-5 py-3 bg-amber-50 border-b border-amber-100">
+                <p className="text-xs font-semibold text-amber-700 uppercase tracking-widest">Data Cleanup</p>
+              </div>
+              {cleanupButtons.map(btn => (
+                <div key={btn.label} className="flex items-center justify-between px-5 py-3">
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-amber-500">{btn.icon}</span>
+                      <span className="text-sm font-medium text-slate-700">{btn.label}</span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5 ml-6">{btn.description}</p>
+                  </div>
+                  <div className="flex items-center gap-3 ml-4 shrink-0">
+                    {btn.op.status === 'done' && (
+                      <span className="text-xs text-emerald-600 font-medium">{btn.op.msg}</span>
+                    )}
+                    {btn.op.status === 'error' && (
+                      <span className="text-xs text-red-600">{btn.op.msg}</span>
+                    )}
+                    <button onClick={btn.handler} disabled={btn.op.running}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors disabled:opacity-50">
+                      {btn.op.running
+                        ? <><RefreshCw size={11} className="animate-spin" /> Running…</>
+                        : btn.actionLabel}
                     </button>
                   </div>
                 </div>

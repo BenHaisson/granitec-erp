@@ -41,3 +41,7 @@ export const receiveShippingOrder = async (order: ShippingOrder): Promise<void> 
 export const deleteShippingOrder = async (id: string): Promise<void> => {
   await deleteDoc(doc(db, 'shipping_orders', id));
 };
+
+export const updateShippingOrderRef = async (id: string, ref: string): Promise<void> => {
+  await updateDoc(doc(db, 'shipping_orders', id), { ref });
+};
