@@ -1,6 +1,6 @@
 import {
   collection, addDoc, getDocs, Timestamp, orderBy, query,
-  writeBatch, doc, setDoc,
+  writeBatch, doc, setDoc, deleteDoc,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { SalesOrder, SalesOrderLine } from '@/types';
@@ -68,6 +68,10 @@ export const updateOrder = async (order: SalesOrder): Promise<void> => {
     lines: order.lines,
     date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
   });
+};
+
+export const deleteOrder = async (id: string): Promise<void> => {
+  await deleteDoc(doc(db, 'sales_orders', id));
 };
 
 export const deleteAllOrders = async (): Promise<void> => {

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, type FormEvent } from 'react';
-import { Plus, X, ShoppingBag, Download, Eye, Pencil, FileDown, Search } from 'lucide-react';
-import { getOrders, createOrder, updateOrder, generateOrderRef } from '@/services/orders.service';
+import { Plus, X, ShoppingBag, Download, Eye, Pencil, FileDown, Search, Trash2 } from 'lucide-react';
+import { getOrders, createOrder, updateOrder, deleteOrder, generateOrderRef } from '@/services/orders.service';
 import { getProducts } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
 import type { SalesOrder, SalesOrderLine, Product } from '@/types';
@@ -810,6 +810,32 @@ function OrderDetailModal({ order, onClose }: { order: SalesOrder; onClose: () =
   );
 }
 
+// ── Product picker for edit modal ────────────────────────────────
+function ProductPicker({ products, onSelect }: { products: Product[]; onSelect: (p: Product) => void }) {
+  const [q, setQ] = useState('');
+  const filtered = q.trim()
+    ? products.filter(p => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()))
+    : products;
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm">
+      <div className="p-2 border-b border-slate-100">
+        <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="Search product…" autoFocus
+          className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400" />
+      </div>
+      <div className="max-h-40 overflow-y-auto divide-y divide-slate-50">
+        {filtered.slice(0, 20).map(p => (
+          <button key={p.id} type="button" onMouseDown={() => onSelect(p)}
+            className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-blue-50 transition-colors">
+            <span className="text-sm text-slate-700">{p.name}</span>
+            <span className="text-xs font-mono text-slate-400 ml-2">{p.sku}</span>
+          </button>
+        ))}
+        {filtered.length === 0 && <p className="px-3 py-2 text-sm text-slate-400">No results</p>}
+      </div>
+    </div>
+  );
+}
+
 // ── Edit Order Modal ──────────────────────────────────────────────
 function EditOrderModal({ order, products, onClose, onSaved }: {
   order: SalesOrder;
@@ -824,7 +850,7 @@ function EditOrderModal({ order, products, onClose, onSaved }: {
   const [client, setClient] = useState(order.client);
   const [date, setDate] = useState(toDateStr(order.date));
   const [lines, setLines] = useState<DraftLine[]>(
-    order.lines.map(l => ({ ...l }))
+    order.lines.map(l => ({ ...l, search: l.productName, showSuggestions: false, highlightIdx: -1 }))
   );
   const [openPicker, setOpenPicker] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
@@ -832,7 +858,7 @@ function EditOrderModal({ order, products, onClose, onSaved }: {
 
   const addLine = () => {
     const idx = lines.length;
-    setLines(prev => [...prev, { productId: '', productName: '', sku: '', boxes: 1, qtyPerBox: 1, totalQty: 1 }]);
+    setLines(prev => [...prev, { productId: '', productName: '', sku: '', boxes: 1, qtyPerBox: 1, totalQty: 1, search: '', showSuggestions: false, highlightIdx: -1 }]);
     setOpenPicker(idx);
   };
 
@@ -950,8 +976,6 @@ function EditOrderModal({ order, products, onClose, onSaved }: {
 }
 
 // ── Main page ─────────────────────────────────────────────────────
-const isLive = import.meta.env.VITE_APP_MODE === 'live';
-
 export default function SalesPage() {
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -959,6 +983,7 @@ export default function SalesPage() {
   const [showNew, setShowNew] = useState(false);
   const [detail, setDetail] = useState<SalesOrder | null>(null);
   const [editing, setEditing] = useState<SalesOrder | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [filterBase, setFilterBase] = useState<string | null>(null);
 
   const load = () => {
@@ -969,6 +994,17 @@ export default function SalesPage() {
   };
 
   useEffect(() => { load(); }, []);
+
+  const handleDelete = async (order: SalesOrder) => {
+    if (!confirm(`Delete order ${order.ref}? Stock levels will not be auto-adjusted.`)) return;
+    setDeleting(order.id);
+    try {
+      await deleteOrder(order.id);
+      setOrders(o => o.filter(x => x.id !== order.id));
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   const groupStats = buildGroupStats(orders);
 
@@ -1103,15 +1139,17 @@ export default function SalesPage() {
                           className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors" title="View">
                           <Eye size={15} />
                         </button>
-                        {!isLive && (
-                          <button onClick={() => setEditing(order)}
-                            className="p-1.5 text-slate-400 hover:text-amber-500 transition-colors" title="Edit">
-                            <Pencil size={15} />
-                          </button>
-                        )}
+                        <button onClick={() => setEditing(order)}
+                          className="p-1.5 text-amber-500 hover:text-amber-600 transition-colors" title="Edit">
+                          <Pencil size={15} />
+                        </button>
                         <button onClick={() => downloadInvoice(order)}
                           className="p-1.5 text-slate-400 hover:text-slate-700 transition-colors" title="Download">
                           <Download size={15} />
+                        </button>
+                        <button onClick={() => handleDelete(order)} disabled={deleting === order.id}
+                          className="p-1.5 text-red-400 hover:text-red-600 transition-colors disabled:opacity-40" title="Delete">
+                          <Trash2 size={15} />
                         </button>
                       </div>
                     </td>

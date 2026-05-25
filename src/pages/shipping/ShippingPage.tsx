@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Truck, Plus, ChevronDown, CheckCircle2, Clock, Trash2,
   Search, X, FileText, PackagePlus, AlertCircle, Sparkles,
-  ArrowLeft, ToggleLeft, ToggleRight,
+  ArrowLeft, ToggleLeft, ToggleRight, Pencil,
 } from 'lucide-react';
 import { getProducts } from '@/services/inventory.service';
 import {
-  getShippingOrders, createShippingOrder, receiveShippingOrder, deleteShippingOrder,
+  getShippingOrders, createShippingOrder, receiveShippingOrder,
+  deleteShippingOrder, updateShippingOrder, deleteReceivedShippingOrder, updateReceivedShippingOrder,
 } from '@/services/shipping.service';
 import { getRecipes } from '@/services/production.service';
 import type { Product, ShippingOrder, ShippingOrderLine, Recipe } from '@/types';
@@ -228,12 +229,14 @@ interface CreateOverlayProps {
   onConfirm: () => void;
   onClose: () => void;
   onParseImport: () => void;
+  isEditing?: boolean;
 }
 function CreateOrderOverlay({
   rawMaterials, ref_, setRef, supplier, setSupplier, date, setDate,
   lines, saving, error, refInputRef, showImport, setShowImport,
   importText, setImportText, importWarnings,
   onAddLine, onRemoveLine, onUpdateLine, onSelectProduct, onConfirm, onClose, onParseImport,
+  isEditing = false,
 }: CreateOverlayProps) {
   const qtyRefs = useRef<HTMLInputElement[]>([]);
   const pendingQuickAdd = useRef<{ idx: number; data: Partial<DraftLine> } | null>(null);
@@ -297,7 +300,7 @@ function CreateOrderOverlay({
           <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
             <X size={20} />
           </button>
-          <h1 className="text-lg font-bold text-slate-800">New Shipping Order</h1>
+          <h1 className="text-lg font-bold text-slate-800">{isEditing ? 'Edit Shipping Order' : 'New Shipping Order'}</h1>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
@@ -319,7 +322,7 @@ function CreateOrderOverlay({
           </div>
           <button onClick={onConfirm} disabled={saving}
             className="px-5 py-2 rounded-xl text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm shadow-indigo-200">
-            {saving ? 'Saving…' : `Save Order${validCount > 0 ? ` (${validCount})` : ''}`}
+            {saving ? 'Saving…' : isEditing ? `Save Changes${validCount > 0 ? ` (${validCount})` : ''}` : `Save Order${validCount > 0 ? ` (${validCount})` : ''}`}
           </button>
         </div>
       </div>
@@ -759,8 +762,9 @@ export default function ShippingPage() {
   const [expanded, setExpanded]       = useState<Set<string>>(new Set());
   const [receiving, setReceiving]     = useState<Set<string>>(new Set());
   const [deleting, setDeleting]       = useState<Set<string>>(new Set());
+  const [editingOrder, setEditingOrder] = useState<ShippingOrder | null>(null);
 
-  // Create order overlay state
+  // Create/edit order overlay state
   const [showCreate, setShowCreate]   = useState(false);
   const [ref_, setRef]                = useState('');
   const [supplier, setSupplier]       = useState('');
@@ -786,10 +790,33 @@ export default function ShippingPage() {
   useEffect(() => { load(); }, []);
 
   const openCreate = () => {
+    setEditingOrder(null);
     setRef(autoRef(orders));
     setSupplier('');
     setDate(todayISO());
     setLines([EMPTY_LINE()]);
+    setSaveError('');
+    setShowImport(false);
+    setImportText('');
+    setImportWarnings([]);
+    setShowCreate(true);
+    setTimeout(() => refInputRef.current?.focus(), 80);
+  };
+
+  const openEdit = (order: ShippingOrder) => {
+    setEditingOrder(order);
+    setRef(order.ref);
+    setSupplier(order.supplier ?? '');
+    setDate(order.date);
+    setLines(order.lines.map(l => ({
+      productId: l.productId,
+      productName: l.productName,
+      sku: l.sku,
+      qty: String(l.qty),
+      search: l.productName,
+      showSuggestions: false,
+      highlightIdx: -1,
+    })));
     setSaveError('');
     setShowImport(false);
     setImportText('');
@@ -837,12 +864,23 @@ export default function ShippingPage() {
     if (validLines.length === 0) { setSaveError('Add at least one line with a product and quantity.'); return; }
     setSaving(true);
     try {
-      await createShippingOrder({
-        ref: ref_.trim(),
-        supplier: supplier.trim() || undefined,
-        date,
-        lines: validLines.map(l => ({ productId: l.productId, productName: l.productName, sku: l.sku, qty: Number(l.qty) })),
-      });
+      const mappedLines = validLines.map(l => ({ productId: l.productId, productName: l.productName, sku: l.sku, qty: Number(l.qty) }));
+      if (editingOrder) {
+        const patch = { ref: ref_.trim(), supplier: supplier.trim() || undefined, date, lines: mappedLines };
+        if (editingOrder.status === 'RECEIVED') {
+          await updateReceivedShippingOrder(editingOrder, patch);
+        } else {
+          await updateShippingOrder(editingOrder.id, patch);
+        }
+        setEditingOrder(null);
+      } else {
+        await createShippingOrder({
+          ref: ref_.trim(),
+          supplier: supplier.trim() || undefined,
+          date,
+          lines: mappedLines,
+        });
+      }
       setShowCreate(false);
       await load();
     } catch (e) {
@@ -863,10 +901,17 @@ export default function ShippingPage() {
   };
 
   const handleDelete = async (order: ShippingOrder) => {
-    if (!confirm(`Delete order ${order.ref}?`)) return;
+    const warning = order.status === 'RECEIVED'
+      ? `Delete received order ${order.ref}? This will reverse stock for ${order.lines.length} item(s).`
+      : `Delete order ${order.ref}?`;
+    if (!confirm(warning)) return;
     setDeleting(s => new Set(s).add(order.id));
     try {
-      await deleteShippingOrder(order.id);
+      if (order.status === 'RECEIVED') {
+        await deleteReceivedShippingOrder(order);
+      } else {
+        await deleteShippingOrder(order.id);
+      }
       setOrders(o => o.filter(x => x.id !== order.id));
     } finally {
       setDeleting(s => { const n = new Set(s); n.delete(order.id); return n; });
@@ -975,15 +1020,19 @@ export default function ShippingPage() {
                                 : <><CheckCircle2 size={12} /> Receive</>}
                             </button>
                           )}
-                          {order.status === 'PLANNED' && (
-                            <button
-                              onClick={() => handleDelete(order)}
-                              disabled={isDeleting}
-                              title="Delete order"
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
-                              <Trash2 size={14} />
-                            </button>
-                          )}
+                          <button
+                            onClick={() => openEdit(order)}
+                            title="Edit order"
+                            className="p-1.5 rounded-lg text-amber-500 hover:text-amber-600 hover:bg-amber-50 transition-colors">
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(order)}
+                            disabled={isDeleting}
+                            title="Delete order"
+                            className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1014,7 +1063,7 @@ export default function ShippingPage() {
         />
       )}
 
-      {/* Create Order Overlay */}
+      {/* Create / Edit Order Overlay */}
       {showCreate && (
         <CreateOrderOverlay
           rawMaterials={rawMaterials}
@@ -1033,8 +1082,9 @@ export default function ShippingPage() {
           onUpdateLine={updateLine}
           onSelectProduct={selectProduct}
           onConfirm={handleConfirm}
-          onClose={() => setShowCreate(false)}
+          onClose={() => { setShowCreate(false); setEditingOrder(null); }}
           onParseImport={parseImport}
+          isEditing={!!editingOrder}
         />
       )}
     </div>
