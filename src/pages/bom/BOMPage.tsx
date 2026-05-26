@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle, BookOpen, Check, ChevronDown, ChevronRight,
-  FileText, PackagePlus, Pencil, Plus, Search, Trash2, X,
+  Copy, FileText, PackagePlus, Pencil, Plus, Search, Trash2, X,
 } from 'lucide-react';
 import { getRecipes, createRecipe, updateRecipe, deleteRecipe } from '@/services/production.service';
 import { getProducts } from '@/services/inventory.service';
@@ -663,6 +663,11 @@ export default function BOMPage() {
     setError(''); setShowOverlay(true);
   };
 
+  const handleClone = async (recipe: Recipe) => {
+    await createRecipe({ finishedProductId: recipe.finishedProductId, components: recipe.components });
+    load();
+  };
+
   const handleDelete = async (recipe: Recipe) => {
     const name = productMap.get(recipe.finishedProductId)?.name ?? recipe.id;
     if (!confirm(`Delete recipe for "${name}"? This cannot be undone.`)) return;
@@ -755,6 +760,10 @@ export default function BOMPage() {
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
                       {feasible ? `${qty} producible` : 'No stock'}
                     </span>
+                    <button onClick={() => handleClone(recipe)} title="Clone recipe"
+                      className="p-1.5 text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors">
+                      <Copy size={13} />
+                    </button>
                     <button onClick={() => openEdit(recipe)}
                       className="p-1.5 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
                       <Pencil size={13} />
