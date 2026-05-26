@@ -996,10 +996,10 @@ export default function SalesPage() {
   useEffect(() => { load(); }, []);
 
   const handleDelete = async (order: SalesOrder) => {
-    if (!confirm(`Delete order ${order.ref}? Stock levels will not be auto-adjusted.`)) return;
+    if (!confirm(`Delete order ${order.ref}? Stock will be restored automatically.`)) return;
     setDeleting(order.id);
     try {
-      await deleteOrder(order.id);
+      await deleteOrder(order);
       setOrders(o => o.filter(x => x.id !== order.id));
     } finally {
       setDeleting(null);

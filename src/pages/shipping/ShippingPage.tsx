@@ -21,9 +21,15 @@ function fmtDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function autoRef(orders: ShippingOrder[], offset = 0) {
+const CAT_PREFIX: Record<string, string> = {
+  'Aluminium Disc': 'DISC',
+  'Accessories': 'ACC',
+  'Packaging': 'PKG',
+};
+
+function autoRef(orders: ShippingOrder[], category?: string, offset = 0) {
   const year = new Date().getFullYear();
-  const prefix = `SH-${year}-`;
+  const prefix = (category ? (CAT_PREFIX[category] ?? 'SH') : 'SH') + `-${year}-`;
   const max = orders
     .map(o => o.ref)
     .filter(r => r.startsWith(prefix))
@@ -78,9 +84,9 @@ function calcRequirements(
     if (ai === -1) return 1; if (bi === -1) return -1;
     return ai - bi;
   });
-  return cats.map((cat, i) => {
+  return cats.map((cat) => {
     const catRows = catMap.get(cat)!;
-    return { category: cat, rows: catRows, ref: autoRef(orders, i), supplier: '', enabled: catRows.some(r => r.toOrder > 0) };
+    return { category: cat, rows: catRows, ref: autoRef(orders, cat), supplier: '', enabled: catRows.some(r => r.toOrder > 0) };
   });
 }
 
@@ -791,7 +797,7 @@ export default function ShippingPage() {
 
   const openCreate = () => {
     setEditingOrder(null);
-    setRef(autoRef(orders));
+    setRef('');
     setSupplier('');
     setDate(todayISO());
     setLines([EMPTY_LINE()]);
@@ -859,7 +865,6 @@ export default function ShippingPage() {
 
   const handleConfirm = async () => {
     setSaveError('');
-    if (!ref_.trim()) { setSaveError('Reference is required.'); return; }
     const validLines = lines.filter(l => l.productId && Number(l.qty) > 0);
     if (validLines.length === 0) { setSaveError('Add at least one line with a product and quantity.'); return; }
     setSaving(true);
@@ -874,8 +879,15 @@ export default function ShippingPage() {
         }
         setEditingOrder(null);
       } else {
+        const detectedCat = (() => {
+          const cats = validLines
+            .map(l => rawMaterials.find(p => p.id === l.productId)?.category)
+            .filter(Boolean) as string[];
+          return cats.length > 0 && cats.every(c => c === cats[0]) ? cats[0] : undefined;
+        })();
+        const finalRef = ref_.trim() || autoRef(orders, detectedCat);
         await createShippingOrder({
-          ref: ref_.trim(),
+          ref: finalRef,
           supplier: supplier.trim() || undefined,
           date,
           lines: mappedLines,

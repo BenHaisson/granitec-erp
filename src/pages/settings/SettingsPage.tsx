@@ -7,7 +7,8 @@ import {
 import {
   getProducts, getProductsFresh, upsertProduct,
   deleteAllMovements, resetAllStockToZero,
-  updateProduct, deleteProduct,
+  updateProduct, deleteProduct, recalculateStockFromMovements,
+  deleteOrphanedPurchaseMovements,
 } from '@/services/inventory.service';
 import { getOrders, deleteAllOrders } from '@/services/orders.service';
 import {
@@ -20,6 +21,7 @@ import {
 } from '@/services/library.service';
 import {
   getShippingOrders, deleteShippingOrder, updateShippingOrderRef,
+  findAndDeleteDuplicateReceipts, deleteReceivedShippingOrder,
 } from '@/services/shipping.service';
 import { SEED_PRODUCTS } from '@/data/seedProducts';
 import { DISC_PRODUCTS } from '@/data/seedDiscs';
@@ -65,6 +67,8 @@ export default function SettingsPage() {
   const [opMachines,  setOpMachines]  = useState<OpState>($idle);
   const [opLib,       setOpLib]       = useState<OpState>($idle);
   const [opCleanup,   setOpCleanup]   = useState<OpState>($idle);
+  const [opDupClean,  setOpDupClean]  = useState<OpState>($idle);
+  const [opRecalc,    setOpRecalc]    = useState<OpState>($idle);
   const [opReset,     setOpReset]     = useState<OpState>($idle);
   const [resetText,   setResetText]   = useState('');
 
@@ -142,6 +146,20 @@ export default function SettingsPage() {
     return `${LIBRARY_ITEMS.length} library items imported.`;
   });
 
+  const handleDupClean = () => run(setOpDupClean, async () => {
+    const count = await findAndDeleteDuplicateReceipts();
+    if (count === 0) return 'No duplicate receipts found.';
+    await recalculateStockFromMovements();
+    return `Removed ${count} duplicate receipt(s) · Stock recalculated.`;
+  });
+
+  const handleRecalculate = () => run(setOpRecalc, async () => {
+    const orphans = await deleteOrphanedPurchaseMovements();
+    const count = await recalculateStockFromMovements();
+    const extra = orphans > 0 ? ` · Removed ${orphans} orphaned movement(s)` : '';
+    return `Stock recalculated for ${count} product(s)${extra}.`;
+  });
+
   const PACKAGING_SKUS = new Set(PACKAGING.map(p => p.sku));
 
   const handleCleanupShipping = () => run(setOpCleanup, async () => {
@@ -150,7 +168,11 @@ export default function SettingsPage() {
     for (const order of orders) {
       const isPackaging = order.lines.length > 0 && order.lines.every(l => PACKAGING_SKUS.has(l.productId));
       if (isPackaging) {
-        await deleteShippingOrder(order.id);
+        if (order.status === 'RECEIVED') {
+          await deleteReceivedShippingOrder(order);
+        } else {
+          await deleteShippingOrder(order.id);
+        }
         deleted++;
       } else {
         const newRef = order.ref.replace(/^SH-\d{4}-/, 'Disc-2024-');
@@ -406,6 +428,45 @@ export default function SettingsPage() {
       {/* ── 4. Danger Zone ────────────────────────────────────────── */}
       <section>
         <h2 className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Danger Zone</h2>
+
+        <div className="bg-orange-50 rounded-xl border border-orange-200 p-5 mb-4">
+          <div className="flex items-start gap-3 mb-3">
+            <AlertTriangle size={18} className="text-orange-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-orange-800">Remove Duplicate Supply Receipts</p>
+              <p className="text-xs text-orange-600 mt-1 max-w-md">
+                Finds received orders with the same date and products as another order, deletes the
+                system-generated duplicate, and recalculates stock. Safe to run multiple times.
+              </p>
+            </div>
+          </div>
+          <button onClick={handleDupClean} disabled={opDupClean.running}
+            className="px-5 py-2 rounded-lg text-sm font-semibold bg-orange-500 text-white hover:bg-orange-600 transition-colors disabled:opacity-40">
+            {opDupClean.running ? 'Cleaning…' : 'Remove Duplicates'}
+          </button>
+          {opDupClean.status === 'done' && <p className="text-xs text-emerald-600 mt-2 font-medium">{opDupClean.msg}</p>}
+          {opDupClean.status === 'error' && <p className="text-xs text-red-600 mt-2">{opDupClean.msg}</p>}
+        </div>
+
+        <div className="bg-amber-50 rounded-xl border border-amber-200 p-5 mb-4">
+          <div className="flex items-start gap-3 mb-3">
+            <RefreshCw size={18} className="text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-amber-800">Recalculate Stock from Movements</p>
+              <p className="text-xs text-amber-600 mt-1 max-w-md">
+                Recomputes every product's stock level by summing all recorded movements.
+                Use this to fix incorrect stock values after editing or deleting orders.
+              </p>
+            </div>
+          </div>
+          <button onClick={handleRecalculate} disabled={opRecalc.running}
+            className="px-5 py-2 rounded-lg text-sm font-semibold bg-amber-600 text-white hover:bg-amber-700 transition-colors disabled:opacity-40">
+            {opRecalc.running ? 'Recalculating…' : 'Recalculate Stock'}
+          </button>
+          {opRecalc.status === 'done' && <p className="text-xs text-emerald-600 mt-2 font-medium">{opRecalc.msg}</p>}
+          {opRecalc.status === 'error' && <p className="text-xs text-red-600 mt-2">{opRecalc.msg}</p>}
+        </div>
+
         <div className="bg-red-50 rounded-xl border border-red-200 shadow-sm p-5">
           <div className="flex items-start gap-3 mb-4">
             <AlertTriangle size={18} className="text-red-500 shrink-0 mt-0.5" />

@@ -1,6 +1,6 @@
 import {
-  collection, addDoc, getDocs, Timestamp, orderBy, query,
-  writeBatch, doc, setDoc, deleteDoc,
+  collection, addDoc, getDocs, Timestamp, orderBy, query, where,
+  writeBatch, doc, setDoc, deleteDoc, runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { SalesOrder, SalesOrderLine } from '@/types';
@@ -61,7 +61,39 @@ export const seedHistoricalOrders = async (
   }
 };
 
+// Reverse all SALE movements for an order ref and restore product stock.
+// If no movements exist (historical/seeded orders) this is a no-op.
+async function reverseSaleMovements(orderRef: string): Promise<void> {
+  const movSnap = await getDocs(
+    query(collection(db, 'inventory_movements'), where('note', '==', orderRef))
+  );
+  const saleMoves = movSnap.docs.filter(d => d.data().reason === 'SALE');
+  for (const movDoc of saleMoves) {
+    const qty = movDoc.data().quantity as number; // stored as negative (e.g. -500)
+    const productId = movDoc.data().productId as string;
+    try {
+      await runTransaction(db, async (tx) => {
+        const prodRef = doc(db, 'products', productId);
+        const snap = await tx.get(prodRef);
+        if (snap.exists()) {
+          tx.update(prodRef, { stock_level: (snap.data().stock_level as number) - qty }); // -(-500) = +500
+        }
+        tx.delete(movDoc.ref);
+      });
+    } catch { /* product deleted — skip */ }
+  }
+}
+
 export const updateOrder = async (order: SalesOrder): Promise<void> => {
+  // Reverse old deductions, then re-apply from the new lines
+  await reverseSaleMovements(order.ref);
+  for (const line of order.lines) {
+    if (line.totalQty > 0) {
+      try {
+        await adjustStock(line.productId, -line.totalQty, 'SALE', order.ref);
+      } catch { /* product may not exist */ }
+    }
+  }
   await setDoc(doc(db, 'sales_orders', order.id), {
     ref: order.ref,
     client: order.client,
@@ -70,8 +102,9 @@ export const updateOrder = async (order: SalesOrder): Promise<void> => {
   });
 };
 
-export const deleteOrder = async (id: string): Promise<void> => {
-  await deleteDoc(doc(db, 'sales_orders', id));
+export const deleteOrder = async (order: SalesOrder): Promise<void> => {
+  await reverseSaleMovements(order.ref);
+  await deleteDoc(doc(db, 'sales_orders', order.id));
 };
 
 export const deleteAllOrders = async (): Promise<void> => {

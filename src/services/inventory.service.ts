@@ -1,5 +1,6 @@
 import {
   collection, addDoc, getDocs, getDocsFromServer, doc, setDoc, deleteDoc, updateDoc, runTransaction, Timestamp, writeBatch,
+  query, where,
 } from 'firebase/firestore';
 import { db, auth } from '@/firebase/config';
 import type { Product, InventoryMovement } from '@/types';
@@ -178,6 +179,22 @@ export const resetAllStockToZero = async (): Promise<void> => {
     snap.docs.slice(i, i + CHUNK).forEach(d => batch.update(d.ref, { stock_level: 0, unverified_stock: 0 }));
     await batch.commit();
   }
+};
+
+export const deleteOrphanedPurchaseMovements = async (): Promise<number> => {
+  const [ordersSnap, movsSnap] = await Promise.all([
+    getDocs(collection(db, 'shipping_orders')),
+    getDocs(query(collection(db, 'inventory_movements'), where('reason', '==', 'PURCHASE'))),
+  ]);
+  const validRefs = new Set(ordersSnap.docs.map(d => d.data().ref as string));
+  const orphans = movsSnap.docs.filter(d => !validRefs.has(d.data().note as string));
+  const CHUNK = 400;
+  for (let i = 0; i < orphans.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    orphans.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+  return orphans.length;
 };
 
 export const recalculateStockFromMovements = async (): Promise<number> => {

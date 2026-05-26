@@ -1,9 +1,10 @@
 import {
   collection, addDoc, getDocs, doc, updateDoc, deleteDoc, Timestamp,
+  query, where, runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { ShippingOrder, ShippingOrderLine } from '@/types';
-import { receiveSupplyBatch, adjustStock } from './inventory.service';
+import { receiveSupplyBatch } from './inventory.service';
 
 export const getShippingOrders = async (): Promise<ShippingOrder[]> => {
   const snap = await getDocs(collection(db, 'shipping_orders'));
@@ -50,35 +51,80 @@ export const updateReceivedShippingOrder = async (
   order: ShippingOrder,
   patch: { ref: string; supplier?: string; date: string; lines: ShippingOrderLine[] }
 ): Promise<void> => {
-  const oldQtyMap = new Map(order.lines.map(l => [l.productId, l.qty]));
-  const newQtyMap = new Map(patch.lines.map(l => [l.productId, l.qty]));
-
-  // Products removed from order — reverse their stock
-  for (const [productId, oldQty] of oldQtyMap) {
-    if (!newQtyMap.has(productId)) {
-      try { await adjustStock(productId, -oldQty, 'ADJUSTMENT', `Order edited: ${patch.ref}`); } catch { /* skip */ }
-    }
+  // Step 1: delete old PURCHASE movements and reverse their stock
+  const movSnap = await getDocs(
+    query(collection(db, 'inventory_movements'), where('note', '==', order.ref))
+  );
+  const purchaseMoves = movSnap.docs.filter(d => d.data().reason === 'PURCHASE');
+  for (const movDoc of purchaseMoves) {
+    const qty = movDoc.data().quantity as number;
+    const productId = movDoc.data().productId as string;
+    try {
+      await runTransaction(db, async (tx) => {
+        const prodRef = doc(db, 'products', productId);
+        const snap = await tx.get(prodRef);
+        if (snap.exists()) {
+          tx.update(prodRef, { stock_level: (snap.data().stock_level as number) - qty });
+        }
+        tx.delete(movDoc.ref);
+      });
+    } catch { /* product deleted — skip */ }
   }
-  // Products added or changed — apply the diff
-  for (const line of patch.lines) {
-    const diff = line.qty - (oldQtyMap.get(line.productId) ?? 0);
-    if (diff !== 0) {
-      try { await adjustStock(line.productId, diff, 'ADJUSTMENT', `Order edited: ${patch.ref}`); } catch { /* skip */ }
-    }
-  }
-
+  // Step 2: apply new quantities (re-receive with corrected amounts)
+  await receiveSupplyBatch(
+    patch.lines.map(l => ({ productId: l.productId, qty: l.qty })),
+    patch.ref,
+    new Date(patch.date)
+  );
+  // Step 3: update the order document
   const data: Record<string, unknown> = { ref: patch.ref, date: patch.date, lines: patch.lines };
   if (patch.supplier) data.supplier = patch.supplier;
   await updateDoc(doc(db, 'shipping_orders', order.id), data);
 };
 
 export const deleteReceivedShippingOrder = async (order: ShippingOrder): Promise<void> => {
-  for (const line of order.lines) {
+  const movSnap = await getDocs(
+    query(collection(db, 'inventory_movements'), where('note', '==', order.ref))
+  );
+  const purchaseMoves = movSnap.docs.filter(d => d.data().reason === 'PURCHASE');
+  for (const movDoc of purchaseMoves) {
+    const qty = movDoc.data().quantity as number; // positive (e.g. +1000)
+    const productId = movDoc.data().productId as string;
     try {
-      await adjustStock(line.productId, -line.qty, 'ADJUSTMENT', `Order deleted: ${order.ref}`);
+      await runTransaction(db, async (tx) => {
+        const prodRef = doc(db, 'products', productId);
+        const snap = await tx.get(prodRef);
+        if (snap.exists()) {
+          tx.update(prodRef, { stock_level: (snap.data().stock_level as number) - qty });
+        }
+        tx.delete(movDoc.ref);
+      });
     } catch { /* product deleted — skip */ }
   }
   await deleteDoc(doc(db, 'shipping_orders', order.id));
+};
+
+export const findAndDeleteDuplicateReceipts = async (): Promise<number> => {
+  const orders = await getShippingOrders();
+  const received = orders.filter(o => o.status === 'RECEIVED');
+
+  const groups = new Map<string, ShippingOrder[]>();
+  for (const o of received) {
+    const key = o.date + '|' + o.lines.map(l => l.sku).sort().join(',');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(o);
+  }
+
+  let deleted = 0;
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const toDelete = group.filter(o => /^SH-\d{4}-/.test(o.ref));
+    for (const o of toDelete) {
+      await deleteReceivedShippingOrder(o);
+      deleted++;
+    }
+  }
+  return deleted;
 };
 
 export const updateShippingOrder = async (
