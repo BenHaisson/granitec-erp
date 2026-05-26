@@ -1,6 +1,6 @@
 import {
   collection, addDoc, getDocs, getDocsFromServer, doc, setDoc, deleteDoc, updateDoc, runTransaction, Timestamp, writeBatch,
-  query, where,
+  query, where, orderBy, limit,
 } from 'firebase/firestore';
 import { db, auth } from '@/firebase/config';
 import type { Product, InventoryMovement } from '@/types';
@@ -23,8 +23,10 @@ export const addProduct = (product: Omit<Product, 'id'>) =>
     createdAt: new Date().toISOString(),
   });
 
+const sanitizeSku = (sku: string) => sku.replace(/[/\\.#$[\]]/g, '_');
+
 export const upsertProduct = (product: Omit<Product, 'id'>) =>
-  setDoc(doc(db, 'products', product.sku), product);
+  setDoc(doc(db, 'products', sanitizeSku(product.sku)), product);
 
 export const deleteAllProducts = async () => {
   const snap = await getDocs(collection(db, 'products'));
@@ -66,19 +68,25 @@ export const receiveSupplyBatch = async (
   ref: string,
   date: Date
 ): Promise<void> => {
-  // Update each product's stock level atomically, then write all movement records
+  const failedIds = new Set<string>();
   for (const line of lines) {
-    await runTransaction(db, async (tx) => {
-      const prodRef = doc(db, 'products', line.productId);
-      const snap = await tx.get(prodRef);
-      if (!snap.exists()) return;
-      tx.update(prodRef, { stock_level: (snap.data().stock_level as number) + line.qty });
-    });
+    try {
+      await runTransaction(db, async (tx) => {
+        const prodRef = doc(db, 'products', line.productId);
+        const snap = await tx.get(prodRef);
+        if (!snap.exists()) throw new Error(`Product ${line.productId} not found`);
+        tx.update(prodRef, { stock_level: (snap.data().stock_level as number) + line.qty });
+      });
+    } catch (e) {
+      console.error('[receiveSupplyBatch]', e);
+      failedIds.add(line.productId);
+    }
   }
+  const successLines = lines.filter(l => !failedIds.has(l.productId));
   const CHUNK = 400;
-  for (let i = 0; i < lines.length; i += CHUNK) {
+  for (let i = 0; i < successLines.length; i += CHUNK) {
     const batch = writeBatch(db);
-    lines.slice(i, i + CHUNK).forEach(line => {
+    successLines.slice(i, i + CHUNK).forEach(line => {
       batch.set(doc(collection(db, 'inventory_movements')), {
         productId: line.productId,
         quantity: line.qty,
@@ -134,7 +142,9 @@ export const reconcileUnverifiedStock = async (productId: string, qty: number) =
 };
 
 export const getMovements = async (): Promise<InventoryMovement[]> => {
-  const snap = await getDocs(collection(db, 'inventory_movements'));
+  const snap = await getDocs(
+    query(collection(db, 'inventory_movements'), orderBy('createdAt', 'desc'), limit(2000))
+  );
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as InventoryMovement));
 };
 

@@ -1,8 +1,35 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    function auth() { return request.auth != null; }
+
+    match /products/{id} {
+      allow read: if auth();
+      allow write: if auth()
+        && request.resource.data.stock_level is number
+        && request.resource.data.sku is string;
     }
+
+    match /inventory_movements/{id} {
+      allow read: if auth();
+      allow delete: if auth();
+      allow update: if auth();
+      allow create: if auth()
+        && request.resource.data.quantity is number
+        && request.resource.data.reason in
+           ['PURCHASE','SALE','ADJUSTMENT','PRODUCTION','SHIPMENT','WASTE'];
+    }
+
+    match /sales_orders/{id}       { allow read, write: if auth(); }
+    match /shipping_orders/{id}    { allow read, write: if auth(); }
+    match /production_orders/{id}  { allow read, write: if auth(); }
+    match /recipes/{id}            { allow read, write: if auth(); }
+    match /machines/{id}           { allow read, write: if auth(); }
+    match /production_targets/{id} { allow read, write: if auth(); }
+    match /production_entries/{id} { allow read, write: if auth(); }
+    match /library_items/{id}      { allow read, write: if auth(); }
+
+    // Fallback — keeps any unlisted collections accessible for authenticated users
+    match /{document=**} { allow read, write: if auth(); }
   }
 }

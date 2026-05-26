@@ -1,10 +1,9 @@
 import {
-  collection, addDoc, getDocs, Timestamp, orderBy, query, where,
+  collection, getDocs, Timestamp, orderBy, query, where, limit,
   writeBatch, doc, setDoc, deleteDoc, runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { SalesOrder, SalesOrderLine } from '@/types';
-import { adjustStock } from './inventory.service';
 
 const toOrder = (id: string, data: Record<string, unknown>): SalesOrder => ({
   id,
@@ -15,7 +14,7 @@ const toOrder = (id: string, data: Record<string, unknown>): SalesOrder => ({
 });
 
 export const getOrders = async (): Promise<SalesOrder[]> => {
-  const snap = await getDocs(query(collection(db, 'sales_orders'), orderBy('date', 'desc')));
+  const snap = await getDocs(query(collection(db, 'sales_orders'), orderBy('date', 'desc'), limit(500)));
   return snap.docs.map(d => toOrder(d.id, d.data() as Record<string, unknown>));
 };
 
@@ -26,22 +25,27 @@ export const generateOrderRef = async (): Promise<string> => {
   return `ORD-${year}-${seq}`;
 };
 
-export const createOrder = async (
-  order: Omit<SalesOrder, 'id'>
-): Promise<string> => {
-  const document = await addDoc(collection(db, 'sales_orders'), {
-    ...order,
-    date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
-  });
-  // Deduct finished goods stock for each line
-  for (const line of order.lines) {
-    if (line.totalQty > 0) {
-      try {
-        await adjustStock(line.productId, -line.totalQty, 'SALE', order.ref ?? document.id);
-      } catch { /* product may not exist in Firestore yet — skip silently */ }
+export const createOrder = async (order: Omit<SalesOrder, 'id'>): Promise<string> => {
+  const orderRef = doc(collection(db, 'sales_orders'));
+  const validLines = order.lines.filter(l => l.totalQty > 0);
+  await runTransaction(db, async (tx) => {
+    const prodSnaps = await Promise.all(validLines.map(l => tx.get(doc(db, 'products', l.productId))));
+    tx.set(orderRef, {
+      ...order,
+      date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
+    });
+    for (let i = 0; i < validLines.length; i++) {
+      const line = validLines[i];
+      const snap = prodSnaps[i];
+      if (!snap.exists()) { console.error(`[createOrder] Product ${line.productId} not found`); continue; }
+      tx.update(snap.ref, { stock_level: (snap.data().stock_level as number) - line.totalQty });
+      tx.set(doc(collection(db, 'inventory_movements')), {
+        productId: line.productId, quantity: -line.totalQty, reason: 'SALE',
+        note: order.ref ?? orderRef.id, createdAt: Timestamp.now(),
+      });
     }
-  }
-  return document.id;
+  });
+  return orderRef.id;
 };
 
 export const seedHistoricalOrders = async (
@@ -61,38 +65,47 @@ export const seedHistoricalOrders = async (
   }
 };
 
-// Reverse all SALE movements for an order ref and restore product stock.
-// If no movements exist (historical/seeded orders) this is a no-op.
 async function reverseSaleMovements(orderRef: string): Promise<void> {
   const movSnap = await getDocs(
     query(collection(db, 'inventory_movements'), where('note', '==', orderRef))
   );
   const saleMoves = movSnap.docs.filter(d => d.data().reason === 'SALE');
-  for (const movDoc of saleMoves) {
-    const qty = movDoc.data().quantity as number; // stored as negative (e.g. -500)
-    const productId = movDoc.data().productId as string;
-    try {
-      await runTransaction(db, async (tx) => {
-        const prodRef = doc(db, 'products', productId);
-        const snap = await tx.get(prodRef);
-        if (snap.exists()) {
-          tx.update(prodRef, { stock_level: (snap.data().stock_level as number) - qty }); // -(-500) = +500
-        }
-        tx.delete(movDoc.ref);
-      });
-    } catch { /* product deleted — skip */ }
-  }
+  if (saleMoves.length === 0) return;
+  await runTransaction(db, async (tx) => {
+    const prodSnaps = await Promise.all(
+      saleMoves.map(m => tx.get(doc(db, 'products', m.data().productId as string)))
+    );
+    for (let i = 0; i < saleMoves.length; i++) {
+      const movDoc = saleMoves[i];
+      const qty = movDoc.data().quantity as number; // stored as negative (e.g. -500)
+      const snap = prodSnaps[i];
+      if (snap.exists()) {
+        tx.update(snap.ref, { stock_level: (snap.data().stock_level as number) - qty }); // -(-500) = +500
+      } else {
+        console.error(`[reverseSaleMovements] Product ${movDoc.data().productId as string} not found`);
+      }
+      tx.delete(movDoc.ref);
+    }
+  });
 }
 
 export const updateOrder = async (order: SalesOrder): Promise<void> => {
-  // Reverse old deductions, then re-apply from the new lines
   await reverseSaleMovements(order.ref);
-  for (const line of order.lines) {
-    if (line.totalQty > 0) {
-      try {
-        await adjustStock(line.productId, -line.totalQty, 'SALE', order.ref);
-      } catch { /* product may not exist */ }
-    }
+  const validLines = order.lines.filter(l => l.totalQty > 0);
+  if (validLines.length > 0) {
+    await runTransaction(db, async (tx) => {
+      const prodSnaps = await Promise.all(validLines.map(l => tx.get(doc(db, 'products', l.productId))));
+      for (let i = 0; i < validLines.length; i++) {
+        const line = validLines[i];
+        const snap = prodSnaps[i];
+        if (!snap.exists()) { console.error(`[updateOrder] Product ${line.productId} not found`); continue; }
+        tx.update(snap.ref, { stock_level: (snap.data().stock_level as number) - line.totalQty });
+        tx.set(doc(collection(db, 'inventory_movements')), {
+          productId: line.productId, quantity: -line.totalQty, reason: 'SALE',
+          note: order.ref, createdAt: Timestamp.now(),
+        });
+      }
+    });
   }
   await setDoc(doc(db, 'sales_orders', order.id), {
     ref: order.ref,
@@ -108,11 +121,15 @@ export const deleteOrder = async (order: SalesOrder): Promise<void> => {
 };
 
 export const deleteAllOrders = async (): Promise<void> => {
-  const snap = await getDocs(collection(db, 'sales_orders'));
+  const [ordersSnap, movSnap] = await Promise.all([
+    getDocs(collection(db, 'sales_orders')),
+    getDocs(query(collection(db, 'inventory_movements'), where('reason', '==', 'SALE'))),
+  ]);
+  const allDocs = [...ordersSnap.docs, ...movSnap.docs];
   const CHUNK = 400;
-  for (let i = 0; i < snap.docs.length; i += CHUNK) {
+  for (let i = 0; i < allDocs.length; i += CHUNK) {
     const batch = writeBatch(db);
-    snap.docs.slice(i, i + CHUNK).forEach(d => batch.delete(doc(db, 'sales_orders', d.id)));
+    allDocs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
     await batch.commit();
   }
 };
@@ -123,7 +140,6 @@ export const backfillSalesMovements = async (): Promise<number> => {
     getDocs(collection(db, 'inventory_movements')),
   ]);
 
-  // Build set of productId|note keys for existing SALE movements (idempotency check)
   const existingKeys = new Set(
     movsSnap.docs
       .filter(d => d.data().reason === 'SALE')

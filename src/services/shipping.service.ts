@@ -1,14 +1,17 @@
 import {
   collection, addDoc, getDocs, doc, updateDoc, deleteDoc, Timestamp,
-  query, where, runTransaction, writeBatch,
+  query, where, orderBy, limit, runTransaction, writeBatch,
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '@/firebase/config';
 import type { ShippingOrder, ShippingOrderLine } from '@/types';
 import { receiveSupplyBatch } from './inventory.service';
 
+const sanitizeFileName = (name: string) => name.replace(/[^a-zA-Z0-9._-]/g, '_');
+
 export const uploadReceiptDocument = async (orderId: string, file: File): Promise<{ url: string; name: string }> => {
-  const path = `receipt-documents/${orderId}/${Date.now()}_${file.name}`;
+  const safeName = sanitizeFileName(file.name);
+  const path = `receipt-documents/${orderId}/${Date.now()}_${safeName}`;
   const fileRef = storageRef(storage, path);
   await uploadBytes(fileRef, file);
   const url = await getDownloadURL(fileRef);
@@ -16,10 +19,10 @@ export const uploadReceiptDocument = async (orderId: string, file: File): Promis
 };
 
 export const getShippingOrders = async (): Promise<ShippingOrder[]> => {
-  const snap = await getDocs(collection(db, 'shipping_orders'));
-  return snap.docs
-    .map(d => ({ id: d.id, ...d.data() } as ShippingOrder))
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const snap = await getDocs(
+    query(collection(db, 'shipping_orders'), orderBy('date', 'desc'), limit(500))
+  );
+  return snap.docs.map(d => ({ id: d.id, ...d.data() } as ShippingOrder));
 };
 
 export const createShippingOrder = async (
@@ -93,7 +96,7 @@ export const updateReceivedShippingOrder = async (
         }
         tx.delete(movDoc.ref);
       });
-    } catch { /* product deleted — skip */ }
+    } catch (e) { console.error('[shipping] movement reversal skipped:', e); }
   }
   // Step 2: apply new quantities (re-receive with corrected amounts)
   await receiveSupplyBatch(
@@ -124,7 +127,7 @@ export const deleteReceivedShippingOrder = async (order: ShippingOrder): Promise
         }
         tx.delete(movDoc.ref);
       });
-    } catch { /* product deleted — skip */ }
+    } catch (e) { console.error('[shipping] movement reversal skipped:', e); }
   }
   await deleteDoc(doc(db, 'shipping_orders', order.id));
 };
