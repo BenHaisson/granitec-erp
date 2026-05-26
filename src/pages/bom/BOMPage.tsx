@@ -609,6 +609,8 @@ export default function BOMPage() {
   const [loading, setLoading]       = useState(true);
   const [expanded, setExpanded]     = useState<Set<string>>(new Set());
 
+  const [collapsedRecipeCats, setCollapsedRecipeCats] = useState<Set<string>>(new Set());
+
   const [showOverlay, setShowOverlay] = useState(false);
   const [editRecipe, setEditRecipe]   = useState<Recipe | null>(null);
   const [fpId, setFpId]               = useState('');
@@ -690,6 +692,12 @@ export default function BOMPage() {
     finally { setSaving(false); }
   };
 
+  const toggleRecipeCat = (cat: string) => setCollapsedRecipeCats(prev => {
+    const next = new Set(prev);
+    prev.has(cat) ? next.delete(cat) : next.add(cat);
+    return next;
+  });
+
   const toggleExpand = (id: string) => setExpanded(prev => {
     const next = new Set(prev);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -728,9 +736,34 @@ export default function BOMPage() {
           <p className="text-slate-500 font-medium">No BOM recipes yet</p>
           <p className="text-slate-400 text-sm mt-1">Click <span className="font-semibold text-slate-500">New Recipe</span> to define a bill of materials</p>
         </div>
-      ) : (
-        <div className="space-y-2">
-          {recipes.map(recipe => {
+      ) : (() => {
+        const recipeGroups = Array.from(
+          recipes.reduce((map, r) => {
+            const cat = productMap.get(r.finishedProductId)?.category ?? 'Other';
+            if (!map.has(cat)) map.set(cat, [] as Recipe[]);
+            map.get(cat)!.push(r);
+            return map;
+          }, new Map<string, Recipe[]>())
+        )
+          .map(([cat, items]) => ({ cat, items }))
+          .sort((a, b) => FP_CAT_PRIORITY(a.cat).localeCompare(FP_CAT_PRIORITY(b.cat)));
+
+        return (
+        <div className="space-y-4">
+          {recipeGroups.map(({ cat, items }) => {
+            const isCatCollapsed = collapsedRecipeCats.has(cat);
+            return (
+              <div key={cat}>
+                <button onClick={() => toggleRecipeCat(cat)}
+                  className="flex items-center gap-2 w-full px-1 py-1.5 mb-2 text-left hover:opacity-80 transition-opacity">
+                  <ChevronDown size={13} className={`text-slate-400 transition-transform shrink-0 ${isCatCollapsed ? '-rotate-90' : ''}`} />
+                  <span className="text-xs font-bold uppercase tracking-widest text-slate-500">{cat}</span>
+                  <span className="text-xs text-slate-400">({items.length})</span>
+                  <div className="flex-1 h-px bg-slate-100 ml-1" />
+                </button>
+                {!isCatCollapsed && (
+                  <div className="space-y-2">
+                    {items.map(recipe => {
             const finished = productMap.get(recipe.finishedProductId);
             const isOpen = expanded.has(recipe.id);
             const qty = producible(recipe);
@@ -805,8 +838,14 @@ export default function BOMPage() {
               </div>
             );
           })}
+                    </div>
+                  )}
+              </div>
+            );
+          })}
         </div>
-      )}
+        );
+      })()}
 
       {showOverlay && (
         <RecipeOverlay
