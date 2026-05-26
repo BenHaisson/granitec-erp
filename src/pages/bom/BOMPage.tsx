@@ -193,6 +193,103 @@ function RecipeRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemov
   );
 }
 
+// ── Finished-product picker with collapsible categories ──────────
+const FP_CAT_PRIORITY = (cat: string): string => {
+  const l = cat.toLowerCase();
+  if (l.includes('set') || l.includes('pack'))     return '0' + l;
+  if (l.includes('marmite') || l.includes('casserole')) return '1' + l;
+  if (l.includes('crêpe') || l.includes('crepe'))  return '2' + l;
+  return '9' + l;
+};
+
+interface FpSelectProps {
+  value: string;
+  onChange: (id: string) => void;
+  products: Product[];
+}
+function FpSelect({ value, onChange, products }: FpSelectProps) {
+  const [open, setOpen]         = useState(false);
+  const [search, setSearch]     = useState('');
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const containerRef = useRef<HTMLDivElement>(null);
+  const selected = products.find(p => p.id === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node))
+        setOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  const qs = search.toLowerCase();
+  const filtered = qs
+    ? products.filter(p => p.name.toLowerCase().includes(qs) || p.sku.toLowerCase().includes(qs))
+    : products;
+  const cats = Array.from(new Set(filtered.map(p => p.category ?? 'Other')))
+    .sort((a, b) => FP_CAT_PRIORITY(a).localeCompare(FP_CAT_PRIORITY(b)));
+
+  const toggleCat = (cat: string) => setCollapsed(prev => {
+    const next = new Set(prev);
+    prev.has(cat) ? next.delete(cat) : next.add(cat);
+    return next;
+  });
+
+  return (
+    <div ref={containerRef} className="relative min-w-[220px]">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 border-2 border-slate-200 rounded-lg text-sm bg-white hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 transition-colors">
+        <span className={`truncate ${selected ? 'text-slate-800' : 'text-slate-400'}`}>
+          {selected?.name ?? 'Select product…'}
+        </span>
+        <ChevronDown size={14} className={`ml-2 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl z-[400] flex flex-col overflow-hidden">
+          <div className="p-2 border-b border-slate-100">
+            <div className="relative">
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="Search…" autoFocus
+                className="w-full pl-7 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+          </div>
+          <div className="max-h-72 overflow-y-auto">
+            {cats.map(cat => {
+              const catProds = filtered.filter(p => (p.category ?? 'Other') === cat);
+              const isColl = collapsed.has(cat);
+              return (
+                <div key={cat}>
+                  <button type="button" onClick={() => toggleCat(cat)}
+                    className="flex items-center gap-1.5 w-full px-3 py-1.5 bg-slate-50 border-b border-slate-100 text-left hover:bg-slate-100 transition-colors">
+                    <ChevronDown size={11} className={`text-slate-400 transition-transform shrink-0 ${isColl ? '-rotate-90' : ''}`} />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{cat}</span>
+                    <span className="ml-auto text-[10px] text-slate-400">{catProds.length}</span>
+                  </button>
+                  {!isColl && catProds.map(p => (
+                    <button key={p.id} type="button"
+                      onClick={() => { onChange(p.id); setOpen(false); setSearch(''); }}
+                      className={`w-full flex items-center gap-2 px-4 py-2 text-left text-sm transition-colors ${value === p.id ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-50 text-slate-700'}`}>
+                      <span className="flex-1 truncate">{p.name}</span>
+                      <span className="text-xs font-mono text-slate-400 shrink-0">{p.sku}</span>
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
+            {cats.length === 0 && (
+              <div className="px-4 py-3 text-sm text-slate-400">No products match "{search}"</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Recipe full-screen overlay ────────────────────────────────────
 interface RecipeOverlayProps {
   editRecipe: Recipe | null;
@@ -309,13 +406,7 @@ function RecipeOverlay({
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
               Finished Product *
             </label>
-            <select value={fpId} onChange={e => setFpId(e.target.value)}
-              className="px-3 py-2 border-2 border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white min-w-[220px]">
-              <option value="">Select product…</option>
-              {finishedGoods.map(p => (
-                <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
-              ))}
-            </select>
+            <FpSelect value={fpId} onChange={setFpId} products={finishedGoods} />
           </div>
           <button onClick={onSave} disabled={saving}
             className="px-5 py-2 rounded-xl text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm shadow-indigo-200">
