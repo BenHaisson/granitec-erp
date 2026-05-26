@@ -28,16 +28,24 @@ const CAT_PREFIX: Record<string, string> = {
   'Packaging': 'PKG',
 };
 
-function autoRef(orders: ShippingOrder[], category?: string, offset = 0) {
+const REF_PREFIXES = ['SH', 'DISC', 'PKG', 'ACC'] as const;
+type RefPrefix = typeof REF_PREFIXES[number];
+
+function autoRefByPrefix(orders: ShippingOrder[], prefix: string, offset = 0) {
   const year = new Date().getFullYear();
-  const prefix = (category ? (CAT_PREFIX[category] ?? 'SH') : 'SH') + `-${year}-`;
+  const fullPrefix = `${prefix}-${year}-`;
   const max = orders
     .map(o => o.ref)
-    .filter(r => r.startsWith(prefix))
-    .map(r => parseInt(r.slice(prefix.length), 10))
+    .filter(r => r.startsWith(fullPrefix))
+    .map(r => parseInt(r.slice(fullPrefix.length), 10))
     .filter(n => !isNaN(n))
     .reduce((m, n) => Math.max(m, n), 0);
-  return `${prefix}${String(max + 1 + offset).padStart(4, '0')}`;
+  return `${fullPrefix}${String(max + 1 + offset).padStart(4, '0')}`;
+}
+
+function autoRef(orders: ShippingOrder[], category?: string, offset = 0) {
+  const prefix = category ? (CAT_PREFIX[category] ?? 'SH') : 'SH';
+  return autoRefByPrefix(orders, prefix, offset);
 }
 
 // ── Smart Order types ─────────────────────────────────────────────
@@ -220,6 +228,7 @@ function DraftRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemove
 interface CreateOverlayProps {
   rawMaterials: Product[];
   ref_: string; setRef: (v: string) => void;
+  refPrefix: RefPrefix; onPrefixChange: (p: RefPrefix) => void;
   supplier: string; setSupplier: (v: string) => void;
   date: string; setDate: (v: string) => void;
   lines: DraftLine[];
@@ -239,7 +248,7 @@ interface CreateOverlayProps {
   isEditing?: boolean;
 }
 function CreateOrderOverlay({
-  rawMaterials, ref_, setRef, supplier, setSupplier, date, setDate,
+  rawMaterials, ref_, setRef, refPrefix, onPrefixChange, supplier, setSupplier, date, setDate,
   lines, saving, error, refInputRef, showImport, setShowImport,
   importText, setImportText, importWarnings,
   onAddLine, onRemoveLine, onUpdateLine, onSelectProduct, onConfirm, onClose, onParseImport,
@@ -312,9 +321,16 @@ function CreateOrderOverlay({
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Ref *</label>
+            <select
+              value={refPrefix}
+              onChange={e => onPrefixChange(e.target.value as RefPrefix)}
+              disabled={isEditing}
+              className="px-2 py-2 border-2 border-slate-200 rounded-lg text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white disabled:opacity-50"
+            >
+              {REF_PREFIXES.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
             <input ref={refInputRef} type="text" value={ref_} onChange={e => setRef(e.target.value)}
-              placeholder="SH-2026-0001"
-              className="w-40 px-3 py-2 border-2 border-slate-200 rounded-lg text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400" />
+              className="w-36 px-3 py-2 border-2 border-slate-200 rounded-lg text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400" />
           </div>
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Supplier</label>
@@ -937,6 +953,7 @@ export default function ShippingPage() {
   // Create/edit order overlay state
   const [showCreate, setShowCreate]   = useState(false);
   const [ref_, setRef]                = useState('');
+  const [refPrefix, setRefPrefix]     = useState<RefPrefix>('SH');
   const [supplier, setSupplier]       = useState('');
   const [date, setDate]               = useState(todayISO());
   const [lines, setLines]             = useState<DraftLine[]>([EMPTY_LINE()]);
@@ -946,6 +963,11 @@ export default function ShippingPage() {
   const [importText, setImportText]   = useState('');
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const refInputRef = useRef<HTMLInputElement>(null);
+
+  const handlePrefixChange = (p: RefPrefix) => {
+    setRefPrefix(p);
+    setRef(autoRefByPrefix(orders, p));
+  };
 
   const load = async () => {
     setLoading(true);
@@ -961,7 +983,9 @@ export default function ShippingPage() {
 
   const openCreate = () => {
     setEditingOrder(null);
-    setRef('');
+    const initialPrefix: RefPrefix = 'SH';
+    setRefPrefix(initialPrefix);
+    setRef(autoRefByPrefix(orders, initialPrefix));
     setSupplier('');
     setDate(todayISO());
     setLines([EMPTY_LINE()]);
@@ -975,6 +999,8 @@ export default function ShippingPage() {
 
   const openEdit = (order: ShippingOrder) => {
     setEditingOrder(order);
+    const derived = order.ref.split('-')[0].toUpperCase() as RefPrefix;
+    setRefPrefix((REF_PREFIXES as readonly string[]).includes(derived) ? derived : 'SH');
     setRef(order.ref);
     setSupplier(order.supplier ?? '');
     setDate(order.date);
@@ -1268,6 +1294,7 @@ export default function ShippingPage() {
         <CreateOrderOverlay
           rawMaterials={rawMaterials}
           ref_={ref_} setRef={setRef}
+          refPrefix={refPrefix} onPrefixChange={handlePrefixChange}
           supplier={supplier} setSupplier={setSupplier}
           date={date} setDate={setDate}
           lines={lines}
