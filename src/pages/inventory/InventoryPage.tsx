@@ -58,7 +58,7 @@ function categoryLabel(group: ShippingGroup): string {
   return map[prefix] ?? 'Matières premières';
 }
 
-function openShippingDoc(group: ShippingGroup) {
+function openShippingDoc(group: ShippingGroup, format: 'web' | 'pdf' = 'web') {
   const fmt = group.date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const rows = group.items.map((item, i) => `
     <tr>
@@ -125,7 +125,7 @@ function openShippingDoc(group: ShippingGroup) {
   <div class="stamp">Document généré par Granitec ERP · ${new Date().toLocaleDateString('fr-FR')}</div>
 </body></html>`;
   const w = window.open('', '_blank');
-  if (w) { w.document.write(html); w.document.close(); }
+  if (w) { w.document.write(html); w.document.close(); if (format === 'pdf') setTimeout(() => w.print(), 500); }
 }
 
 function ShippingRow({ group }: { group: ShippingGroup }) {
@@ -145,10 +145,17 @@ function ShippingRow({ group }: { group: ShippingGroup }) {
         <td className="px-4 py-3 text-sm text-slate-400">{group.items.length} items</td>
         <td className="px-4 py-3 text-right">
           <div className="flex items-center justify-end gap-2">
-            <button onClick={e => { e.stopPropagation(); openShippingDoc(group); }}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
-              <FileText size={12} /> View
-            </button>
+            <div className="flex items-center rounded-lg overflow-hidden border border-indigo-200 shrink-0">
+              <button onClick={e => { e.stopPropagation(); openShippingDoc(group, 'web'); }}
+                className="flex items-center gap-1 px-2 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
+                <FileText size={12} /> Web
+              </button>
+              <span className="w-px self-stretch bg-indigo-200 shrink-0" />
+              <button onClick={e => { e.stopPropagation(); openShippingDoc(group, 'pdf'); }}
+                className="px-2 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
+                PDF
+              </button>
+            </div>
             <ChevronDown size={14} className={`text-slate-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
           </div>
         </td>
@@ -172,7 +179,7 @@ function ShippingRow({ group }: { group: ShippingGroup }) {
 }
 
 // ── Supply Receipt Full Report ────────────────────────────────────
-function downloadSupplyReport(shippingHistory: ShippingGroup[]) {
+function downloadSupplyReport(shippingHistory: ShippingGroup[], format: 'web' | 'pdf' | 'excel' = 'web') {
   const now = new Date();
   const totalPcs = shippingHistory.reduce((s, g) => s + g.totalQty, 0);
 
@@ -254,6 +261,26 @@ function downloadSupplyReport(shippingHistory: ShippingGroup[]) {
     .foot{margin-top:60px;padding-top:16px;border-top:1px solid #e8eaf0;text-align:center;font-size:10px;color:#bbb}
     @media print{body{padding:20px 40px}}@page{margin:1cm}`;
 
+  if (format === 'excel') {
+    const header = ['Date', 'Ref', 'Catégorie', 'Fournisseur', 'Lignes', 'Total Pcs', 'Matières (SKU)'];
+    const data = shippingHistory.map(g => [
+      g.date.toLocaleDateString('fr-FR'), g.ref, categoryLabel(g), g.supplier ?? '',
+      g.items.length, g.totalQty, g.items.map(i => i.sku).join(', '),
+    ]);
+    const tableHtml = [header, ...data].map(r =>
+      `<tr>${r.map(c => `<td>${String(c).replace(/</g, '&lt;')}</td>`).join('')}</tr>`
+    ).join('');
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(new Blob(
+        [`<html><head><meta charset="UTF-8"></head><body><table>${tableHtml}</table></body></html>`],
+        { type: 'application/vnd.ms-excel' }
+      )),
+      download: `supply-report-${now.toISOString().slice(0, 10)}.xls`,
+    });
+    a.click(); URL.revokeObjectURL(a.href);
+    return;
+  }
+
   const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
 <title>Granitec — Supply Report ${now.toISOString().slice(0,10)}</title>
 <style>${css}</style></head><body>
@@ -297,13 +324,8 @@ function downloadSupplyReport(shippingHistory: ShippingGroup[]) {
 <div class="foot">Confidentiel — Document généré par Granitec ERP · ${now.toLocaleDateString('fr-FR')} · Granitec</div>
 </body></html>`;
 
-  const blob = new Blob([html], { type: 'text/html' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `granitec_supply_report_${now.toISOString().slice(0, 10)}.html`;
-  a.click();
-  URL.revokeObjectURL(url);
+  const w = window.open('', '_blank');
+  if (w) { w.document.write(html); w.document.close(); if (format === 'pdf') setTimeout(() => w.print(), 500); }
 }
 
 // ── Color grouping helpers ────────────────────────────────────────
@@ -884,6 +906,8 @@ export default function InventoryPage() {
   const [histFilterCat, setHistFilterCat]           = useState('');
   const [histFilterSupplier, setHistFilterSupplier] = useState('');
   const [histFilterYear, setHistFilterYear]         = useState('');
+  const [showReportMenu, setShowReportMenu]         = useState(false);
+  const reportMenuRef = useRef<HTMLDivElement>(null);
   const [search, setSearch]           = useState('');
   const [stockFilter, setStockFilter] = useState<'all' | 'hide-zero' | 'zero-only' | 'alarm'>('all');
 
@@ -1036,6 +1060,15 @@ export default function InventoryPage() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!showReportMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (reportMenuRef.current && !reportMenuRef.current.contains(e.target as Node)) setShowReportMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showReportMenu]);
 
   const rawMaterials = products.filter(p => p.type === 'RAW');
   const rawCats = ['All', ...sortCategories(
@@ -1259,12 +1292,31 @@ export default function InventoryPage() {
                   <span className="text-xs text-slate-400 ml-1">
                     {filteredHistory.length}{filteredHistory.length !== shippingHistory.length ? `/${shippingHistory.length}` : ''} receipts · click to expand
                   </span>
-                  <button
-                    onClick={() => downloadSupplyReport(filteredHistory)}
-                    className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-medium hover:bg-slate-700 transition-colors"
-                  >
-                    <FileDown size={13} /> Download Report
-                  </button>
+                  <div className="ml-auto relative" ref={reportMenuRef}>
+                    <button
+                      onClick={() => setShowReportMenu(m => !m)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-medium hover:bg-slate-700 transition-colors"
+                    >
+                      <FileDown size={13} /> Download Report
+                      <ChevronDown size={11} className={`transition-transform ${showReportMenu ? 'rotate-180' : ''}`} />
+                    </button>
+                    {showReportMenu && (
+                      <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden min-w-[150px]">
+                        <button onClick={() => { downloadSupplyReport(filteredHistory, 'web'); setShowReportMenu(false); }}
+                          className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors border-b border-slate-100">
+                          <FileText size={12} /> Web
+                        </button>
+                        <button onClick={() => { downloadSupplyReport(filteredHistory, 'pdf'); setShowReportMenu(false); }}
+                          className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors border-b border-slate-100">
+                          <FileText size={12} /> PDF
+                        </button>
+                        <button onClick={() => { downloadSupplyReport(filteredHistory, 'excel'); setShowReportMenu(false); }}
+                          className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors">
+                          <FileDown size={12} /> Excel (XLS)
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 {/* Filters */}
                 <div className="flex flex-wrap items-center gap-2">

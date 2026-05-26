@@ -27,18 +27,83 @@ function refToCategory(ref: string) {
   return PREFIX_LABEL[p] ?? 'General';
 }
 
-function exportCSV(rows: ShippingOrder[], filename: string) {
-  const header = ['Ref', 'Category', 'Supplier', 'Date', 'Status', 'BL Number', 'Items', 'Total Qty', 'Remarks'];
-  const data = rows.map(o => [
-    o.ref, refToCategory(o.ref), o.supplier ?? '', o.date, o.status,
-    o.blNumber ?? '', o.lines.length, o.lines.reduce((s, l) => s + l.qty, 0), o.remarks ?? '',
-  ]);
-  const csv = [header, ...data].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })),
-    download: filename,
-  });
-  a.click(); URL.revokeObjectURL(a.href);
+type ExportFormat = 'web' | 'pdf' | 'excel';
+
+function buildShippingReportHtml(rows: ShippingOrder[], title = '') {
+  const totalQty = rows.reduce((s, o) => s + o.lines.reduce((ss, l) => ss + l.qty, 0), 0);
+  const now = new Date();
+  const tableRows = rows.map(o => `<tr>
+    <td class="mono">${o.date}</td>
+    <td class="mono">${o.ref}</td>
+    <td>${refToCategory(o.ref)}</td>
+    <td>${o.supplier ?? '—'}</td>
+    <td style="color:${o.status==='RECEIVED'?'#16a34a':'#d97706'}">${o.status==='RECEIVED'?'✓ Reçu':'Planifié'}</td>
+    <td class="mono">${o.blNumber ?? '—'}</td>
+    <td style="text-align:right">${o.lines.length}</td>
+    <td style="text-align:right;font-weight:600">${o.lines.reduce((s,l)=>s+l.qty,0).toLocaleString('fr-FR')}</td>
+  </tr>`).join('');
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+<title>Shipping Report${title ? ` — ${title}` : ''}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1a1a2e;padding:40px 60px;font-size:13px}
+  .rh{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;padding-bottom:20px;border-bottom:2px solid #1a1a2e}
+  .brand{font-size:28px;font-weight:900;letter-spacing:2px}.brand span{color:#4f46e5}
+  .rm{text-align:right}.rm .title{font-size:16px;font-weight:700}.rm .sub{font-size:11px;color:#888;margin-top:3px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  thead tr{background:#1a1a2e;color:#fff}
+  thead th{padding:9px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+  tbody tr:nth-child(even){background:#f7f8fc}
+  tbody td{padding:8px 12px;border-bottom:1px solid #eee}
+  td.mono{font-family:monospace;font-size:11px;color:#555}
+  tfoot tr{background:#1a1a2e;color:#fff}
+  tfoot td{padding:9px 12px;font-weight:700}
+  .foot{margin-top:40px;text-align:center;font-size:10px;color:#ccc;border-top:1px solid #eee;padding-top:16px}
+  @media print{body{padding:20px 40px}}
+</style></head><body>
+<div class="rh">
+  <div class="brand">GRANITE<span>C</span></div>
+  <div class="rm">
+    <div class="title">Rapport Expéditions${title ? ` — ${title}` : ''}</div>
+    <div class="sub">${rows.length} commande${rows.length!==1?'s':''} · ${totalQty.toLocaleString('fr-FR')} pcs</div>
+    <div class="sub">Généré le ${now.toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'})}</div>
+  </div>
+</div>
+<table>
+  <thead><tr><th>Date</th><th>Référence</th><th>Catégorie</th><th>Fournisseur</th><th>Statut</th><th>N° BL</th><th style="text-align:right">Articles</th><th style="text-align:right">Qté</th></tr></thead>
+  <tbody>${tableRows}</tbody>
+  <tfoot><tr><td colspan="7">TOTAL</td><td style="text-align:right">${totalQty.toLocaleString('fr-FR')}</td></tr></tfoot>
+</table>
+<div class="foot">Granitec ERP · ${now.toLocaleDateString('fr-FR')}</div>
+</body></html>`;
+}
+
+function exportShipping(rows: ShippingOrder[], format: ExportFormat, label = '') {
+  const slug = label.toLowerCase().replace(/ /g, '-') || 'orders';
+  if (format === 'excel') {
+    const header = ['Date', 'Ref', 'Catégorie', 'Fournisseur', 'Statut', 'N° BL', 'Articles', 'Qté totale', 'Remarques'];
+    const data = rows.map(o => [o.date, o.ref, refToCategory(o.ref), o.supplier ?? '', o.status,
+      o.blNumber ?? '', o.lines.length, o.lines.reduce((s,l)=>s+l.qty,0), o.remarks ?? '']);
+    const tableHtml = [header, ...data].map(r =>
+      `<tr>${r.map(c=>`<td>${String(c).replace(/</g,'&lt;')}</td>`).join('')}</tr>`
+    ).join('');
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(new Blob(
+        [`<html><head><meta charset="UTF-8"></head><body><table>${tableHtml}</table></body></html>`],
+        { type: 'application/vnd.ms-excel' }
+      )),
+      download: `shipping-${slug}.xls`,
+    });
+    a.click(); URL.revokeObjectURL(a.href);
+    return;
+  }
+  const html = buildShippingReportHtml(rows, label);
+  const w = window.open('', '_blank');
+  if (w) {
+    w.document.write(html);
+    w.document.close();
+    if (format === 'pdf') setTimeout(() => w.print(), 500);
+  }
 }
 
 function fmtDate(d: string) {
@@ -758,12 +823,21 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
                         </button>
                       )}
                       {order.status === 'RECEIVED' && (
-                        <button
-                          onClick={() => openBonDeReception(order)}
-                          title="Bon de réception"
-                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors border border-indigo-200">
-                          <FileText size={12} /> Bon de réception
-                        </button>
+                        <div className="flex items-center rounded-lg overflow-hidden border border-indigo-200">
+                          <button
+                            onClick={() => openBonDeReception(order, 'web')}
+                            title="Bon de réception (web)"
+                            className="flex items-center gap-1 px-2 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
+                            <FileText size={12} /> Bon de réception
+                          </button>
+                          <span className="w-px self-stretch bg-indigo-200 shrink-0" />
+                          <button
+                            onClick={() => openBonDeReception(order, 'pdf')}
+                            title="Imprimer PDF"
+                            className="px-2 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
+                            PDF
+                          </button>
+                        </div>
                       )}
                       <button
                         onClick={() => onEdit(order)}
@@ -798,7 +872,7 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
 }
 
 // ── Bon de Réception — opens styled page in new tab ──────────────
-function openBonDeReception(order: ShippingOrder) {
+function openBonDeReception(order: ShippingOrder, format: 'web' | 'pdf' = 'web') {
   const category = refToCategory(order.ref);
   const dateStr = new Date(order.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
   const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
@@ -861,7 +935,7 @@ function openBonDeReception(order: ShippingOrder) {
   <div class="stamp">Document généré par Granitec ERP · ${new Date().toLocaleDateString('fr-FR')}</div>
 </body></html>`;
   const w = window.open('', '_blank');
-  if (w) { w.document.write(html); w.document.close(); }
+  if (w) { w.document.write(html); w.document.close(); if (format === 'pdf') setTimeout(() => w.print(), 500); }
 }
 
 // ── Smart Order Wizard ────────────────────────────────────────────
@@ -1428,26 +1502,48 @@ export default function ShippingPage() {
           <div className="ml-auto relative" ref={exportMenuRef}>
             <button onClick={() => setShowExportMenu(e => !e)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-xs text-slate-600 font-semibold hover:bg-slate-50 transition-colors">
-              <Download size={13} /> Export CSV
+              <Download size={13} /> Export
               <ChevronDown size={11} className={`transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
             </button>
             {showExportMenu && (
-              <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden min-w-[190px]">
-                <button onClick={() => { exportCSV(displayOrders, 'shipping-orders.csv'); setShowExportMenu(false); }}
-                  className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors border-b border-slate-100">
-                  <FileDown size={13} /> Vue actuelle
-                </button>
+              <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden min-w-[270px]">
+                <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100">
+                  <span className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><FileDown size={12} /> Vue actuelle</span>
+                  <div className="flex gap-1">
+                    {(['web', 'pdf', 'excel'] as ExportFormat[]).map(fmt => (
+                      <button key={fmt} onClick={() => { exportShipping(displayOrders, fmt, filterCat || filterSupplier || 'Toutes'); setShowExportMenu(false); }}
+                        className="px-2 py-1 rounded text-[10px] font-bold uppercase bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 text-slate-600 transition-colors">
+                        {fmt === 'excel' ? 'XLS' : fmt.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 {allCategories.map(cat => (
-                  <button key={cat} onClick={() => { exportCSV(orders.filter(o => refToCategory(o.ref) === cat), `shipping-${cat.toLowerCase().replace(/ /g, '-')}.csv`); setShowExportMenu(false); }}
-                    className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors">
-                    <FileDown size={13} /> {cat}
-                  </button>
+                  <div key={cat} className="flex items-center justify-between px-4 py-2 border-b border-slate-50">
+                    <span className="text-xs text-slate-700">{cat}</span>
+                    <div className="flex gap-1">
+                      {(['web', 'pdf', 'excel'] as ExportFormat[]).map(fmt => (
+                        <button key={fmt} onClick={() => { exportShipping(orders.filter(o => refToCategory(o.ref) === cat), fmt, cat); setShowExportMenu(false); }}
+                          className="px-2 py-1 rounded text-[10px] font-bold uppercase bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 text-slate-600 transition-colors">
+                          {fmt === 'excel' ? 'XLS' : fmt.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
+                {allSuppliers.length > 0 && <div className="border-t border-slate-100" />}
                 {allSuppliers.map(s => (
-                  <button key={s} onClick={() => { exportCSV(orders.filter(o => (o.supplier ?? '') === s), `shipping-${s.toLowerCase().replace(/ /g, '-')}.csv`); setShowExportMenu(false); }}
-                    className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors border-t border-slate-100">
-                    <FileDown size={13} /> {s}
-                  </button>
+                  <div key={s} className="flex items-center justify-between px-4 py-2 border-b border-slate-50">
+                    <span className="text-xs text-slate-700 truncate mr-2 max-w-[120px]">{s}</span>
+                    <div className="flex gap-1 shrink-0">
+                      {(['web', 'pdf', 'excel'] as ExportFormat[]).map(fmt => (
+                        <button key={fmt} onClick={() => { exportShipping(orders.filter(o => (o.supplier ?? '') === s), fmt, s); setShowExportMenu(false); }}
+                          className="px-2 py-1 rounded text-[10px] font-bold uppercase bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 text-slate-600 transition-colors">
+                          {fmt === 'excel' ? 'XLS' : fmt.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
