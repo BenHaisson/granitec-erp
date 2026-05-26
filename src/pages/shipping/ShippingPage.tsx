@@ -31,8 +31,7 @@ const CAT_PREFIX: Record<string, string> = {
 const REF_PREFIXES = ['SH', 'DISC', 'PKG', 'ACC'] as const;
 type RefPrefix = typeof REF_PREFIXES[number];
 
-function autoRefByPrefix(orders: ShippingOrder[], prefix: string, offset = 0) {
-  const year = new Date().getFullYear();
+function autoRefByPrefix(orders: ShippingOrder[], prefix: string, year = new Date().getFullYear(), offset = 0) {
   const fullPrefix = `${prefix}-${year}-`;
   const max = orders
     .map(o => o.ref)
@@ -43,9 +42,9 @@ function autoRefByPrefix(orders: ShippingOrder[], prefix: string, offset = 0) {
   return `${fullPrefix}${String(max + 1 + offset).padStart(4, '0')}`;
 }
 
-function autoRef(orders: ShippingOrder[], category?: string, offset = 0) {
+function autoRef(orders: ShippingOrder[], category?: string, year = new Date().getFullYear(), offset = 0) {
   const prefix = category ? (CAT_PREFIX[category] ?? 'SH') : 'SH';
-  return autoRefByPrefix(orders, prefix, offset);
+  return autoRefByPrefix(orders, prefix, year, offset);
 }
 
 // ── Smart Order types ─────────────────────────────────────────────
@@ -230,7 +229,7 @@ interface CreateOverlayProps {
   ref_: string; setRef: (v: string) => void;
   refPrefix: RefPrefix; onPrefixChange: (p: RefPrefix) => void;
   supplier: string; setSupplier: (v: string) => void;
-  date: string; setDate: (v: string) => void;
+  date: string; onDateChange: (v: string) => void;
   lines: DraftLine[];
   saving: boolean;
   error: string;
@@ -248,7 +247,7 @@ interface CreateOverlayProps {
   isEditing?: boolean;
 }
 function CreateOrderOverlay({
-  rawMaterials, ref_, setRef, refPrefix, onPrefixChange, supplier, setSupplier, date, setDate,
+  rawMaterials, ref_, setRef, refPrefix, onPrefixChange, supplier, setSupplier, date, onDateChange,
   lines, saving, error, refInputRef, showImport, setShowImport,
   importText, setImportText, importWarnings,
   onAddLine, onRemoveLine, onUpdateLine, onSelectProduct, onConfirm, onClose, onParseImport,
@@ -340,7 +339,7 @@ function CreateOrderOverlay({
           </div>
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Date</label>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)}
+            <input type="date" value={date} onChange={e => onDateChange(e.target.value)}
               className="px-3 py-2 border-2 border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400" />
           </div>
           <button onClick={onConfirm} disabled={saving}
@@ -966,7 +965,14 @@ export default function ShippingPage() {
 
   const handlePrefixChange = (p: RefPrefix) => {
     setRefPrefix(p);
-    setRef(autoRefByPrefix(orders, p));
+    setRef(autoRefByPrefix(orders, p, new Date(date + 'T00:00:00').getFullYear()));
+  };
+
+  const handleDateChange = (d: string) => {
+    setDate(d);
+    if (!editingOrder) {
+      setRef(autoRefByPrefix(orders, refPrefix, new Date(d + 'T00:00:00').getFullYear()));
+    }
   };
 
   const load = async () => {
@@ -984,10 +990,11 @@ export default function ShippingPage() {
   const openCreate = () => {
     setEditingOrder(null);
     const initialPrefix: RefPrefix = 'SH';
+    const today = todayISO();
     setRefPrefix(initialPrefix);
-    setRef(autoRefByPrefix(orders, initialPrefix));
+    setDate(today);
+    setRef(autoRefByPrefix(orders, initialPrefix, new Date(today + 'T00:00:00').getFullYear()));
     setSupplier('');
-    setDate(todayISO());
     setLines([EMPTY_LINE()]);
     setSaveError('');
     setShowImport(false);
@@ -1296,7 +1303,7 @@ export default function ShippingPage() {
           ref_={ref_} setRef={setRef}
           refPrefix={refPrefix} onPrefixChange={handlePrefixChange}
           supplier={supplier} setSupplier={setSupplier}
-          date={date} setDate={setDate}
+          date={date} onDateChange={handleDateChange}
           lines={lines}
           saving={saving}
           error={saveError}
