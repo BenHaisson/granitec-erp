@@ -13,6 +13,7 @@ export interface Product {
   stock_level: number;
   min_stock: number;
   cost: number;
+  imageUrl?: string;
   unverified_stock?: number; // stock used in production without a backing shipment receipt
   source?: 'catalog' | 'user';
   createdBy?: string;

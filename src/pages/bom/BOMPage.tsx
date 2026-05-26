@@ -602,6 +602,65 @@ function RecipeOverlay({
   );
 }
 
+// ── Recipe catalogue card ─────────────────────────────────────────
+interface RecipeCardProps {
+  recipe: Recipe;
+  finished: Product | undefined;
+  qty: number;
+  feasible: boolean;
+  onClone: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}
+function RecipeCard({ recipe, finished, qty, feasible, onClone, onEdit, onDelete }: RecipeCardProps) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden hover:shadow-md transition-shadow group flex flex-col">
+      {/* Image / placeholder */}
+      <div className="relative h-40 bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center overflow-hidden shrink-0">
+        {finished?.imageUrl ? (
+          <img src={finished.imageUrl} alt={finished.name} className="w-full h-full object-cover" />
+        ) : (
+          <div className="flex flex-col items-center gap-1.5 select-none">
+            <BookOpen size={36} className="text-slate-200" />
+            <span className="text-[10px] font-mono text-slate-300">{finished?.sku ?? '—'}</span>
+          </div>
+        )}
+        {/* Producible badge */}
+        <div className={`absolute top-2 right-2 text-xs font-bold px-2 py-0.5 rounded-full shadow-sm ${feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+          {feasible ? `${qty} producible` : 'No stock'}
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="p-3 flex flex-col flex-1">
+        <p className="text-sm font-semibold text-slate-800 truncate leading-tight">
+          {finished?.name ?? recipe.finishedProductId}
+        </p>
+        <p className="text-xs font-mono text-slate-400 mt-0.5">{finished?.sku ?? '—'}</p>
+        <p className="text-xs text-slate-400 mt-1.5">
+          {recipe.components.length} component{recipe.components.length !== 1 ? 's' : ''}
+        </p>
+
+        {/* Actions — visible on hover */}
+        <div className="flex items-center gap-1 mt-3 pt-2 border-t border-slate-50 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button onClick={onClone} title="Clone"
+            className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold text-emerald-600 hover:bg-emerald-50 transition-colors">
+            <Copy size={12} /> Clone
+          </button>
+          <button onClick={onEdit}
+            className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 hover:bg-indigo-50 transition-colors">
+            <Pencil size={12} /> Edit
+          </button>
+          <button onClick={onDelete}
+            className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors">
+            <Trash2 size={12} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────
 export default function BOMPage() {
   const [recipes, setRecipes]       = useState<Recipe[]>([]);
@@ -729,7 +788,7 @@ export default function BOMPage() {
         </button>
       </div>
 
-      {/* Recipe list */}
+      {/* Recipe catalogue */}
       {recipes.length === 0 ? (
         <div className="bg-white rounded-xl border border-dashed border-slate-200 p-16 text-center">
           <BookOpen size={40} className="mx-auto mb-3 text-slate-200" />
@@ -749,101 +808,43 @@ export default function BOMPage() {
           .sort((a, b) => FP_CAT_PRIORITY(a.cat).localeCompare(FP_CAT_PRIORITY(b.cat)));
 
         return (
-        <div className="space-y-4">
-          {recipeGroups.map(({ cat, items }) => {
-            const isCatCollapsed = collapsedRecipeCats.has(cat);
-            return (
-              <div key={cat}>
-                <button onClick={() => toggleRecipeCat(cat)}
-                  className="flex items-center gap-2 w-full px-1 py-1.5 mb-2 text-left hover:opacity-80 transition-opacity">
-                  <ChevronDown size={13} className={`text-slate-400 transition-transform shrink-0 ${isCatCollapsed ? '-rotate-90' : ''}`} />
-                  <span className="text-xs font-bold uppercase tracking-widest text-slate-500">{cat}</span>
-                  <span className="text-xs text-slate-400">({items.length})</span>
-                  <div className="flex-1 h-px bg-slate-100 ml-1" />
-                </button>
-                {!isCatCollapsed && (
-                  <div className="space-y-2">
-                    {items.map(recipe => {
-            const finished = productMap.get(recipe.finishedProductId);
-            const isOpen = expanded.has(recipe.id);
-            const qty = producible(recipe);
-            const feasible = isFinite(qty) && qty > 0;
-
-            return (
-              <div key={recipe.id} className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-                <div className="flex items-center gap-3 px-4 py-3.5">
-                  <button onClick={() => toggleExpand(recipe.id)}
-                    className="flex items-center gap-3 flex-1 min-w-0 text-left group">
-                    {isOpen
-                      ? <ChevronDown size={14} className="text-slate-400 shrink-0" />
-                      : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-slate-800 truncate group-hover:text-indigo-700 transition-colors">
-                        {finished?.name ?? recipe.finishedProductId}
-                      </p>
-                    </div>
+          <div className="space-y-6">
+            {recipeGroups.map(({ cat, items }) => {
+              const isCatCollapsed = collapsedRecipeCats.has(cat);
+              return (
+                <div key={cat}>
+                  <button onClick={() => toggleRecipeCat(cat)}
+                    className="flex items-center gap-2 w-full px-1 py-1.5 mb-3 text-left hover:opacity-80 transition-opacity">
+                    <ChevronDown size={13} className={`text-slate-400 transition-transform shrink-0 ${isCatCollapsed ? '-rotate-90' : ''}`} />
+                    <span className="text-xs font-bold uppercase tracking-widest text-slate-500">{cat}</span>
+                    <span className="text-xs text-slate-400">({items.length})</span>
+                    <div className="flex-1 h-px bg-slate-100 ml-1" />
                   </button>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="hidden sm:inline text-xs text-slate-400 font-mono bg-slate-50 px-2 py-0.5 rounded">
-                      {finished?.sku ?? '—'}
-                    </span>
-                    <span className="text-xs text-slate-400">
-                      {recipe.components.length} component{recipe.components.length !== 1 ? 's' : ''}
-                    </span>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-                      {feasible ? `${qty} producible` : 'No stock'}
-                    </span>
-                    <button onClick={() => handleClone(recipe)} title="Clone recipe"
-                      className="p-1.5 text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors">
-                      <Copy size={13} />
-                    </button>
-                    <button onClick={() => openEdit(recipe)}
-                      className="p-1.5 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
-                      <Pencil size={13} />
-                    </button>
-                    <button onClick={() => handleDelete(recipe)}
-                      className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
-
-                {isOpen && (
-                  <div className="border-t border-slate-50 px-4 pb-4 pt-3">
-                    <div className="space-y-1.5">
-                      {recipe.components.map(c => {
-                        const prod = productMap.get(c.productId);
-                        const ok = prod ? prod.stock_level >= c.quantity : false;
+                  {!isCatCollapsed && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                      {items.map(recipe => {
+                        const finished = productMap.get(recipe.finishedProductId);
+                        const qty = producible(recipe);
+                        const feasible = isFinite(qty) && qty > 0;
                         return (
-                          <div key={c.productId} className="flex items-center gap-3 py-1.5 border-b border-slate-50 last:border-0">
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ok ? 'bg-emerald-500' : 'bg-red-400'}`} />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-slate-700 truncate">{prod?.name ?? c.productId}</p>
-                              <p className="text-xs text-slate-400 font-mono">{prod?.sku ?? ''}</p>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <p className="text-sm font-bold text-slate-800 tabular-nums">
-                                {c.quantity} <span className="text-xs font-normal text-slate-400">{prod?.unit ?? 'pcs'}</span>
-                              </p>
-                              <p className={`text-xs tabular-nums ${ok ? 'text-emerald-600' : 'text-red-500'}`}>
-                                {prod ? `${prod.stock_level.toLocaleString()} in stock` : 'Unknown'}
-                              </p>
-                            </div>
-                          </div>
+                          <RecipeCard
+                            key={recipe.id}
+                            recipe={recipe}
+                            finished={finished}
+                            qty={qty}
+                            feasible={feasible}
+                            onClone={() => handleClone(recipe)}
+                            onEdit={() => openEdit(recipe)}
+                            onDelete={() => handleDelete(recipe)}
+                          />
                         );
                       })}
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-                    </div>
                   )}
-              </div>
-            );
-          })}
-        </div>
+                </div>
+              );
+            })}
+          </div>
         );
       })()}
 
