@@ -181,20 +181,43 @@ export const resetAllStockToZero = async (): Promise<void> => {
   }
 };
 
-export const deleteOrphanedPurchaseMovements = async (): Promise<number> => {
+export const backfillPurchaseMovements = async (): Promise<number> => {
   const [ordersSnap, movsSnap] = await Promise.all([
     getDocs(collection(db, 'shipping_orders')),
     getDocs(query(collection(db, 'inventory_movements'), where('reason', '==', 'PURCHASE'))),
   ]);
-  const validRefs = new Set(ordersSnap.docs.map(d => d.data().ref as string));
-  const orphans = movsSnap.docs.filter(d => !validRefs.has(d.data().note as string));
+
+  const existingKeys = new Set(
+    movsSnap.docs.map(d => `${d.data().productId as string}|${d.data().note as string}`)
+  );
+
+  const toCreate: object[] = [];
+  for (const orderDoc of ordersSnap.docs) {
+    const data = orderDoc.data();
+    if (data.status !== 'RECEIVED') continue;
+    const ref = data.ref as string;
+    const date = data.date as string;
+    const lines = data.lines as Array<{ productId: string; qty: number }>;
+    for (const line of lines) {
+      if (!line.qty || line.qty <= 0) continue;
+      if (existingKeys.has(`${line.productId}|${ref}`)) continue;
+      toCreate.push({
+        productId: line.productId,
+        quantity: line.qty,
+        reason: 'PURCHASE',
+        note: ref,
+        createdAt: Timestamp.fromDate(new Date(date)),
+      });
+    }
+  }
+
   const CHUNK = 400;
-  for (let i = 0; i < orphans.length; i += CHUNK) {
+  for (let i = 0; i < toCreate.length; i += CHUNK) {
     const batch = writeBatch(db);
-    orphans.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+    toCreate.slice(i, i + CHUNK).forEach(m => batch.set(doc(collection(db, 'inventory_movements')), m));
     await batch.commit();
   }
-  return orphans.length;
+  return toCreate.length;
 };
 
 export const recalculateStockFromMovements = async (): Promise<number> => {

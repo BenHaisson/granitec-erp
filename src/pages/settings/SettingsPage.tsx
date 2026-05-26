@@ -8,7 +8,7 @@ import {
   getProducts, getProductsFresh, upsertProduct,
   deleteAllMovements, resetAllStockToZero,
   updateProduct, deleteProduct, recalculateStockFromMovements,
-  deleteOrphanedPurchaseMovements,
+  backfillPurchaseMovements,
 } from '@/services/inventory.service';
 import { getOrders, deleteAllOrders } from '@/services/orders.service';
 import {
@@ -154,9 +154,9 @@ export default function SettingsPage() {
   });
 
   const handleRecalculate = () => run(setOpRecalc, async () => {
-    const orphans = await deleteOrphanedPurchaseMovements();
+    const filled = await backfillPurchaseMovements();
     const count = await recalculateStockFromMovements();
-    const extra = orphans > 0 ? ` · Removed ${orphans} orphaned movement(s)` : '';
+    const extra = filled > 0 ? ` · Restored ${filled} missing movement(s)` : '';
     return `Stock recalculated for ${count} product(s)${extra}.`;
   });
 
@@ -177,7 +177,7 @@ export default function SettingsPage() {
       } else {
         const newRef = order.ref.replace(/^SH-\d{4}-/, 'Disc-2024-');
         if (newRef !== order.ref) {
-          await updateShippingOrderRef(order.id, newRef);
+          await updateShippingOrderRef(order.id, order.ref, newRef);
           renamed++;
         }
       }

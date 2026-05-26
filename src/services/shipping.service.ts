@@ -1,6 +1,6 @@
 import {
   collection, addDoc, getDocs, doc, updateDoc, deleteDoc, Timestamp,
-  query, where, runTransaction,
+  query, where, runTransaction, writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { ShippingOrder, ShippingOrderLine } from '@/types';
@@ -43,8 +43,19 @@ export const deleteShippingOrder = async (id: string): Promise<void> => {
   await deleteDoc(doc(db, 'shipping_orders', id));
 };
 
-export const updateShippingOrderRef = async (id: string, ref: string): Promise<void> => {
-  await updateDoc(doc(db, 'shipping_orders', id), { ref });
+export const updateShippingOrderRef = async (id: string, oldRef: string, newRef: string): Promise<void> => {
+  const movSnap = await getDocs(
+    query(collection(db, 'inventory_movements'), where('note', '==', oldRef), where('reason', '==', 'PURCHASE'))
+  );
+  if (movSnap.docs.length > 0) {
+    const CHUNK = 400;
+    for (let i = 0; i < movSnap.docs.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      movSnap.docs.slice(i, i + CHUNK).forEach(d => batch.update(d.ref, { note: newRef }));
+      await batch.commit();
+    }
+  }
+  await updateDoc(doc(db, 'shipping_orders', id), { ref: newRef });
 };
 
 export const updateReceivedShippingOrder = async (
