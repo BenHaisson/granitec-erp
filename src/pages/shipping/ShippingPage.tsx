@@ -3,6 +3,7 @@ import {
   Truck, Plus, ChevronDown, CheckCircle2, Clock, Trash2,
   Search, X, FileText, PackagePlus, AlertCircle, Sparkles,
   ArrowLeft, ToggleLeft, ToggleRight, Pencil, Upload, ExternalLink,
+  Download, FileDown, Printer,
 } from 'lucide-react';
 import { getProducts } from '@/services/inventory.service';
 import {
@@ -16,6 +17,28 @@ import type { Product, ShippingOrder, ShippingOrderLine, Recipe } from '@/types'
 // ── Helpers ───────────────────────────────────────────────────────
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+const PREFIX_LABEL: Record<string, string> = {
+  DISC: 'Aluminium Disc', PKG: 'Packaging', ACC: 'Accessories', SH: 'General',
+};
+function refToCategory(ref: string) {
+  const p = ref.split('-')[0].toUpperCase();
+  return PREFIX_LABEL[p] ?? 'General';
+}
+
+function exportCSV(rows: ShippingOrder[], filename: string) {
+  const header = ['Ref', 'Category', 'Supplier', 'Date', 'Status', 'BL Number', 'Items', 'Total Qty', 'Remarks'];
+  const data = rows.map(o => [
+    o.ref, refToCategory(o.ref), o.supplier ?? '', o.date, o.status,
+    o.blNumber ?? '', o.lines.length, o.lines.reduce((s, l) => s + l.qty, 0), o.remarks ?? '',
+  ]);
+  const csv = [header, ...data].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })),
+    download: filename,
+  });
+  a.click(); URL.revokeObjectURL(a.href);
 }
 
 function fmtDate(d: string) {
@@ -663,6 +686,234 @@ function OrderDetail({ order }: { order: ShippingOrder }) {
   );
 }
 
+// ── Shared order table ────────────────────────────────────────────
+interface OrderTableProps {
+  orders: ShippingOrder[];
+  expanded: Set<string>;
+  receiving: Set<string>;
+  deleting: Set<string>;
+  onToggleExpand: (id: string) => void;
+  onReceive: (order: ShippingOrder) => void;
+  onEdit: (order: ShippingOrder) => void;
+  onDelete: (order: ShippingOrder) => void;
+  onBonDeReception: (order: ShippingOrder) => void;
+}
+function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onReceive, onEdit, onDelete, onBonDeReception }: OrderTableProps) {
+  return (
+    <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-slate-100 bg-slate-50">
+            <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest w-8" />
+            <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Référence</th>
+            <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Catégorie</th>
+            <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Fournisseur</th>
+            <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Date</th>
+            <th className="text-center px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Art.</th>
+            <th className="text-center px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Qté totale</th>
+            <th className="text-right px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-50">
+          {orders.map(order => {
+            const isExpanded = expanded.has(order.id);
+            const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
+            const isReceiving = receiving.has(order.id);
+            const isDeleting = deleting.has(order.id);
+            return (
+              <>
+                <tr key={order.id}
+                  className="hover:bg-slate-50 cursor-pointer transition-colors"
+                  onClick={() => onToggleExpand(order.id)}>
+                  <td className="px-4 py-3">
+                    <ChevronDown size={14} className={`text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="font-mono font-bold text-slate-800">{order.ref}</span>
+                    {order.status === 'RECEIVED' && (order.blNumber || order.documentUrl) && (
+                      <span className="ml-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">
+                        <CheckCircle2 size={8} /> BL
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
+                      {refToCategory(order.ref)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">{order.supplier || <span className="text-slate-300">—</span>}</td>
+                  <td className="px-4 py-3 text-slate-500">{fmtDate(order.date)}</td>
+                  <td className="px-4 py-3 text-center font-semibold text-slate-600">{order.lines.length}</td>
+                  <td className="px-4 py-3 text-center font-bold text-slate-700 tabular-nums">{totalQty.toLocaleString('fr-FR')}</td>
+                  <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-2">
+                      {order.status === 'PLANNED' && (
+                        <button
+                          onClick={() => onReceive(order)}
+                          disabled={isReceiving}
+                          title="Marquer comme reçu"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50">
+                          {isReceiving
+                            ? <span className="flex items-center gap-1"><span className="animate-spin">↻</span> En cours…</span>
+                            : <><CheckCircle2 size={12} /> Recevoir</>}
+                        </button>
+                      )}
+                      {order.status === 'RECEIVED' && (
+                        <button
+                          onClick={() => onBonDeReception(order)}
+                          title="Bon de réception"
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors border border-indigo-200">
+                          <FileText size={12} /> Bon de réception
+                        </button>
+                      )}
+                      <button
+                        onClick={() => onEdit(order)}
+                        title="Modifier"
+                        className="p-1.5 rounded-lg text-amber-500 hover:text-amber-600 hover:bg-amber-50 transition-colors">
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        onClick={() => onDelete(order)}
+                        disabled={isDeleting}
+                        title="Supprimer"
+                        className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {isExpanded && (
+                  <tr key={`${order.id}-detail`}>
+                    <td colSpan={8} className="p-0">
+                      <OrderDetail order={order} />
+                    </td>
+                  </tr>
+                )}
+              </>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Bon de Réception viewer ───────────────────────────────────────
+function BonDeReception({ order, onClose }: { order: ShippingOrder; onClose: () => void }) {
+  const category = refToCategory(order.ref);
+  const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden max-h-[90vh]">
+        {/* Modal header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+          <h2 className="font-bold text-slate-800">Bon de Réception</h2>
+          <div className="flex items-center gap-2">
+            <button onClick={() => window.print()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-xs font-semibold hover:bg-slate-200 transition-colors">
+              <Printer size={13} /> Imprimer
+            </button>
+            <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        {/* Document body */}
+        <div className="overflow-y-auto flex-1 px-8 py-6">
+          {/* Title */}
+          <div className="text-center mb-6 pb-5 border-b-2 border-slate-200">
+            <p className="text-xs font-bold tracking-widest text-slate-400 uppercase mb-1">Granitec</p>
+            <h1 className="text-2xl font-bold text-slate-800">Bon de Réception</h1>
+          </div>
+
+          {/* Meta */}
+          <div className="grid grid-cols-2 gap-x-8 gap-y-3 mb-6">
+            <div>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Référence</p>
+              <p className="font-mono font-bold text-slate-800 mt-0.5">{order.ref}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Date</p>
+              <p className="text-slate-700 mt-0.5">{fmtDate(order.date)}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Catégorie</p>
+              <p className="text-slate-700 mt-0.5">{category}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Statut</p>
+              <span className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">
+                <CheckCircle2 size={10} /> Reçu
+              </span>
+            </div>
+            {order.supplier && (
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fournisseur</p>
+                <p className="text-slate-700 mt-0.5">{order.supplier}</p>
+              </div>
+            )}
+            {order.blNumber && (
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">N° BL Fournisseur</p>
+                <p className="font-mono font-bold text-slate-800 mt-0.5">{order.blNumber}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Lines table */}
+          <table className="w-full text-sm mb-6 border border-slate-200 rounded-xl overflow-hidden">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200">
+                <th className="text-left py-2.5 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Désignation</th>
+                <th className="text-left py-2.5 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">SKU</th>
+                <th className="text-right py-2.5 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Quantité</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {order.lines.map(l => (
+                <tr key={l.sku}>
+                  <td className="py-2.5 px-4 text-slate-700">{l.productName}</td>
+                  <td className="py-2.5 px-4 font-mono text-xs text-slate-500">{l.sku}</td>
+                  <td className="py-2.5 px-4 text-right font-bold tabular-nums">{l.qty.toLocaleString('fr-FR')}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-slate-200 bg-slate-50">
+                <td colSpan={2} className="py-2.5 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Total</td>
+                <td className="py-2.5 px-4 text-right font-bold text-slate-800 tabular-nums">{totalQty.toLocaleString('fr-FR')}</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          {/* Remarks */}
+          {order.remarks && (
+            <div className="mb-4 p-4 bg-amber-50 rounded-xl border border-amber-200">
+              <p className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-1.5">Remarques</p>
+              <p className="text-sm text-slate-700 whitespace-pre-wrap">{order.remarks}</p>
+            </div>
+          )}
+
+          {/* Attached document */}
+          {order.documentUrl && (
+            <div className="flex items-center gap-3 p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+              <FileText size={20} className="text-emerald-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-0.5">Document joint</p>
+                <a href={order.documentUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-sm text-emerald-700 hover:text-emerald-900 font-medium flex items-center gap-1.5 truncate">
+                  {order.documentName ?? 'Document'} <ExternalLink size={12} />
+                </a>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Smart Order Wizard ────────────────────────────────────────────
 interface SmartWizardProps {
   finishedProducts: Product[];
@@ -948,6 +1199,13 @@ export default function ShippingPage() {
   const [deleting, setDeleting]       = useState<Set<string>>(new Set());
   const [editingOrder, setEditingOrder] = useState<ShippingOrder | null>(null);
   const [receivingOrder, setReceivingOrder] = useState<ShippingOrder | null>(null);
+  const [bonDeReceptionOrder, setBonDeReceptionOrder] = useState<ShippingOrder | null>(null);
+
+  // Filters
+  const [filterCat, setFilterCat]           = useState('');
+  const [filterSupplier, setFilterSupplier] = useState('');
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   // Create/edit order overlay state
   const [showCreate, setShowCreate]   = useState(false);
@@ -1148,8 +1406,26 @@ export default function ShippingPage() {
     return n;
   });
 
-  const planned = orders.filter(o => o.status === 'PLANNED');
-  const received = orders.filter(o => o.status === 'RECEIVED');
+  // Click-outside for export dropdown
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) setShowExportMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showExportMenu]);
+
+  const allCategories = Array.from(new Set(orders.map(o => refToCategory(o.ref)))).sort();
+  const allSuppliers  = Array.from(new Set(orders.map(o => o.supplier ?? '').filter(Boolean))).sort() as string[];
+
+  const displayOrders = orders.filter(o =>
+    (!filterCat || refToCategory(o.ref) === filterCat) &&
+    (!filterSupplier || (o.supplier ?? '') === filterSupplier)
+  );
+
+  const planned  = displayOrders.filter(o => o.status === 'PLANNED');
+  const received = displayOrders.filter(o => o.status === 'RECEIVED');
 
   return (
     <div className="space-y-6">
@@ -1173,7 +1449,64 @@ export default function ShippingPage() {
         </div>
       </div>
 
-      {/* Table */}
+      {/* Filter bar */}
+      {!loading && orders.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Category pills */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button onClick={() => setFilterCat('')}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${!filterCat ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              Tout
+            </button>
+            {allCategories.map(cat => (
+              <button key={cat} onClick={() => setFilterCat(filterCat === cat ? '' : cat)}
+                className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${filterCat === cat ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                {cat}
+              </button>
+            ))}
+          </div>
+
+          {/* Supplier select */}
+          {allSuppliers.length > 0 && (
+            <select value={filterSupplier} onChange={e => setFilterSupplier(e.target.value)}
+              className="px-3 py-1.5 border border-slate-200 rounded-xl text-xs text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+              <option value="">Tous les fournisseurs</option>
+              {allSuppliers.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+
+          {/* Export */}
+          <div className="ml-auto relative" ref={exportMenuRef}>
+            <button onClick={() => setShowExportMenu(e => !e)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-xs text-slate-600 font-semibold hover:bg-slate-50 transition-colors">
+              <Download size={13} /> Export CSV
+              <ChevronDown size={11} className={`transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
+            </button>
+            {showExportMenu && (
+              <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden min-w-[190px]">
+                <button onClick={() => { exportCSV(displayOrders, 'shipping-orders.csv'); setShowExportMenu(false); }}
+                  className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors border-b border-slate-100">
+                  <FileDown size={13} /> Vue actuelle
+                </button>
+                {allCategories.map(cat => (
+                  <button key={cat} onClick={() => { exportCSV(orders.filter(o => refToCategory(o.ref) === cat), `shipping-${cat.toLowerCase().replace(/ /g, '-')}.csv`); setShowExportMenu(false); }}
+                    className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors">
+                    <FileDown size={13} /> {cat}
+                  </button>
+                ))}
+                {allSuppliers.map(s => (
+                  <button key={s} onClick={() => { exportCSV(orders.filter(o => (o.supplier ?? '') === s), `shipping-${s.toLowerCase().replace(/ /g, '-')}.csv`); setShowExportMenu(false); }}
+                    className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors border-t border-slate-100">
+                    <FileDown size={13} /> {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Content */}
       {loading ? (
         <div className="bg-white rounded-xl border border-slate-100 p-10 text-center text-slate-400 text-sm animate-pulse">
           Loading orders…
@@ -1185,94 +1518,53 @@ export default function ShippingPage() {
           <p className="text-slate-400 text-sm mt-1">Create a new order to plan your next delivery</p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-100 bg-slate-50">
-                <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest w-8" />
-                <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Reference</th>
-                <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Supplier</th>
-                <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Date</th>
-                <th className="text-center px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Items</th>
-                <th className="text-center px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Total Qty</th>
-                <th className="text-center px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Status</th>
-                <th className="text-right px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {orders.map(order => {
-                const isExpanded = expanded.has(order.id);
-                const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
-                const isReceiving = receiving.has(order.id);
-                const isDeleting = deleting.has(order.id);
-                return (
-                  <>
-                    <tr key={order.id}
-                      className="hover:bg-slate-50 cursor-pointer transition-colors"
-                      onClick={() => toggleExpand(order.id)}>
-                      <td className="px-4 py-3">
-                        <ChevronDown size={14} className={`text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="font-mono font-bold text-slate-800">{order.ref}</span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-500">{order.supplier || <span className="text-slate-300">—</span>}</td>
-                      <td className="px-4 py-3 text-slate-500">{fmtDate(order.date)}</td>
-                      <td className="px-4 py-3 text-center font-semibold text-slate-600">{order.lines.length}</td>
-                      <td className="px-4 py-3 text-center font-bold text-slate-700 tabular-nums">{totalQty.toLocaleString('fr-FR')}</td>
-                      <td className="px-4 py-3 text-center">
-                        {order.status === 'PLANNED' ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-700">
-                            <Clock size={10} /> Planned
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">
-                            <CheckCircle2 size={10} /> Received
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-2">
-                          {order.status === 'PLANNED' && (
-                            <button
-                              onClick={() => handleReceive(order)}
-                              disabled={isReceiving}
-                              title="Mark as Received"
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50">
-                              {isReceiving
-                                ? <span className="flex items-center gap-1"><span className="animate-spin">↻</span> Receiving…</span>
-                                : <><CheckCircle2 size={12} /> Receive</>}
-                            </button>
-                          )}
-                          <button
-                            onClick={() => openEdit(order)}
-                            title="Edit order"
-                            className="p-1.5 rounded-lg text-amber-500 hover:text-amber-600 hover:bg-amber-50 transition-colors">
-                            <Pencil size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(order)}
-                            disabled={isDeleting}
-                            title="Delete order"
-                            className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                    {isExpanded && (
-                      <tr key={`${order.id}-detail`}>
-                        <td colSpan={8} className="p-0">
-                          <OrderDetail order={order} />
-                        </td>
-                      </tr>
-                    )}
-                  </>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          {/* ── Planned orders ── */}
+          {planned.length > 0 && (
+            <div>
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 px-1">
+                En attente · {planned.length}
+              </h2>
+              <OrderTable
+                orders={planned}
+                expanded={expanded}
+                receiving={receiving}
+                deleting={deleting}
+                onToggleExpand={toggleExpand}
+                onReceive={handleReceive}
+                onEdit={openEdit}
+                onDelete={handleDelete}
+                onBonDeReception={setBonDeReceptionOrder}
+              />
+            </div>
+          )}
+
+          {/* ── Reception history ── */}
+          {received.length > 0 && (
+            <div>
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 px-1">
+                Historique réceptions · {received.length}
+              </h2>
+              <OrderTable
+                orders={received}
+                expanded={expanded}
+                receiving={receiving}
+                deleting={deleting}
+                onToggleExpand={toggleExpand}
+                onReceive={handleReceive}
+                onEdit={openEdit}
+                onDelete={handleDelete}
+                onBonDeReception={setBonDeReceptionOrder}
+              />
+            </div>
+          )}
+
+          {planned.length === 0 && received.length === 0 && (
+            <div className="bg-white rounded-xl border border-slate-100 p-8 text-center text-slate-400 text-sm">
+              Aucun résultat pour les filtres sélectionnés.
+            </div>
+          )}
+        </>
       )}
 
       {/* Receive Modal */}
@@ -1282,6 +1574,11 @@ export default function ShippingPage() {
           onConfirm={handleReceiveConfirm}
           onClose={() => setReceivingOrder(null)}
         />
+      )}
+
+      {/* Bon de Réception viewer */}
+      {bonDeReceptionOrder && (
+        <BonDeReception order={bonDeReceptionOrder} onClose={() => setBonDeReceptionOrder(null)} />
       )}
 
       {/* Smart Order Wizard */}
