@@ -2,9 +2,10 @@ import { useEffect, useState, useRef, type FormEvent } from 'react';
 import { Plus, FlaskConical, ArrowDownToLine, ChevronDown, Search, FileText, X, Pencil, Trash2, PackagePlus, FileDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
 import { getProducts, addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch, reconcileUnverifiedStock } from '@/services/inventory.service';
+import { getShippingOrders } from '@/services/shipping.service';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
-import type { Product, ProductType, InventoryMovement } from '@/types';
+import type { Product, ProductType, InventoryMovement, ShippingOrder } from '@/types';
 
 const RAW_CATEGORIES = ['Aluminium Disc', 'Accessories', 'Packaging'] as const;
 type RawCategory = typeof RAW_CATEGORIES[number];
@@ -39,6 +40,11 @@ interface ShippingGroup {
   totalQty: number;
   items: { sku: string; name: string; qty: number }[];
   category?: string;
+  supplier?: string;
+  blNumber?: string;
+  remarks?: string;
+  documentUrl?: string;
+  documentName?: string;
 }
 
 function categoryLabel(group: ShippingGroup): string {
@@ -87,6 +93,11 @@ function openShippingDoc(group: ShippingGroup) {
   .total-box .label { font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:0.7;margin-bottom:4px; }
   .total-box .value { font-size:22px;font-weight:700; }
   .stamp { margin-top:60px;text-align:center;font-size:10px;color:#ccc; }
+  .remarks { background:#fffbf0;border:1px solid #f0e0a0;border-radius:6px;padding:16px;margin-bottom:24px; }
+  .remarks label { font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#a08020;display:block;margin-bottom:6px; }
+  .doc-link { background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:16px;margin-bottom:24px; }
+  .doc-link label { font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#166534;display:block;margin-bottom:6px; }
+  .doc-link a { color:#166534;font-weight:600; }
   @media print { body { padding:20px 40px; } }
 </style></head><body>
   <div class="header">
@@ -95,6 +106,8 @@ function openShippingDoc(group: ShippingGroup) {
   </div>
   <div class="meta">
     <div class="meta-block"><label>Matière</label><span>${categoryLabel(group)}</span></div>
+    ${group.supplier ? `<div class="meta-block"><label>Fournisseur</label><span>${group.supplier}</span></div>` : ''}
+    ${group.blNumber ? `<div class="meta-block"><label>N° BL Fournisseur</label><span>${group.blNumber}</span></div>` : ''}
     <div class="meta-block"><label>Nombre de références</label><span>${group.items.length}</span></div>
   </div>
   <table>
@@ -107,6 +120,8 @@ function openShippingDoc(group: ShippingGroup) {
       <div class="value">${group.totalQty.toLocaleString('fr-FR')}</div>
     </div>
   </div>
+  ${group.remarks ? `<div class="remarks"><label>Remarques</label><p>${group.remarks.replace(/\n/g, '<br>')}</p></div>` : ''}
+  ${group.documentUrl ? `<div class="doc-link"><label>Document joint</label><a href="${group.documentUrl}" target="_blank">📎 ${group.documentName ?? 'Document'}</a></div>` : ''}
   <div class="stamp">Document généré par Granitec ERP · ${new Date().toLocaleDateString('fr-FR')}</div>
 </body></html>`;
   const w = window.open('', '_blank');
@@ -123,6 +138,7 @@ function ShippingRow({ group }: { group: ShippingGroup }) {
           {group.date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
         </td>
         <td className="px-4 py-3 text-sm font-medium text-slate-800 font-mono">{group.ref}</td>
+        <td className="px-4 py-3 text-sm text-slate-500">{group.supplier ?? <span className="text-slate-300">—</span>}</td>
         <td className="px-4 py-3 text-sm font-semibold tabular-nums text-right text-green-600">
           +{group.totalQty.toLocaleString()} pcs
         </td>
@@ -205,6 +221,7 @@ function downloadSupplyReport(shippingHistory: ShippingGroup[]) {
   const receiptsHtml = shippingHistory.map(g => `<tr>
     <td class="mono" style="white-space:nowrap">${g.date.toLocaleDateString('fr-FR')}</td>
     <td class="mono">${g.ref}</td>
+    <td style="color:#555">${g.supplier ?? '—'}</td>
     <td class="num">${g.items.length}</td>
     <td class="num">${g.totalQty.toLocaleString('fr-FR')}</td>
     <td style="font-size:11px;color:#666">${g.items.map(i => i.sku).join(', ')}</td>
@@ -272,7 +289,7 @@ function downloadSupplyReport(shippingHistory: ShippingGroup[]) {
 <div class="sec">
   <div class="sec-title"><span class="acc"></span>All Supply Receipts — Full Detail (${shippingHistory.length} receipts)</div>
   <table>
-    <thead><tr><th>Date</th><th>Ref</th><th class="r">Lines</th><th class="r">Total Pcs</th><th>Materials (SKU)</th></tr></thead>
+    <thead><tr><th>Date</th><th>Ref</th><th>Fournisseur</th><th class="r">Lines</th><th class="r">Total Pcs</th><th>Materials (SKU)</th></tr></thead>
     <tbody>${receiptsHtml}</tbody>
     <tfoot><tr><td colspan="3">TOTAL</td><td class="num">${totalPcs.toLocaleString('fr-FR')}</td><td></td></tr></tfoot>
   </table>
@@ -857,10 +874,16 @@ function SupplyReceiptScreen({
 
 // ── Main page ─────────────────────────────────────────────────────
 export default function InventoryPage() {
-  const [products, setProducts]   = useState<Product[]>([]);
-  const [movements, setMovements] = useState<InventoryMovement[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [rawCategory, setRawCategory] = useState('All');
+  const [products, setProducts]         = useState<Product[]>([]);
+  const [movements, setMovements]       = useState<InventoryMovement[]>([]);
+  const [shippingOrders, setShippingOrders] = useState<ShippingOrder[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [rawCategory, setRawCategory]   = useState('All');
+
+  // Supply Receipt History filters
+  const [histFilterCat, setHistFilterCat]           = useState('');
+  const [histFilterSupplier, setHistFilterSupplier] = useState('');
+  const [histFilterYear, setHistFilterYear]         = useState('');
   const [search, setSearch]           = useState('');
   const [stockFilter, setStockFilter] = useState<'all' | 'hide-zero' | 'zero-only' | 'alarm'>('all');
 
@@ -1007,8 +1030,8 @@ export default function InventoryPage() {
   // ── Data load ─────────────────────────────────────────────────
   const load = () => {
     setLoading(true);
-    Promise.all([getProducts(), getMovements()])
-      .then(([prods, movs]) => { setProducts(prods); setMovements(movs); })
+    Promise.all([getProducts(), getMovements(), getShippingOrders()])
+      .then(([prods, movs, orders]) => { setProducts(prods); setMovements(movs); setShippingOrders(orders); })
       .finally(() => setLoading(false));
   };
 
@@ -1044,6 +1067,7 @@ export default function InventoryPage() {
   }));
 
   const rawIds = new Set(rawMaterials.map(p => p.id));
+  const orderByRef = new Map(shippingOrders.map(o => [o.ref, o]));
   const shippingHistory: ShippingGroup[] = (() => {
     const map = new Map<string, ShippingGroup & { _cats: Set<string> }>();
     for (const m of movements.filter(m => m.reason === 'PURCHASE' && rawIds.has(m.productId))) {
@@ -1055,11 +1079,28 @@ export default function InventoryPage() {
       if (prod?.category) g._cats.add(prod.category);
       g.totalQty += m.quantity;
     }
-    return Array.from(map.values()).map(({ _cats, ...g }) => ({
-      ...g,
-      category: _cats.size === 1 ? Array.from(_cats)[0] : undefined,
-    })).sort((a, b) => b.date.getTime() - a.date.getTime());
+    return Array.from(map.values()).map(({ _cats, ...g }) => {
+      const order = orderByRef.get(g.ref);
+      return {
+        ...g,
+        category: _cats.size === 1 ? Array.from(_cats)[0] : undefined,
+        supplier: order?.supplier,
+        blNumber: order?.blNumber,
+        remarks: order?.remarks,
+        documentUrl: order?.documentUrl,
+        documentName: order?.documentName,
+      };
+    }).sort((a, b) => b.date.getTime() - a.date.getTime());
   })();
+
+  const histAllCats      = Array.from(new Set(shippingHistory.map(g => categoryLabel(g)))).sort();
+  const histAllSuppliers = Array.from(new Set(shippingHistory.map(g => g.supplier ?? '').filter(Boolean))).sort() as string[];
+  const histAllYears     = Array.from(new Set(shippingHistory.map(g => String(g.date.getFullYear())))).sort().reverse();
+  const filteredHistory  = shippingHistory.filter(g =>
+    (!histFilterCat      || categoryLabel(g) === histFilterCat) &&
+    (!histFilterSupplier || (g.supplier ?? '') === histFilterSupplier) &&
+    (!histFilterYear     || String(g.date.getFullYear()) === histFilterYear)
+  );
 
   const handleAdd = async (e: FormEvent) => {
     e.preventDefault(); setFormError(''); setSaving(true);
@@ -1211,29 +1252,66 @@ export default function InventoryPage() {
           {/* Supply Receipt History */}
           {shippingHistory.length > 0 && (
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
-                <ArrowDownToLine size={15} className="text-slate-400" />
-                <h2 className="text-sm font-semibold text-slate-700">Supply Receipt History</h2>
-                <span className="text-xs text-slate-400 ml-1">{shippingHistory.length} receipts · click to expand</span>
-                <button
-                  onClick={() => downloadSupplyReport(shippingHistory)}
-                  className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-medium hover:bg-slate-700 transition-colors"
-                >
-                  <FileDown size={13} /> Download Report
-                </button>
+              <div className="px-5 py-4 border-b border-slate-100">
+                <div className="flex items-center gap-2 mb-3">
+                  <ArrowDownToLine size={15} className="text-slate-400" />
+                  <h2 className="text-sm font-semibold text-slate-700">Supply Receipt History</h2>
+                  <span className="text-xs text-slate-400 ml-1">
+                    {filteredHistory.length}{filteredHistory.length !== shippingHistory.length ? `/${shippingHistory.length}` : ''} receipts · click to expand
+                  </span>
+                  <button
+                    onClick={() => downloadSupplyReport(filteredHistory)}
+                    className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-medium hover:bg-slate-700 transition-colors"
+                  >
+                    <FileDown size={13} /> Download Report
+                  </button>
+                </div>
+                {/* Filters */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Category */}
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setHistFilterCat('')}
+                      className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${!histFilterCat ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                      Tout
+                    </button>
+                    {histAllCats.map(cat => (
+                      <button key={cat} onClick={() => setHistFilterCat(histFilterCat === cat ? '' : cat)}
+                        className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${histFilterCat === cat ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Supplier */}
+                  {histAllSuppliers.length > 0 && (
+                    <select value={histFilterSupplier} onChange={e => setHistFilterSupplier(e.target.value)}
+                      className="px-2.5 py-1 border border-slate-200 rounded-lg text-xs text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                      <option value="">Tous fournisseurs</option>
+                      {histAllSuppliers.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  )}
+                  {/* Year */}
+                  {histAllYears.length > 1 && (
+                    <select value={histFilterYear} onChange={e => setHistFilterYear(e.target.value)}
+                      className="px-2.5 py-1 border border-slate-200 rounded-lg text-xs text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                      <option value="">Toutes années</option>
+                      {histAllYears.map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                  )}
+                </div>
               </div>
               <table className="w-full">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-100">
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Ref</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Fournisseur</th>
                     <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Qty</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Lines</th>
                     <th className="w-8" />
                   </tr>
                 </thead>
                 <tbody>
-                  {shippingHistory.map(g => <ShippingRow key={g.ref} group={g} />)}
+                  {filteredHistory.map(g => <ShippingRow key={g.ref} group={g} />)}
                 </tbody>
               </table>
             </div>

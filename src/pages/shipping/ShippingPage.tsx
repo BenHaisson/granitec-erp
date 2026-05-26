@@ -3,7 +3,7 @@ import {
   Truck, Plus, ChevronDown, CheckCircle2, Clock, Trash2,
   Search, X, FileText, PackagePlus, AlertCircle, Sparkles,
   ArrowLeft, ToggleLeft, ToggleRight, Pencil, Upload, ExternalLink,
-  Download, FileDown, Printer,
+  Download, FileDown,
 } from 'lucide-react';
 import { getProducts } from '@/services/inventory.service';
 import {
@@ -696,9 +696,8 @@ interface OrderTableProps {
   onReceive: (order: ShippingOrder) => void;
   onEdit: (order: ShippingOrder) => void;
   onDelete: (order: ShippingOrder) => void;
-  onBonDeReception: (order: ShippingOrder) => void;
 }
-function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onReceive, onEdit, onDelete, onBonDeReception }: OrderTableProps) {
+function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onReceive, onEdit, onDelete }: OrderTableProps) {
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
       <table className="w-full text-sm">
@@ -760,7 +759,7 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
                       )}
                       {order.status === 'RECEIVED' && (
                         <button
-                          onClick={() => onBonDeReception(order)}
+                          onClick={() => openBonDeReception(order)}
                           title="Bon de réception"
                           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors border border-indigo-200">
                           <FileText size={12} /> Bon de réception
@@ -798,120 +797,71 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
   );
 }
 
-// ── Bon de Réception viewer ───────────────────────────────────────
-function BonDeReception({ order, onClose }: { order: ShippingOrder; onClose: () => void }) {
+// ── Bon de Réception — opens styled page in new tab ──────────────
+function openBonDeReception(order: ShippingOrder) {
   const category = refToCategory(order.ref);
+  const dateStr = new Date(order.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
   const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
-  return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden max-h-[90vh]">
-        {/* Modal header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
-          <h2 className="font-bold text-slate-800">Bon de Réception</h2>
-          <div className="flex items-center gap-2">
-            <button onClick={() => window.print()}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-xs font-semibold hover:bg-slate-200 transition-colors">
-              <Printer size={13} /> Imprimer
-            </button>
-            <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors">
-              <X size={18} />
-            </button>
-          </div>
-        </div>
-
-        {/* Document body */}
-        <div className="overflow-y-auto flex-1 px-8 py-6">
-          {/* Title */}
-          <div className="text-center mb-6 pb-5 border-b-2 border-slate-200">
-            <p className="text-xs font-bold tracking-widest text-slate-400 uppercase mb-1">Granitec</p>
-            <h1 className="text-2xl font-bold text-slate-800">Bon de Réception</h1>
-          </div>
-
-          {/* Meta */}
-          <div className="grid grid-cols-2 gap-x-8 gap-y-3 mb-6">
-            <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Référence</p>
-              <p className="font-mono font-bold text-slate-800 mt-0.5">{order.ref}</p>
-            </div>
-            <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Date</p>
-              <p className="text-slate-700 mt-0.5">{fmtDate(order.date)}</p>
-            </div>
-            <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Catégorie</p>
-              <p className="text-slate-700 mt-0.5">{category}</p>
-            </div>
-            <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Statut</p>
-              <span className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">
-                <CheckCircle2 size={10} /> Reçu
-              </span>
-            </div>
-            {order.supplier && (
-              <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fournisseur</p>
-                <p className="text-slate-700 mt-0.5">{order.supplier}</p>
-              </div>
-            )}
-            {order.blNumber && (
-              <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">N° BL Fournisseur</p>
-                <p className="font-mono font-bold text-slate-800 mt-0.5">{order.blNumber}</p>
-              </div>
-            )}
-          </div>
-
-          {/* Lines table */}
-          <table className="w-full text-sm mb-6 border border-slate-200 rounded-xl overflow-hidden">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="text-left py-2.5 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Désignation</th>
-                <th className="text-left py-2.5 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">SKU</th>
-                <th className="text-right py-2.5 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Quantité</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {order.lines.map(l => (
-                <tr key={l.sku}>
-                  <td className="py-2.5 px-4 text-slate-700">{l.productName}</td>
-                  <td className="py-2.5 px-4 font-mono text-xs text-slate-500">{l.sku}</td>
-                  <td className="py-2.5 px-4 text-right font-bold tabular-nums">{l.qty.toLocaleString('fr-FR')}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t-2 border-slate-200 bg-slate-50">
-                <td colSpan={2} className="py-2.5 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Total</td>
-                <td className="py-2.5 px-4 text-right font-bold text-slate-800 tabular-nums">{totalQty.toLocaleString('fr-FR')}</td>
-              </tr>
-            </tfoot>
-          </table>
-
-          {/* Remarks */}
-          {order.remarks && (
-            <div className="mb-4 p-4 bg-amber-50 rounded-xl border border-amber-200">
-              <p className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-1.5">Remarques</p>
-              <p className="text-sm text-slate-700 whitespace-pre-wrap">{order.remarks}</p>
-            </div>
-          )}
-
-          {/* Attached document */}
-          {order.documentUrl && (
-            <div className="flex items-center gap-3 p-4 bg-emerald-50 rounded-xl border border-emerald-200">
-              <FileText size={20} className="text-emerald-600 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-0.5">Document joint</p>
-                <a href={order.documentUrl} target="_blank" rel="noopener noreferrer"
-                  className="text-sm text-emerald-700 hover:text-emerald-900 font-medium flex items-center gap-1.5 truncate">
-                  {order.documentName ?? 'Document'} <ExternalLink size={12} />
-                </a>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+  const rows = order.lines.map((l, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${l.productName}</td>
+      <td class="mono">${l.sku}</td>
+      <td class="num">${l.qty.toLocaleString('fr-FR')}</td>
+    </tr>`).join('');
+  const html = `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8"><title>Bon de réception ${order.ref}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1a1a2e;padding:40px 60px;font-size:13px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:36px;border-bottom:2px solid #1a1a2e;padding-bottom:20px}
+  .brand{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#888;margin-bottom:6px}
+  .doc-title{font-size:22px;font-weight:900;letter-spacing:1px}
+  .doc-info{text-align:right}.doc-info .ref{font-size:18px;font-weight:700;margin-bottom:4px}.doc-info .date{color:#555}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:16px 32px;margin-bottom:32px}
+  .meta-block label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#888;display:block;margin-bottom:4px}
+  .meta-block span{font-size:15px;font-weight:600}
+  table{width:100%;border-collapse:collapse;margin-bottom:24px}
+  thead tr{background:#1a1a2e;color:white}
+  thead th{padding:10px 14px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  thead th:last-child{text-align:right}
+  tbody tr:nth-child(even){background:#f7f8fc}
+  tbody td{padding:10px 14px;border-bottom:1px solid #eee}
+  td.mono{font-family:monospace;color:#555;font-size:12px}
+  td.num{text-align:right;font-weight:600}
+  tfoot tr{background:#1a1a2e;color:white}
+  tfoot td{padding:10px 14px;font-weight:700}
+  tfoot td.num{text-align:right}
+  .footer{margin-bottom:32px}
+  .remarks{background:#fffbf0;border:1px solid #f0e0a0;border-radius:6px;padding:16px;margin-bottom:24px}
+  .remarks label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#a08020;display:block;margin-bottom:6px}
+  .doc-link{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:16px;margin-bottom:24px}
+  .doc-link label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#166534;display:block;margin-bottom:6px}
+  .doc-link a{color:#166534;font-weight:600}
+  .stamp{margin-top:40px;text-align:center;font-size:10px;color:#ccc}
+  @media print{body{padding:20px 40px}}
+</style></head><body>
+  <div class="header">
+    <div><div class="brand">Granitec</div><div class="doc-title">Bon de Réception</div></div>
+    <div class="doc-info"><div class="ref">${order.ref}</div><div class="date">${dateStr}</div></div>
+  </div>
+  <div class="meta">
+    <div class="meta-block"><label>Catégorie</label><span>${category}</span></div>
+    <div class="meta-block"><label>Statut</label><span style="color:#16a34a">✓ Reçu</span></div>
+    ${order.supplier ? `<div class="meta-block"><label>Fournisseur</label><span>${order.supplier}</span></div>` : ''}
+    ${order.blNumber ? `<div class="meta-block"><label>N° BL Fournisseur</label><span>${order.blNumber}</span></div>` : ''}
+  </div>
+  <table>
+    <thead><tr><th>#</th><th>Désignation</th><th>Référence</th><th style="text-align:right">Quantité</th></tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr><td colspan="3">Total</td><td class="num">${totalQty.toLocaleString('fr-FR')}</td></tr></tfoot>
+  </table>
+  ${order.remarks ? `<div class="remarks"><label>Remarques</label><p>${order.remarks.replace(/\n/g, '<br>')}</p></div>` : ''}
+  ${order.documentUrl ? `<div class="doc-link"><label>Document joint</label><a href="${order.documentUrl}" target="_blank">📎 ${order.documentName ?? 'Document'}</a></div>` : ''}
+  <div class="stamp">Document généré par Granitec ERP · ${new Date().toLocaleDateString('fr-FR')}</div>
+</body></html>`;
+  const w = window.open('', '_blank');
+  if (w) { w.document.write(html); w.document.close(); }
 }
 
 // ── Smart Order Wizard ────────────────────────────────────────────
@@ -1199,7 +1149,6 @@ export default function ShippingPage() {
   const [deleting, setDeleting]       = useState<Set<string>>(new Set());
   const [editingOrder, setEditingOrder] = useState<ShippingOrder | null>(null);
   const [receivingOrder, setReceivingOrder] = useState<ShippingOrder | null>(null);
-  const [bonDeReceptionOrder, setBonDeReceptionOrder] = useState<ShippingOrder | null>(null);
 
   // Filters
   const [filterCat, setFilterCat]           = useState('');
@@ -1534,7 +1483,6 @@ export default function ShippingPage() {
                 onReceive={handleReceive}
                 onEdit={openEdit}
                 onDelete={handleDelete}
-                onBonDeReception={setBonDeReceptionOrder}
               />
             </div>
           )}
@@ -1554,7 +1502,6 @@ export default function ShippingPage() {
                 onReceive={handleReceive}
                 onEdit={openEdit}
                 onDelete={handleDelete}
-                onBonDeReception={setBonDeReceptionOrder}
               />
             </div>
           )}
@@ -1576,10 +1523,6 @@ export default function ShippingPage() {
         />
       )}
 
-      {/* Bon de Réception viewer */}
-      {bonDeReceptionOrder && (
-        <BonDeReception order={bonDeReceptionOrder} onClose={() => setBonDeReceptionOrder(null)} />
-      )}
 
       {/* Smart Order Wizard */}
       {showSmartOrder && (
