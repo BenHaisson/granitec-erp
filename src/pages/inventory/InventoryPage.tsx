@@ -38,6 +38,18 @@ interface ShippingGroup {
   date: Date;
   totalQty: number;
   items: { sku: string; name: string; qty: number }[];
+  category?: string;
+}
+
+function categoryLabel(group: ShippingGroup): string {
+  if (group.category) return group.category;
+  const prefix = group.ref.split('-')[0].toUpperCase();
+  const map: Record<string, string> = {
+    PKG: 'Packaging',
+    DISC: 'Disque aluminium',
+    ACC: 'Accessoires',
+  };
+  return map[prefix] ?? 'Matières premières';
 }
 
 function openShippingDoc(group: ShippingGroup) {
@@ -82,7 +94,7 @@ function openShippingDoc(group: ShippingGroup) {
     <div class="doc-info"><div class="ref">${group.ref}</div><div class="date">${fmt}</div></div>
   </div>
   <div class="meta">
-    <div class="meta-block"><label>Matière</label><span>Disque aluminium</span></div>
+    <div class="meta-block"><label>Matière</label><span>${categoryLabel(group)}</span></div>
     <div class="meta-block"><label>Nombre de références</label><span>${group.items.length}</span></div>
   </div>
   <table>
@@ -1033,16 +1045,20 @@ export default function InventoryPage() {
 
   const rawIds = new Set(rawMaterials.map(p => p.id));
   const shippingHistory: ShippingGroup[] = (() => {
-    const map = new Map<string, ShippingGroup>();
+    const map = new Map<string, ShippingGroup & { _cats: Set<string> }>();
     for (const m of movements.filter(m => m.reason === 'PURCHASE' && rawIds.has(m.productId))) {
       const ref = m.note ?? '—';
-      if (!map.has(ref)) map.set(ref, { ref, date: tsToDate(m.createdAt), totalQty: 0, items: [] });
+      if (!map.has(ref)) map.set(ref, { ref, date: tsToDate(m.createdAt), totalQty: 0, items: [], _cats: new Set() });
       const g = map.get(ref)!;
       const prod = products.find(p => p.id === m.productId);
       g.items.push({ sku: prod?.sku ?? m.productId, name: prod?.name ?? m.productId, qty: m.quantity });
+      if (prod?.category) g._cats.add(prod.category);
       g.totalQty += m.quantity;
     }
-    return Array.from(map.values()).sort((a, b) => b.date.getTime() - a.date.getTime());
+    return Array.from(map.values()).map(({ _cats, ...g }) => ({
+      ...g,
+      category: _cats.size === 1 ? Array.from(_cats)[0] : undefined,
+    })).sort((a, b) => b.date.getTime() - a.date.getTime());
   })();
 
   const handleAdd = async (e: FormEvent) => {

@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Truck, Plus, ChevronDown, CheckCircle2, Clock, Trash2,
   Search, X, FileText, PackagePlus, AlertCircle, Sparkles,
-  ArrowLeft, ToggleLeft, ToggleRight, Pencil,
+  ArrowLeft, ToggleLeft, ToggleRight, Pencil, Upload, ExternalLink,
 } from 'lucide-react';
 import { getProducts } from '@/services/inventory.service';
 import {
   getShippingOrders, createShippingOrder, receiveShippingOrder,
   deleteShippingOrder, updateShippingOrder, deleteReceivedShippingOrder, updateReceivedShippingOrder,
+  uploadReceiptDocument,
 } from '@/services/shipping.service';
 import { getRecipes } from '@/services/production.service';
 import type { Product, ShippingOrder, ShippingOrderLine, Recipe } from '@/types';
@@ -466,12 +467,150 @@ function CreateOrderOverlay({
   );
 }
 
+// ── Receive Modal ─────────────────────────────────────────────────
+interface ReceiveModalProps {
+  order: ShippingOrder;
+  onConfirm: (data: { blNumber: string; remarks: string; file: File | null }) => Promise<void>;
+  onClose: () => void;
+}
+function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
+  const [blNumber, setBlNumber] = useState('');
+  const [remarks, setRemarks] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files[0];
+    if (f) setFile(f);
+  };
+
+  const handleConfirm = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await onConfirm({ blNumber, remarks, file });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to mark as received.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <div>
+            <h2 className="font-bold text-slate-800">Confirm Receipt</h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              <span className="font-mono font-semibold text-slate-600">{order.ref}</span>
+              {order.supplier && <span> · {order.supplier}</span>}
+              <span> · {order.lines.length} item{order.lines.length !== 1 ? 's' : ''} · {totalQty.toLocaleString('fr-FR')} pcs</span>
+            </p>
+          </div>
+          <button onClick={onClose} disabled={saving} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors disabled:opacity-50">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 py-5 space-y-4">
+          {/* BL Number */}
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">
+              BL Number <span className="text-slate-300 font-normal normal-case tracking-normal">(from supplier)</span>
+            </label>
+            <input
+              type="text"
+              value={blNumber}
+              onChange={e => setBlNumber(e.target.value)}
+              placeholder="e.g. BL-2024-001"
+              autoFocus
+              className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400"
+            />
+          </div>
+
+          {/* Remarks */}
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">
+              Remarks
+            </label>
+            <textarea
+              value={remarks}
+              onChange={e => setRemarks(e.target.value)}
+              rows={3}
+              placeholder="Any notes about this receipt…"
+              className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400"
+            />
+          </div>
+
+          {/* Document */}
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">
+              Attached Document
+            </label>
+            <div
+              onDragOver={e => e.preventDefault()}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed border-slate-200 rounded-xl px-4 py-5 text-center hover:border-emerald-300 hover:bg-emerald-50/40 transition-colors cursor-pointer"
+            >
+              {file ? (
+                <div className="flex items-center justify-center gap-2 text-sm text-emerald-700">
+                  <FileText size={16} className="shrink-0" />
+                  <span className="font-medium truncate max-w-[260px]">{file.name}</span>
+                  <button type="button" onClick={e => { e.stopPropagation(); setFile(null); }}
+                    className="p-0.5 rounded text-slate-400 hover:text-red-500 transition-colors shrink-0">
+                    <X size={13} />
+                  </button>
+                </div>
+              ) : (
+                <div className="text-slate-400">
+                  <Upload size={22} className="mx-auto mb-1.5 text-slate-300" />
+                  <p className="text-sm">Drop file or <span className="text-indigo-600 font-semibold">click to browse</span></p>
+                  <p className="text-xs mt-0.5 text-slate-300">PDF, image, or any document</p>
+                </div>
+              )}
+            </div>
+            <input ref={fileInputRef} type="file" className="hidden" onChange={e => setFile(e.target.files?.[0] ?? null)} />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+              <AlertCircle size={14} className="shrink-0" /> {error}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-100 bg-slate-50">
+          <button onClick={onClose} disabled={saving}
+            className="px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
+            Cancel
+          </button>
+          <button onClick={handleConfirm} disabled={saving}
+            className="flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50 shadow-sm shadow-emerald-200">
+            {saving
+              ? <><span className="animate-spin inline-block">↻</span> Processing…</>
+              : <><CheckCircle2 size={14} /> Mark as Received</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Expanded order detail row ─────────────────────────────────────
-function OrderDetail({ lines }: { lines: ShippingOrderLine[] }) {
+function OrderDetail({ order }: { order: ShippingOrder }) {
   return (
     <div className="px-4 py-3 bg-slate-50 border-b border-slate-100">
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1.5">
-        {lines.map(l => (
+        {order.lines.map(l => (
           <div key={l.sku} className="flex items-center justify-between text-xs bg-white rounded-lg px-3 py-2 border border-slate-100">
             <div className="min-w-0">
               <p className="text-slate-600 font-medium truncate">{l.productName}</p>
@@ -481,6 +620,30 @@ function OrderDetail({ lines }: { lines: ShippingOrderLine[] }) {
           </div>
         ))}
       </div>
+      {order.status === 'RECEIVED' && (order.blNumber || order.remarks || order.documentUrl) && (
+        <div className="mt-3 flex flex-wrap items-start gap-2">
+          {order.blNumber && (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 text-xs rounded-lg border border-indigo-100">
+              <span className="font-bold">BL:</span>
+              <span className="font-mono">{order.blNumber}</span>
+            </span>
+          )}
+          {order.remarks && (
+            <span className="inline-flex items-start gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-600 text-xs rounded-lg max-w-sm">
+              <span className="font-bold shrink-0">Note:</span>
+              <span>{order.remarks}</span>
+            </span>
+          )}
+          {order.documentUrl && (
+            <a href={order.documentUrl} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs rounded-lg border border-emerald-100 hover:bg-emerald-100 transition-colors">
+              <FileText size={12} />
+              <span>{order.documentName ?? 'Document'}</span>
+              <ExternalLink size={10} className="opacity-60" />
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -769,6 +932,7 @@ export default function ShippingPage() {
   const [receiving, setReceiving]     = useState<Set<string>>(new Set());
   const [deleting, setDeleting]       = useState<Set<string>>(new Set());
   const [editingOrder, setEditingOrder] = useState<ShippingOrder | null>(null);
+  const [receivingOrder, setReceivingOrder] = useState<ShippingOrder | null>(null);
 
   // Create/edit order overlay state
   const [showCreate, setShowCreate]   = useState(false);
@@ -902,14 +1066,29 @@ export default function ShippingPage() {
     }
   };
 
-  const handleReceive = async (order: ShippingOrder) => {
-    setReceiving(s => new Set(s).add(order.id));
-    try {
-      await receiveShippingOrder(order);
-      await load();
-    } finally {
-      setReceiving(s => { const n = new Set(s); n.delete(order.id); return n; });
+  const handleReceive = (order: ShippingOrder) => {
+    setReceivingOrder(order);
+  };
+
+  const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null }) => {
+    if (!receivingOrder) return;
+    setReceiving(s => new Set(s).add(receivingOrder.id));
+    let documentUrl: string | undefined;
+    let documentName: string | undefined;
+    if (data.file) {
+      const uploaded = await uploadReceiptDocument(receivingOrder.id, data.file);
+      documentUrl = uploaded.url;
+      documentName = uploaded.name;
     }
+    await receiveShippingOrder(receivingOrder, {
+      blNumber: data.blNumber.trim() || undefined,
+      remarks: data.remarks.trim() || undefined,
+      documentUrl,
+      documentName,
+    });
+    setReceiving(s => { const n = new Set(s); n.delete(receivingOrder.id); return n; });
+    setReceivingOrder(null);
+    await load();
   };
 
   const handleDelete = async (order: ShippingOrder) => {
@@ -1051,7 +1230,7 @@ export default function ShippingPage() {
                     {isExpanded && (
                       <tr key={`${order.id}-detail`}>
                         <td colSpan={8} className="p-0">
-                          <OrderDetail lines={order.lines} />
+                          <OrderDetail order={order} />
                         </td>
                       </tr>
                     )}
@@ -1061,6 +1240,15 @@ export default function ShippingPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Receive Modal */}
+      {receivingOrder && (
+        <ReceiveModal
+          order={receivingOrder}
+          onConfirm={handleReceiveConfirm}
+          onClose={() => setReceivingOrder(null)}
+        />
       )}
 
       {/* Smart Order Wizard */}

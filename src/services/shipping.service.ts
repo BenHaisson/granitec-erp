@@ -2,9 +2,18 @@ import {
   collection, addDoc, getDocs, doc, updateDoc, deleteDoc, Timestamp,
   query, where, runTransaction, writeBatch,
 } from 'firebase/firestore';
-import { db } from '@/firebase/config';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage } from '@/firebase/config';
 import type { ShippingOrder, ShippingOrderLine } from '@/types';
 import { receiveSupplyBatch } from './inventory.service';
+
+export const uploadReceiptDocument = async (orderId: string, file: File): Promise<{ url: string; name: string }> => {
+  const path = `receipt-documents/${orderId}/${Date.now()}_${file.name}`;
+  const fileRef = storageRef(storage, path);
+  await uploadBytes(fileRef, file);
+  const url = await getDownloadURL(fileRef);
+  return { url, name: file.name };
+};
 
 export const getShippingOrders = async (): Promise<ShippingOrder[]> => {
   const snap = await getDocs(collection(db, 'shipping_orders'));
@@ -27,16 +36,21 @@ export const createShippingOrder = async (
   await addDoc(collection(db, 'shipping_orders'), data);
 };
 
-export const receiveShippingOrder = async (order: ShippingOrder): Promise<void> => {
+export const receiveShippingOrder = async (
+  order: ShippingOrder,
+  receipt?: { blNumber?: string; remarks?: string; documentUrl?: string; documentName?: string }
+): Promise<void> => {
   await receiveSupplyBatch(
     order.lines.map(l => ({ productId: l.productId, qty: l.qty })),
     order.ref,
     new Date(order.date)
   );
-  await updateDoc(doc(db, 'shipping_orders', order.id), {
-    status: 'RECEIVED',
-    receivedAt: Timestamp.now(),
-  });
+  const update: Record<string, unknown> = { status: 'RECEIVED', receivedAt: Timestamp.now() };
+  if (receipt?.blNumber) update.blNumber = receipt.blNumber;
+  if (receipt?.remarks) update.remarks = receipt.remarks;
+  if (receipt?.documentUrl) update.documentUrl = receipt.documentUrl;
+  if (receipt?.documentName) update.documentName = receipt.documentName;
+  await updateDoc(doc(db, 'shipping_orders', order.id), update);
 };
 
 export const deleteShippingOrder = async (id: string): Promise<void> => {

@@ -158,4 +158,8 @@ export interface ShippingOrder {
   lines: ShippingOrderLine[];
   receivedAt?: Date;
   createdAt: Date;
+  blNumber?: string;
+  remarks?: string;
+  documentUrl?: string;
+  documentName?: string;
 }
