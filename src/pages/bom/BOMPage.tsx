@@ -1,136 +1,351 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, BookOpen } from 'lucide-react';
-import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
+import { useEffect, useRef, useState } from 'react';
+import {
+  AlertCircle, BookOpen, ChevronDown, ChevronRight, PackagePlus,
+  Pencil, Plus, Search, Trash2, X,
+} from 'lucide-react';
 import { getRecipes, createRecipe, updateRecipe, deleteRecipe } from '@/services/production.service';
 import { getProducts } from '@/services/inventory.service';
-import Modal from '@/components/ui/Modal';
-import type { Recipe, Product } from '@/types';
+import type { Recipe, Product, RecipeItem } from '@/types';
 
-type ComponentRow = { productId: string; quantity: number };
-type ModalState = { mode: 'create' } | { mode: 'edit'; recipe: Recipe };
+// ── Recipe line type ──────────────────────────────────────────────
+type RecipeLine = {
+  productId: string;
+  productName: string;
+  sku: string;
+  quantity: string;
+  search: string;
+  showSuggestions: boolean;
+  highlightIdx: number;
+};
 
-// ── Recipe modal ──────────────────────────────────────────────────
-function RecipeModal({
-  state, finishedList, rawList, onSave, onClose,
-}: {
-  state: ModalState;
-  finishedList: Product[];
-  rawList: Product[];
-  onSave: () => void;
-  onClose: () => void;
-}) {
-  const [finishedId, setFinishedId] = useState(
-    state.mode === 'edit' ? state.recipe.finishedProductId : ''
-  );
-  const [rows, setRows] = useState<ComponentRow[]>(
-    state.mode === 'edit'
-      ? state.recipe.components.map(c => ({ productId: c.productId, quantity: c.quantity }))
-      : [{ productId: '', quantity: 1 }]
-  );
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+const EMPTY_LINE = (): RecipeLine => ({
+  productId: '', productName: '', sku: '', quantity: '',
+  search: '', showSuggestions: false, highlightIdx: -1,
+});
 
-  const addRow = () => setRows(r => [...r, { productId: '', quantity: 1 }]);
-  const removeRow = (i: number) => setRows(r => r.filter((_, idx) => idx !== i));
-  const updateRow = (i: number, patch: Partial<ComponentRow>) =>
-    setRows(r => r.map((row, idx) => idx === i ? { ...row, ...patch } : row));
+// ── RecipeRow — inline search with suggestions ────────────────────
+interface RecipeRowProps {
+  line: RecipeLine;
+  rowNum: number;
+  products: Product[];
+  qtyRef: (el: HTMLInputElement | null) => void;
+  onUpdate: (patch: Partial<RecipeLine>) => void;
+  onSelect: (p: Product) => void;
+  onRemove: () => void;
+  onQtyTab: () => void;
+}
+function RecipeRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemove, onQtyTab }: RecipeRowProps) {
+  const q = line.search.toLowerCase();
+  const suggestions = line.search.length > 0
+    ? products.filter(p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)).slice(0, 10)
+    : [];
+  const selected = products.find(p => p.id === line.productId);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (!finishedId) { setError('Select a finished product.'); return; }
-    if (rows.some(r => !r.productId || r.quantity <= 0)) {
-      setError('All component rows must have a material and quantity > 0.');
-      return;
-    }
-    setSaving(true);
-    try {
-      const recipe = { finishedProductId: finishedId, components: rows };
-      if (state.mode === 'create') {
-        await createRecipe(recipe);
-      } else {
-        await updateRecipe({ id: state.recipe.id, ...recipe });
-      }
-      onSave();
-    } catch {
-      setError('Failed to save recipe.');
-    } finally {
-      setSaving(false);
-    }
+  useEffect(() => {
+    if (!line.showSuggestions) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node))
+        onUpdate({ showSuggestions: false });
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [line.showSuggestions]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!line.showSuggestions || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); onUpdate({ highlightIdx: Math.min(line.highlightIdx + 1, suggestions.length - 1) }); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); onUpdate({ highlightIdx: Math.max(line.highlightIdx - 1, 0) }); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      const picked = suggestions[line.highlightIdx >= 0 ? line.highlightIdx : 0];
+      if (picked) onSelect(picked);
+    } else if (e.key === 'Escape') { onUpdate({ showSuggestions: false }); }
   };
 
   return (
-    <Modal title={state.mode === 'create' ? 'New Recipe' : 'Edit Recipe'} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-5">
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Finished Product</label>
-          <ProductPickerDropdown
-            products={finishedList}
-            value={finishedId}
-            onChange={p => setFinishedId(p.id)}
-            placeholder="Select a finished product…"
-          />
-        </div>
+    <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3 items-center px-4 py-2.5 rounded-xl border border-slate-100 bg-white hover:border-indigo-200 hover:shadow-sm transition-all group">
+      <span className="text-sm font-bold text-slate-300 tabular-nums text-center">{rowNum}</span>
 
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-2">Components</label>
-          {rawList.length === 0 && (
-            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
-              No raw materials defined yet. Add them in Inventory first.
-            </p>
-          )}
-          <div className="space-y-2">
-            {rows.map((row, i) => (
-              <div key={i} className="flex gap-2 items-start">
-                <div className="flex-1 min-w-0">
-                  <ProductPickerDropdown
-                    products={rawList}
-                    value={row.productId}
-                    onChange={p => updateRow(i, { productId: p.id })}
-                    placeholder="Select material…"
-                  />
-                </div>
-                <input type="number" min="0.001" step="any" value={row.quantity}
-                  onChange={e => updateRow(i, { quantity: Number(e.target.value) })}
-                  className="w-24 px-3 py-2 border border-slate-300 rounded-lg text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-500 shrink-0" />
-                <button type="button" onClick={() => removeRow(i)}
-                  disabled={rows.length === 1}
-                  className="p-2 mt-0.5 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-30 shrink-0">
-                  <Trash2 size={15} />
+      <div ref={containerRef} className="relative">
+        {line.productId ? (
+          <div className="flex items-center gap-2 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg cursor-pointer"
+            onClick={() => onUpdate({ productId: '', productName: '', sku: '', search: '', showSuggestions: true, highlightIdx: -1 })}>
+            <span className="flex-1 text-sm font-semibold text-slate-800 truncate">{selected?.name}</span>
+            <X size={13} className="text-indigo-400 shrink-0" />
+          </div>
+        ) : (
+          <input
+            type="text" data-recipe-search
+            value={line.search}
+            onChange={e => onUpdate({ search: e.target.value, showSuggestions: true, highlightIdx: -1 })}
+            onFocus={() => onUpdate({ showSuggestions: true })}
+            onKeyDown={handleKeyDown}
+            placeholder="Type to search component…"
+            autoComplete="off"
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white"
+          />
+        )}
+        {line.showSuggestions && suggestions.length > 0 && !line.productId && (
+          <div className="absolute z-[300] left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden">
+            <div className="max-h-56 overflow-y-auto divide-y divide-slate-50">
+              {suggestions.map((p, si) => (
+                <button key={p.id} type="button" onMouseDown={() => onSelect(p)}
+                  className={`w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors ${si === line.highlightIdx ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+                    <p className="text-xs text-slate-400 font-mono">{p.sku}</p>
+                  </div>
+                  <span className={`ml-3 text-xs font-semibold tabular-nums shrink-0 ${p.stock_level < 0 ? 'text-red-500' : p.stock_level === 0 ? 'text-orange-500' : 'text-slate-500'}`}>
+                    {p.stock_level} {p.unit}
+                  </span>
                 </button>
-              </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <span className="text-xs font-mono text-slate-400 truncate px-1">{line.sku || '—'}</span>
+
+      <span className={`text-sm font-bold tabular-nums text-right pr-2 ${
+        !selected ? 'text-slate-200' :
+        selected.stock_level < 0 ? 'text-red-500' :
+        selected.stock_level === 0 ? 'text-orange-400' : 'text-slate-600'
+      }`}>
+        {selected ? selected.stock_level.toLocaleString() : '—'}
+      </span>
+
+      <input ref={qtyRef} type="number" min="0.001" step="any" placeholder="0"
+        value={line.quantity}
+        onChange={e => onUpdate({ quantity: e.target.value })}
+        onKeyDown={e => { if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); onQtyTab(); } }}
+        className="w-full px-4 py-2 border border-slate-300 rounded-lg text-base font-bold text-right focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white tabular-nums"
+      />
+
+      <button type="button" onClick={onRemove}
+        className="flex items-center justify-center w-9 h-9 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100">
+        <Trash2 size={15} />
+      </button>
+    </div>
+  );
+}
+
+// ── Recipe full-screen overlay ────────────────────────────────────
+interface RecipeOverlayProps {
+  editRecipe: Recipe | null;
+  products: Product[];
+  fpId: string; setFpId: (v: string) => void;
+  lines: RecipeLine[];
+  saving: boolean;
+  error: string;
+  onSave: () => void;
+  onClose: () => void;
+  onAddLine: () => void;
+  onRemoveLine: (i: number) => void;
+  onUpdateLine: (i: number, patch: Partial<RecipeLine>) => void;
+  onSelectProduct: (i: number, p: Product) => void;
+}
+function RecipeOverlay({
+  editRecipe, products, fpId, setFpId, lines, saving, error,
+  onSave, onClose, onAddLine, onRemoveLine, onUpdateLine, onSelectProduct,
+}: RecipeOverlayProps) {
+  const qtyRefs = useRef<HTMLInputElement[]>([]);
+  const pendingQuickAdd = useRef<{ idx: number; data: Partial<RecipeLine> } | null>(null);
+  const [quickSearch, setQuickSearch] = useState('');
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+
+  const rawMats     = products.filter(p => p.type === 'RAW');
+  const finishedGoods = products.filter(p => p.type === 'FINISHED');
+  const validCount  = lines.filter(l => l.productId && Number(l.quantity) > 0).length;
+
+  useEffect(() => {
+    if (!pendingQuickAdd.current) return;
+    const { idx, data } = pendingQuickAdd.current;
+    if (lines.length > idx) {
+      onUpdateLine(idx, data);
+      pendingQuickAdd.current = null;
+      setTimeout(() => qtyRefs.current[idx]?.focus(), 40);
+    }
+  }, [lines.length]);
+
+  const handleQtyTab = (i: number) => {
+    if (i === lines.length - 1) {
+      onAddLine();
+      setTimeout(() => {
+        const inputs = document.querySelectorAll<HTMLInputElement>('[data-recipe-search]');
+        inputs[inputs.length - 1]?.focus();
+      }, 50);
+    } else {
+      qtyRefs.current[i + 1]?.focus();
+    }
+  };
+
+  const handleQuickAdd = (p: Product) => {
+    const data: Partial<RecipeLine> = {
+      productId: p.id, productName: p.name, sku: p.sku,
+      search: p.name, showSuggestions: false, highlightIdx: -1,
+    };
+    const emptyIdx = lines.findIndex(l => !l.productId);
+    if (emptyIdx >= 0) {
+      onUpdateLine(emptyIdx, data);
+      setTimeout(() => qtyRefs.current[emptyIdx]?.focus(), 40);
+    } else {
+      pendingQuickAdd.current = { idx: lines.length, data };
+      onAddLine();
+    }
+  };
+
+  const qs = quickSearch.trim().toLowerCase();
+  const sidebarProducts = qs
+    ? rawMats.filter(p => p.name.toLowerCase().includes(qs) || p.sku.toLowerCase().includes(qs))
+    : rawMats;
+  const sidebarCats = Array.from(new Set(sidebarProducts.map(p => p.category ?? 'Other')));
+  const addedIds = new Set(lines.map(l => l.productId).filter(Boolean));
+
+  const toggleCat = (cat: string) => setCollapsedCats(prev => {
+    const next = new Set(prev);
+    prev.has(cat) ? next.delete(cat) : next.add(cat);
+    return next;
+  });
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-white flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+        <div className="flex items-center gap-4">
+          <button onClick={onClose}
+            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+            <X size={20} />
+          </button>
+          <h1 className="text-lg font-bold text-slate-800">
+            {editRecipe ? 'Edit Recipe' : 'New Recipe'}
+          </h1>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+              Finished Product *
+            </label>
+            <select value={fpId} onChange={e => setFpId(e.target.value)}
+              className="px-3 py-2 border-2 border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white min-w-[220px]">
+              <option value="">Select product…</option>
+              {finishedGoods.map(p => (
+                <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
+              ))}
+            </select>
+          </div>
+          <button onClick={onSave} disabled={saving}
+            className="px-5 py-2 rounded-xl text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm shadow-indigo-200">
+            {saving ? 'Saving…' : editRecipe
+              ? `Save Changes${validCount > 0 ? ` (${validCount})` : ''}`
+              : `Save Recipe${validCount > 0 ? ` (${validCount})` : ''}`}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mx-6 mt-3 flex items-center gap-2 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 shrink-0">
+          <AlertCircle size={15} className="shrink-0" /> {error}
+        </div>
+      )}
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar */}
+        <aside className="w-64 shrink-0 border-r border-slate-100 flex flex-col overflow-hidden bg-slate-50">
+          <div className="px-3 pt-3 pb-2 shrink-0">
+            <div className="relative">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input type="text" value={quickSearch} onChange={e => setQuickSearch(e.target.value)}
+                placeholder="Quick search…"
+                className="w-full pl-8 pr-3 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto px-2 pb-3">
+            {sidebarCats.map(cat => {
+              const catProducts = sidebarProducts.filter(p => (p.category ?? 'Other') === cat);
+              const collapsed = collapsedCats.has(cat);
+              return (
+                <div key={cat} className="mb-1">
+                  <button onClick={() => toggleCat(cat)}
+                    className="flex items-center gap-1.5 w-full px-2 py-1.5 text-left rounded-lg hover:bg-slate-200/60 transition-colors">
+                    <ChevronDown size={12} className={`text-slate-400 transition-transform shrink-0 ${collapsed ? '-rotate-90' : ''}`} />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{cat}</span>
+                    <span className="ml-auto text-[10px] text-slate-400">{catProducts.length}</span>
+                  </button>
+                  {!collapsed && catProducts.map(p => (
+                    <button key={p.id} onClick={() => handleQuickAdd(p)}
+                      disabled={addedIds.has(p.id)}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${addedIds.has(p.id) ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white hover:shadow-sm'}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-slate-700 truncate leading-tight">{p.name}</p>
+                        <p className="text-[10px] font-mono text-slate-400">{p.sku}</p>
+                      </div>
+                      <PackagePlus size={12} className={`shrink-0 ${addedIds.has(p.id) ? 'text-slate-300' : 'text-indigo-400'}`} />
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+
+        {/* Main content */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3 px-4 py-2.5 border-b border-slate-100 bg-slate-50 shrink-0 text-xs font-bold text-slate-400 uppercase tracking-widest">
+            <span className="text-center">#</span>
+            <span>Component</span>
+            <span>SKU</span>
+            <span className="text-right pr-2">Stock</span>
+            <span className="text-right pr-4">Qty / unit</span>
+            <span />
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1.5">
+            {lines.map((line, i) => (
+              <RecipeRow
+                key={i}
+                line={line} rowNum={i + 1}
+                products={rawMats}
+                qtyRef={el => { qtyRefs.current[i] = el!; }}
+                onUpdate={patch => onUpdateLine(i, patch)}
+                onSelect={p => onSelectProduct(i, p)}
+                onRemove={() => onRemoveLine(i)}
+                onQtyTab={() => handleQtyTab(i)}
+              />
             ))}
           </div>
-          <button type="button" onClick={addRow}
-            className="mt-2 flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-            <Plus size={13} /> Add component
-          </button>
-        </div>
 
-        {error && <p className="text-red-600 text-sm">{error}</p>}
-
-        <div className="flex gap-3 pt-1">
-          <button type="submit" disabled={saving}
-            className="flex-1 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-            {saving ? 'Saving…' : 'Save Recipe'}
-          </button>
-          <button type="button" onClick={onClose}
-            className="px-4 py-2.5 border border-slate-200 text-slate-600 rounded-lg text-sm hover:bg-slate-50 transition-colors">
-            Cancel
-          </button>
+          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50 shrink-0">
+            <button type="button" onClick={onAddLine}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-dashed border-slate-300 text-sm font-semibold text-slate-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
+              <Plus size={15} /> Add Line
+            </button>
+            {validCount > 0 && (
+              <p className="text-sm font-semibold text-slate-500">
+                {validCount} component{validCount !== 1 ? 's' : ''}
+              </p>
+            )}
+          </div>
         </div>
-      </form>
-    </Modal>
+      </div>
+    </div>
   );
 }
 
 // ── Main page ─────────────────────────────────────────────────────
 export default function BOMPage() {
-  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [recipes, setRecipes]     = useState<Recipe[]>([]);
   const [productMap, setProductMap] = useState<Map<string, Product>>(new Map());
-  const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState<ModalState | null>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [loading, setLoading]     = useState(true);
+  const [expanded, setExpanded]   = useState<Set<string>>(new Set());
+
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [editRecipe, setEditRecipe]   = useState<Recipe | null>(null);
+  const [fpId, setFpId]               = useState('');
+  const [lines, setLines]             = useState<RecipeLine[]>([EMPTY_LINE()]);
+  const [saving, setSaving]           = useState(false);
+  const [error, setError]             = useState('');
 
   const load = () => {
     setLoading(true);
@@ -144,22 +359,33 @@ export default function BOMPage() {
 
   useEffect(() => { load(); }, []);
 
-  const finishedList = [...productMap.values()]
-    .filter(p => p.type === 'FINISHED')
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const finishedList = [...productMap.values()].filter(p => p.type === 'FINISHED').sort((a, b) => a.name.localeCompare(b.name));
 
-  const rawList = [...productMap.values()]
-    .filter(p => p.type === 'RAW')
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const addLine    = () => setLines(l => [...l, EMPTY_LINE()]);
+  const removeLine = (i: number) => setLines(l => l.length === 1 ? [EMPTY_LINE()] : l.filter((_, idx) => idx !== i));
+  const updateLine = (i: number, patch: Partial<RecipeLine>) =>
+    setLines(l => l.map((row, idx) => idx === i ? { ...row, ...patch } : row));
+  const selectProduct = (i: number, p: Product) =>
+    setLines(l => l.map((row, idx) => idx === i
+      ? { ...row, productId: p.id, productName: p.name, sku: p.sku, search: p.name, showSuggestions: false, highlightIdx: -1 }
+      : row));
 
-  const toggleExpand = (id: string) =>
-    setExpanded(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+  const openCreate = () => {
+    setEditRecipe(null); setFpId(''); setLines([EMPTY_LINE()]); setError(''); setShowOverlay(true);
+  };
 
-  const handleSave = () => { setModal(null); load(); };
+  const openEdit = (r: Recipe) => {
+    setEditRecipe(r); setFpId(r.finishedProductId);
+    setLines(r.components.map(c => {
+      const p = productMap.get(c.productId);
+      return {
+        productId: c.productId, productName: p?.name ?? '', sku: p?.sku ?? '',
+        quantity: String(c.quantity), search: p?.name ?? c.productId,
+        showSuggestions: false, highlightIdx: -1,
+      };
+    }));
+    setError(''); setShowOverlay(true);
+  };
 
   const handleDelete = async (recipe: Recipe) => {
     const name = productMap.get(recipe.finishedProductId)?.name ?? recipe.id;
@@ -168,7 +394,27 @@ export default function BOMPage() {
     load();
   };
 
-  // Feasibility: how many finished units can be produced from current stock
+  const handleSubmit = async () => {
+    if (!fpId) { setError('Select a finished product.'); return; }
+    const components: RecipeItem[] = lines
+      .filter(l => l.productId && Number(l.quantity) > 0)
+      .map(l => ({ productId: l.productId, quantity: Number(l.quantity) }));
+    if (components.length === 0) { setError('Add at least one component with a quantity.'); return; }
+    setError(''); setSaving(true);
+    try {
+      if (editRecipe) await updateRecipe({ id: editRecipe.id, finishedProductId: fpId, components });
+      else await createRecipe({ finishedProductId: fpId, components });
+      setShowOverlay(false); load();
+    } catch { setError('Failed to save recipe.'); }
+    finally { setSaving(false); }
+  };
+
+  const toggleExpand = (id: string) => setExpanded(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
   const producible = (recipe: Recipe) =>
     recipe.components.reduce((min, c) => {
       const p = productMap.get(c.productId);
@@ -188,7 +434,7 @@ export default function BOMPage() {
           <h1 className="text-2xl font-bold text-slate-800">BOM Recipes</h1>
           <p className="text-slate-500 text-sm mt-1">{recipes.length} recipe{recipes.length !== 1 ? 's' : ''} defined</p>
         </div>
-        <button onClick={() => setModal({ mode: 'create' })}
+        <button onClick={openCreate}
           className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
           <Plus size={15} /> New Recipe
         </button>
@@ -211,24 +457,18 @@ export default function BOMPage() {
 
             return (
               <div key={recipe.id} className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-                {/* Collapsed row — always visible */}
                 <div className="flex items-center gap-3 px-4 py-3.5">
-                  <button
-                    onClick={() => toggleExpand(recipe.id)}
-                    className="flex items-center gap-3 flex-1 min-w-0 text-left group"
-                  >
+                  <button onClick={() => toggleExpand(recipe.id)}
+                    className="flex items-center gap-3 flex-1 min-w-0 text-left group">
                     {isOpen
                       ? <ChevronDown size={14} className="text-slate-400 shrink-0" />
-                      : <ChevronRight size={14} className="text-slate-400 shrink-0" />
-                    }
+                      : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-800 truncate group-hover:text-indigo-700 transition-colors">
                         {finished?.name ?? recipe.finishedProductId}
                       </p>
                     </div>
                   </button>
-
-                  {/* Meta badges */}
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="hidden sm:inline text-xs text-slate-400 font-mono bg-slate-50 px-2 py-0.5 rounded">
                       {finished?.sku ?? '—'}
@@ -236,12 +476,10 @@ export default function BOMPage() {
                     <span className="text-xs text-slate-400">
                       {recipe.components.length} component{recipe.components.length !== 1 ? 's' : ''}
                     </span>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                      feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'
-                    }`}>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
                       {feasible ? `${qty} producible` : 'No stock'}
                     </span>
-                    <button onClick={() => setModal({ mode: 'edit', recipe })}
+                    <button onClick={() => openEdit(recipe)}
                       className="p-1.5 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
                       <Pencil size={13} />
                     </button>
@@ -252,7 +490,6 @@ export default function BOMPage() {
                   </div>
                 </div>
 
-                {/* Expanded component table */}
                 {isOpen && (
                   <div className="border-t border-slate-50 px-4 pb-4 pt-3">
                     <div className="space-y-1.5">
@@ -286,13 +523,16 @@ export default function BOMPage() {
         </div>
       )}
 
-      {modal && (
-        <RecipeModal
-          state={modal}
-          finishedList={finishedList}
-          rawList={rawList}
-          onSave={handleSave}
-          onClose={() => setModal(null)}
+      {showOverlay && (
+        <RecipeOverlay
+          editRecipe={editRecipe}
+          products={[...productMap.values()]}
+          fpId={fpId} setFpId={setFpId}
+          lines={lines} saving={saving} error={error}
+          onSave={handleSubmit}
+          onClose={() => setShowOverlay(false)}
+          onAddLine={addLine} onRemoveLine={removeLine}
+          onUpdateLine={updateLine} onSelectProduct={selectProduct}
         />
       )}
     </div>
