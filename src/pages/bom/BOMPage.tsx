@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  AlertCircle, BookOpen, ChevronDown, ChevronRight, PackagePlus,
-  Pencil, Plus, Search, Trash2, X,
+  AlertCircle, BookOpen, Check, ChevronDown, ChevronRight,
+  FileText, PackagePlus, Pencil, Plus, Search, Trash2, X,
 } from 'lucide-react';
 import { getRecipes, createRecipe, updateRecipe, deleteRecipe } from '@/services/production.service';
 import { getProducts } from '@/services/inventory.service';
@@ -23,7 +23,30 @@ const EMPTY_LINE = (): RecipeLine => ({
   search: '', showSuggestions: false, highlightIdx: -1,
 });
 
-// ── RecipeRow — inline search with suggestions ────────────────────
+// ── Import text parser ────────────────────────────────────────────
+type ImportRow = { product: Product | null; qty: number; raw: string };
+
+function parseImportText(text: string, products: Product[]): ImportRow[] {
+  return text.split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('#'))
+    .map(l => {
+      // Accept: "identifier, qty" | "identifier\tqty" | "identifier - qty" | "identifier qty"
+      const m = l.match(/^(.+?)[\t,;]+\s*(\d+(?:\.\d+)?)\s*$/)
+             ?? l.match(/^(.+?)\s+-\s+(\d+(?:\.\d+)?)\s*$/)
+             ?? l.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*$/);
+      if (!m) return { product: null, qty: 0, raw: l };
+      const identifier = m[1].trim().replace(/^["']|["']$/g, '');
+      const qty = Number(m[2]);
+      const product =
+        products.find(p => p.sku.toLowerCase() === identifier.toLowerCase()) ??
+        products.find(p => p.name.toLowerCase() === identifier.toLowerCase()) ??
+        null;
+      return { product, qty, raw: l };
+    });
+}
+
+// ── RecipeRow — inline search with grouped/filtered suggestions ───
 interface RecipeRowProps {
   line: RecipeLine;
   rowNum: number;
@@ -36,11 +59,17 @@ interface RecipeRowProps {
 }
 function RecipeRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemove, onQtyTab }: RecipeRowProps) {
   const q = line.search.toLowerCase();
-  const suggestions = line.search.length > 0
-    ? products.filter(p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)).slice(0, 10)
+  const filteredSuggestions = q.length > 0
+    ? products.filter(p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)).slice(0, 30)
     : [];
   const selected = products.find(p => p.id === line.productId);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Grouped view data (for empty-search state)
+  const groupedCats = Array.from(new Set(products.map(p => p.category ?? 'Other'))).sort();
+  const byCategory = Object.fromEntries(
+    groupedCats.map(c => [c, products.filter(p => (p.category ?? 'Other') === c)])
+  );
 
   useEffect(() => {
     if (!line.showSuggestions) return;
@@ -53,15 +82,17 @@ function RecipeRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemov
   }, [line.showSuggestions]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!line.showSuggestions || suggestions.length === 0) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); onUpdate({ highlightIdx: Math.min(line.highlightIdx + 1, suggestions.length - 1) }); }
+    if (!line.showSuggestions || filteredSuggestions.length === 0 || q.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); onUpdate({ highlightIdx: Math.min(line.highlightIdx + 1, filteredSuggestions.length - 1) }); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); onUpdate({ highlightIdx: Math.max(line.highlightIdx - 1, 0) }); }
     else if (e.key === 'Enter') {
       e.preventDefault();
-      const picked = suggestions[line.highlightIdx >= 0 ? line.highlightIdx : 0];
+      const picked = filteredSuggestions[line.highlightIdx >= 0 ? line.highlightIdx : 0];
       if (picked) onSelect(picked);
     } else if (e.key === 'Escape') { onUpdate({ showSuggestions: false }); }
   };
+
+  const showDropdown = line.showSuggestions && !line.productId;
 
   return (
     <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3 items-center px-4 py-2.5 rounded-xl border border-slate-100 bg-white hover:border-indigo-200 hover:shadow-sm transition-all group">
@@ -81,27 +112,58 @@ function RecipeRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemov
             onChange={e => onUpdate({ search: e.target.value, showSuggestions: true, highlightIdx: -1 })}
             onFocus={() => onUpdate({ showSuggestions: true })}
             onKeyDown={handleKeyDown}
-            placeholder="Type to search component…"
+            placeholder="Type to search or browse below…"
             autoComplete="off"
             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white"
           />
         )}
-        {line.showSuggestions && suggestions.length > 0 && !line.productId && (
+
+        {showDropdown && (
           <div className="absolute z-[300] left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden">
-            <div className="max-h-56 overflow-y-auto divide-y divide-slate-50">
-              {suggestions.map((p, si) => (
-                <button key={p.id} type="button" onMouseDown={() => onSelect(p)}
-                  className={`w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors ${si === line.highlightIdx ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
-                    <p className="text-xs text-slate-400 font-mono">{p.sku}</p>
+            {q.length > 0 ? (
+              filteredSuggestions.length > 0 ? (
+                <div className="max-h-60 overflow-y-auto divide-y divide-slate-50">
+                  {filteredSuggestions.map((p, si) => (
+                    <button key={p.id} type="button" onMouseDown={() => onSelect(p)}
+                      className={`w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors ${si === line.highlightIdx ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+                        <p className="text-xs text-slate-400 font-mono">{p.sku}</p>
+                      </div>
+                      <span className={`ml-3 text-xs font-semibold tabular-nums shrink-0 ${p.stock_level < 0 ? 'text-red-500' : p.stock_level === 0 ? 'text-orange-500' : 'text-slate-500'}`}>
+                        {p.stock_level} {p.unit}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="px-4 py-3 text-sm text-slate-400">No products match "{line.search}"</div>
+              )
+            ) : (
+              // Grouped by category when search is empty
+              <div className="max-h-72 overflow-y-auto">
+                {groupedCats.map(cat => (
+                  <div key={cat}>
+                    <div className="sticky top-0 px-4 py-1.5 bg-slate-50 border-b border-slate-100 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                      {cat}
+                      <span className="ml-2 font-normal text-slate-400">({byCategory[cat].length})</span>
+                    </div>
+                    {byCategory[cat].map(p => (
+                      <button key={p.id} type="button" onMouseDown={() => onSelect(p)}
+                        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 transition-colors">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+                          <p className="text-xs text-slate-400 font-mono">{p.sku}</p>
+                        </div>
+                        <span className={`ml-3 text-xs font-semibold tabular-nums shrink-0 ${p.stock_level < 0 ? 'text-red-500' : p.stock_level === 0 ? 'text-orange-500' : 'text-slate-500'}`}>
+                          {p.stock_level} {p.unit}
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                  <span className={`ml-3 text-xs font-semibold tabular-nums shrink-0 ${p.stock_level < 0 ? 'text-red-500' : p.stock_level === 0 ? 'text-orange-500' : 'text-slate-500'}`}>
-                    {p.stock_level} {p.unit}
-                  </span>
-                </button>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -145,19 +207,26 @@ interface RecipeOverlayProps {
   onRemoveLine: (i: number) => void;
   onUpdateLine: (i: number, patch: Partial<RecipeLine>) => void;
   onSelectProduct: (i: number, p: Product) => void;
+  onImport: (newLines: RecipeLine[]) => void;
 }
 function RecipeOverlay({
   editRecipe, products, fpId, setFpId, lines, saving, error,
-  onSave, onClose, onAddLine, onRemoveLine, onUpdateLine, onSelectProduct,
+  onSave, onClose, onAddLine, onRemoveLine, onUpdateLine, onSelectProduct, onImport,
 }: RecipeOverlayProps) {
   const qtyRefs = useRef<HTMLInputElement[]>([]);
   const pendingQuickAdd = useRef<{ idx: number; data: Partial<RecipeLine> } | null>(null);
   const [quickSearch, setQuickSearch] = useState('');
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
 
-  const rawMats     = products.filter(p => p.type === 'RAW');
+  // Import from text state
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importResult, setImportResult] = useState<ImportRow[]>([]);
+  const [importParsed, setImportParsed] = useState(false);
+
+  const rawMats      = products.filter(p => p.type === 'RAW');
   const finishedGoods = products.filter(p => p.type === 'FINISHED');
-  const validCount  = lines.filter(l => l.productId && Number(l.quantity) > 0).length;
+  const validCount   = lines.filter(l => l.productId && Number(l.quantity) > 0).length;
 
   useEffect(() => {
     if (!pendingQuickAdd.current) return;
@@ -208,6 +277,19 @@ function RecipeOverlay({
     prev.has(cat) ? next.delete(cat) : next.add(cat);
     return next;
   });
+
+  const closeImport = () => { setShowImport(false); setImportText(''); setImportResult([]); setImportParsed(false); };
+
+  const handleImportConfirm = () => {
+    const matched = importResult.filter(r => r.product && r.qty > 0);
+    onImport(matched.map(r => ({
+      productId: r.product!.id, productName: r.product!.name, sku: r.product!.sku,
+      quantity: String(r.qty), search: r.product!.name, showSuggestions: false, highlightIdx: -1,
+    })));
+    closeImport();
+  };
+
+  const matchCount = importResult.filter(r => r.product && r.qty > 0).length;
 
   return (
     <div className="fixed inset-0 z-[100] bg-white flex flex-col overflow-hidden">
@@ -317,10 +399,16 @@ function RecipeOverlay({
           </div>
 
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50 shrink-0">
-            <button type="button" onClick={onAddLine}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-dashed border-slate-300 text-sm font-semibold text-slate-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
-              <Plus size={15} /> Add Line
-            </button>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={onAddLine}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-dashed border-slate-300 text-sm font-semibold text-slate-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
+                <Plus size={15} /> Add Line
+              </button>
+              <button type="button" onClick={() => setShowImport(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-500 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50 transition-colors bg-white">
+                <FileText size={15} /> Import from text
+              </button>
+            </div>
             {validCount > 0 && (
               <p className="text-sm font-semibold text-slate-500">
                 {validCount} component{validCount !== 1 ? 's' : ''}
@@ -329,16 +417,106 @@ function RecipeOverlay({
           </div>
         </div>
       </div>
+
+      {/* Import from text panel */}
+      {showImport && (
+        <div className="absolute inset-0 z-[200] bg-black/40 flex items-center justify-center p-6">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h2 className="text-base font-bold text-slate-800">Import from text</h2>
+              <button onClick={closeImport}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+
+            {!importParsed ? (
+              <div className="flex-1 overflow-auto p-6 flex flex-col gap-4">
+                <p className="text-sm text-slate-500">
+                  One component per line — SKU or product name, then quantity.
+                  Supports commas, tabs, dashes, or spaces as separators.
+                </p>
+                <div className="font-mono text-xs text-slate-400 bg-slate-50 border border-slate-100 rounded-lg px-4 py-3 leading-relaxed">
+                  SKU-001, 100<br />
+                  SKU-002{'  '}50<br />
+                  Product Name - 25<br />
+                  "Another Product", 10
+                </div>
+                <textarea
+                  value={importText}
+                  onChange={e => setImportText(e.target.value)}
+                  rows={8}
+                  placeholder="Paste your list here…"
+                  autoFocus
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400"
+                />
+                <div className="flex justify-end gap-2">
+                  <button onClick={closeImport}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold text-slate-500 hover:bg-slate-100 transition-colors">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => { setImportResult(parseImportText(importText, rawMats)); setImportParsed(true); }}
+                    disabled={!importText.trim()}
+                    className="px-5 py-2 rounded-lg text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors">
+                    Parse →
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-auto p-6 flex flex-col gap-4">
+                <div className="flex items-center gap-2 text-sm text-slate-500">
+                  <span className="font-semibold text-emerald-600">{matchCount} matched</span>
+                  {importResult.length - matchCount > 0 && (
+                    <span className="text-red-500">· {importResult.length - matchCount} not found</span>
+                  )}
+                </div>
+                <div className="space-y-1 overflow-y-auto max-h-72">
+                  {importResult.map((r, i) => (
+                    <div key={i} className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm ${r.product && r.qty > 0 ? 'bg-emerald-50 border border-emerald-100' : 'bg-red-50 border border-red-100'}`}>
+                      {r.product && r.qty > 0
+                        ? <Check size={14} className="text-emerald-600 shrink-0" />
+                        : <AlertCircle size={14} className="text-red-500 shrink-0" />}
+                      <span className="flex-1 font-mono text-slate-500 truncate text-xs">{r.raw}</span>
+                      {r.product && r.qty > 0 ? (
+                        <span className="text-slate-700 shrink-0 font-medium">
+                          {r.product.name} <span className="text-slate-400">× {r.qty}</span>
+                        </span>
+                      ) : (
+                        <span className="text-red-500 shrink-0">
+                          {r.qty <= 0 ? 'Invalid qty' : 'Not found'}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button onClick={() => setImportParsed(false)}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold text-slate-500 hover:bg-slate-100 transition-colors">
+                    ← Edit
+                  </button>
+                  <button
+                    onClick={handleImportConfirm}
+                    disabled={matchCount === 0}
+                    className="px-5 py-2 rounded-lg text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors">
+                    Import {matchCount} line{matchCount !== 1 ? 's' : ''}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Main page ─────────────────────────────────────────────────────
 export default function BOMPage() {
-  const [recipes, setRecipes]     = useState<Recipe[]>([]);
+  const [recipes, setRecipes]       = useState<Recipe[]>([]);
   const [productMap, setProductMap] = useState<Map<string, Product>>(new Map());
-  const [loading, setLoading]     = useState(true);
-  const [expanded, setExpanded]   = useState<Set<string>>(new Set());
+  const [loading, setLoading]       = useState(true);
+  const [expanded, setExpanded]     = useState<Set<string>>(new Set());
 
   const [showOverlay, setShowOverlay] = useState(false);
   const [editRecipe, setEditRecipe]   = useState<Recipe | null>(null);
@@ -360,6 +538,7 @@ export default function BOMPage() {
   useEffect(() => { load(); }, []);
 
   const finishedList = [...productMap.values()].filter(p => p.type === 'FINISHED').sort((a, b) => a.name.localeCompare(b.name));
+  void finishedList; // used in overlay via products prop
 
   const addLine    = () => setLines(l => [...l, EMPTY_LINE()]);
   const removeLine = (i: number) => setLines(l => l.length === 1 ? [EMPTY_LINE()] : l.filter((_, idx) => idx !== i));
@@ -369,6 +548,12 @@ export default function BOMPage() {
     setLines(l => l.map((row, idx) => idx === i
       ? { ...row, productId: p.id, productName: p.name, sku: p.sku, search: p.name, showSuggestions: false, highlightIdx: -1 }
       : row));
+  const importLines = (imported: RecipeLine[]) => {
+    setLines(current => {
+      const nonEmpty = current.filter(l => l.productId);
+      return nonEmpty.length > 0 ? [...nonEmpty, ...imported] : imported;
+    });
+  };
 
   const openCreate = () => {
     setEditRecipe(null); setFpId(''); setLines([EMPTY_LINE()]); setError(''); setShowOverlay(true);
@@ -533,6 +718,7 @@ export default function BOMPage() {
           onClose={() => setShowOverlay(false)}
           onAddLine={addLine} onRemoveLine={removeLine}
           onUpdateLine={updateLine} onSelectProduct={selectProduct}
+          onImport={importLines}
         />
       )}
     </div>
