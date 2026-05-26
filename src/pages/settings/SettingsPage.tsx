@@ -8,7 +8,7 @@ import {
   getProducts, getProductsFresh, upsertProduct,
   deleteAllMovements, resetAllStockToZero,
   updateProduct, deleteProduct, recalculateStockFromMovements,
-  backfillPurchaseMovements,
+  backfillPurchaseMovements, deletePhantomAdjustmentMovements,
 } from '@/services/inventory.service';
 import { getOrders, deleteAllOrders } from '@/services/orders.service';
 import {
@@ -154,10 +154,13 @@ export default function SettingsPage() {
   });
 
   const handleRecalculate = () => run(setOpRecalc, async () => {
+    const phantoms = await deletePhantomAdjustmentMovements();
     const filled = await backfillPurchaseMovements();
     const count = await recalculateStockFromMovements();
-    const extra = filled > 0 ? ` · Restored ${filled} missing movement(s)` : '';
-    return `Stock recalculated for ${count} product(s)${extra}.`;
+    const msgs: string[] = [];
+    if (phantoms > 0) msgs.push(`Removed ${phantoms} phantom movement(s)`);
+    if (filled > 0) msgs.push(`Restored ${filled} missing movement(s)`);
+    return `Stock recalculated for ${count} product(s)${msgs.length ? ' · ' + msgs.join(' · ') : ''}.`;
   });
 
   const PACKAGING_SKUS = new Set(PACKAGING.map(p => p.sku));

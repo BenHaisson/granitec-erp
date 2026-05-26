@@ -181,6 +181,23 @@ export const resetAllStockToZero = async (): Promise<void> => {
   }
 };
 
+export const deletePhantomAdjustmentMovements = async (): Promise<number> => {
+  const snap = await getDocs(
+    query(collection(db, 'inventory_movements'), where('reason', '==', 'ADJUSTMENT'))
+  );
+  const phantoms = snap.docs.filter(d => {
+    const note = (d.data().note as string) ?? '';
+    return note.startsWith('Order deleted:') || note.startsWith('Order edited:');
+  });
+  const CHUNK = 400;
+  for (let i = 0; i < phantoms.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    phantoms.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+  return phantoms.length;
+};
+
 export const backfillPurchaseMovements = async (): Promise<number> => {
   const [ordersSnap, movsSnap] = await Promise.all([
     getDocs(collection(db, 'shipping_orders')),
