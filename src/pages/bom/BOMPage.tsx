@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  AlertCircle, BookOpen, Check, ChevronDown, ChevronRight,
+  AlertCircle, BookOpen, Check, ChevronDown,
   Copy, FileText, PackagePlus, Pencil, Plus, Search, Trash2, X,
 } from 'lucide-react';
 import { getRecipes, createRecipe, updateRecipe, deleteRecipe } from '@/services/production.service';
@@ -31,7 +31,6 @@ function parseImportText(text: string, products: Product[]): ImportRow[] {
     .map(l => l.trim())
     .filter(l => l && !l.startsWith('#'))
     .map(l => {
-      // Accept: "identifier, qty" | "identifier\tqty" | "identifier - qty" | "identifier qty"
       const m = l.match(/^(.+?)[\t,;]+\s*(\d+(?:\.\d+)?)\s*$/)
              ?? l.match(/^(.+?)\s+-\s+(\d+(?:\.\d+)?)\s*$/)
              ?? l.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*$/);
@@ -44,6 +43,77 @@ function parseImportText(text: string, products: Product[]): ImportRow[] {
         null;
       return { product, qty, raw: l };
     });
+}
+
+// ── Color grouping for finished products ─────────────────────────
+const FINISHED_COLOR_NAMES = [
+  'Granite Black', 'Granite Gray', 'Granite Cream',
+  'Ceramic Black', 'Ceramic Red', 'Ceramic Blue',
+  'Black', 'Gray', 'Cream', 'Red', 'Blue',
+] as const;
+type FinishedColor = typeof FINISHED_COLOR_NAMES[number];
+
+const FINISHED_COLOR_DOT: Record<FinishedColor, string> = {
+  'Granite Black': 'bg-gray-900',
+  'Granite Gray':  'bg-gray-400',
+  'Granite Cream': 'bg-amber-100 border border-amber-300',
+  'Ceramic Black': 'bg-gray-900',
+  'Ceramic Red':   'bg-red-500',
+  'Ceramic Blue':  'bg-blue-500',
+  Black:  'bg-gray-900',
+  Gray:   'bg-gray-400',
+  Cream:  'bg-amber-100 border border-amber-300',
+  Red:    'bg-red-500',
+  Blue:   'bg-blue-500',
+};
+
+function extractFinishedColor(name: string): { base: string; color: FinishedColor } | null {
+  for (const color of FINISHED_COLOR_NAMES) {
+    if (name.endsWith(color))
+      return { base: name.slice(0, name.length - color.length).replace(/[\s—\-]+$/, '').trim(), color };
+  }
+  return null;
+}
+
+type RecipeVariant = {
+  recipe: Recipe;
+  finished: Product;
+  color: FinishedColor | null;
+  qty: number;
+  feasible: boolean;
+};
+type RecipeGroup = {
+  key: string;
+  base: string;
+  category: string;
+  variants: RecipeVariant[];
+};
+
+function buildRecipeGroups(
+  recipes: Recipe[],
+  productMap: Map<string, Product>,
+  producibleFn: (r: Recipe) => number,
+): RecipeGroup[] {
+  const map = new Map<string, RecipeGroup>();
+  for (const r of recipes) {
+    const finished = productMap.get(r.finishedProductId);
+    if (!finished) continue;
+    const parsed = extractFinishedColor(finished.name);
+    const base  = parsed ? parsed.base  : finished.name;
+    const color = parsed ? parsed.color : null;
+    const cat   = finished.category ?? 'Other';
+    const key   = `${base}__${cat}`;
+    if (!map.has(key)) map.set(key, { key, base, category: cat, variants: [] });
+    const qty = producibleFn(r);
+    map.get(key)!.variants.push({ recipe: r, finished, color, qty, feasible: isFinite(qty) && qty > 0 });
+  }
+  return Array.from(map.values()).map(g => ({
+    ...g,
+    variants: g.variants.sort((a, b) =>
+      FINISHED_COLOR_NAMES.indexOf(a.color as FinishedColor) -
+      FINISHED_COLOR_NAMES.indexOf(b.color as FinishedColor)
+    ),
+  }));
 }
 
 // ── RecipeRow — inline search with grouped/filtered suggestions ───
@@ -65,7 +135,6 @@ function RecipeRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemov
   const selected = products.find(p => p.id === line.productId);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Grouped view data (for empty-search state)
   const groupedCats = Array.from(new Set(products.map(p => p.category ?? 'Other'))).sort();
   const byCategory = Object.fromEntries(
     groupedCats.map(c => [c, products.filter(p => (p.category ?? 'Other') === c)])
@@ -140,7 +209,6 @@ function RecipeRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemov
                 <div className="px-4 py-3 text-sm text-slate-400">No products match "{line.search}"</div>
               )
             ) : (
-              // Grouped by category when search is empty
               <div className="max-h-72 overflow-y-auto">
                 {groupedCats.map(cat => (
                   <div key={cat}>
@@ -196,9 +264,9 @@ function RecipeRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemov
 // ── Finished-product picker with collapsible categories ──────────
 const FP_CAT_PRIORITY = (cat: string): string => {
   const l = cat.toLowerCase();
-  if (l.includes('set') || l.includes('pack'))     return '0' + l;
+  if (l.includes('set') || l.includes('pack'))          return '0' + l;
   if (l.includes('marmite') || l.includes('casserole')) return '1' + l;
-  if (l.includes('crêpe') || l.includes('crepe'))  return '2' + l;
+  if (l.includes('crêpe') || l.includes('crepe'))       return '2' + l;
   return '9' + l;
 };
 
@@ -208,8 +276,8 @@ interface FpSelectProps {
   products: Product[];
 }
 function FpSelect({ value, onChange, products }: FpSelectProps) {
-  const [open, setOpen]         = useState(false);
-  const [search, setSearch]     = useState('');
+  const [open, setOpen]           = useState(false);
+  const [search, setSearch]       = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const selected = products.find(p => p.id === value);
@@ -315,15 +383,14 @@ function RecipeOverlay({
   const [quickSearch, setQuickSearch] = useState('');
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
 
-  // Import from text state
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState('');
   const [importResult, setImportResult] = useState<ImportRow[]>([]);
   const [importParsed, setImportParsed] = useState(false);
 
-  const rawMats      = products.filter(p => p.type === 'RAW');
+  const rawMats       = products.filter(p => p.type === 'RAW');
   const finishedGoods = products.filter(p => p.type === 'FINISHED');
-  const validCount   = lines.filter(l => l.productId && Number(l.quantity) > 0).length;
+  const validCount    = lines.filter(l => l.productId && Number(l.quantity) > 0).length;
 
   useEffect(() => {
     if (!pendingQuickAdd.current) return;
@@ -390,7 +457,6 @@ function RecipeOverlay({
 
   return (
     <div className="fixed inset-0 z-[100] bg-white flex flex-col overflow-hidden">
-      {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
         <div className="flex items-center gap-4">
           <button onClick={onClose}
@@ -424,7 +490,6 @@ function RecipeOverlay({
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
         <aside className="w-64 shrink-0 border-r border-slate-100 flex flex-col overflow-hidden bg-slate-50">
           <div className="px-3 pt-3 pb-2 shrink-0">
             <div className="relative">
@@ -463,7 +528,6 @@ function RecipeOverlay({
           </div>
         </aside>
 
-        {/* Main content */}
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3 px-4 py-2.5 border-b border-slate-100 bg-slate-50 shrink-0 text-xs font-bold text-slate-400 uppercase tracking-widest">
             <span className="text-center">#</span>
@@ -509,7 +573,6 @@ function RecipeOverlay({
         </div>
       </div>
 
-      {/* Import from text panel */}
       {showImport && (
         <div className="absolute inset-0 z-[200] bg-black/40 flex items-center justify-center p-6">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
@@ -602,59 +665,147 @@ function RecipeOverlay({
   );
 }
 
-// ── Recipe catalogue card ─────────────────────────────────────────
-interface RecipeCardProps {
-  recipe: Recipe;
-  finished: Product | undefined;
-  qty: number;
-  feasible: boolean;
-  onClone: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
+// ── Grouped recipe catalogue card ─────────────────────────────────
+interface GroupedRecipeCardProps {
+  group: RecipeGroup;
+  expanded: boolean;
+  onToggle: () => void;
+  onClone: (r: Recipe) => void;
+  onEdit: (r: Recipe) => void;
+  onDelete: (r: Recipe) => void;
+  productMap: Map<string, Product>;
 }
-function RecipeCard({ recipe, finished, qty, feasible, onClone, onEdit, onDelete }: RecipeCardProps) {
+function GroupedRecipeCard({ group, expanded, onToggle, onClone, onEdit, onDelete, productMap }: GroupedRecipeCardProps) {
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (expanded && cardRef.current) {
+      setTimeout(() => cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 280);
+    }
+  }, [expanded]);
+
+  const imageUrl = group.variants.find(v => v.finished.imageUrl)?.finished.imageUrl;
+  const multi    = group.variants.length > 1;
+
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden hover:shadow-md transition-shadow group flex flex-col">
-      {/* Image / placeholder */}
-      <div className="relative h-40 bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center overflow-hidden shrink-0">
-        {finished?.imageUrl ? (
-          <img src={finished.imageUrl} alt={finished.name} className="w-full h-full object-cover" />
-        ) : (
-          <div className="flex flex-col items-center gap-1.5 select-none">
-            <BookOpen size={36} className="text-slate-200" />
-            <span className="text-[10px] font-mono text-slate-300">{finished?.sku ?? '—'}</span>
+    <div ref={cardRef}
+      className={`bg-white rounded-2xl border shadow-sm overflow-hidden transition-all flex flex-col ${expanded ? 'border-indigo-200 shadow-md ring-1 ring-indigo-100' : 'border-slate-100 hover:shadow-md'}`}>
+
+      {/* Clickable header */}
+      <div className="cursor-pointer select-none" onClick={onToggle}>
+        {/* Image area */}
+        <div className="relative h-36 bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center overflow-hidden shrink-0">
+          {imageUrl ? (
+            <img src={imageUrl} alt={group.base} className="w-full h-full object-cover" />
+          ) : (
+            <div className="flex flex-col items-center gap-1.5">
+              <BookOpen size={30} className="text-slate-200" />
+            </div>
+          )}
+          {/* Expand chevron */}
+          <div className={`absolute top-2 left-2 p-1 rounded-full bg-white/80 backdrop-blur-sm shadow-sm transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`}>
+            <ChevronDown size={11} className="text-slate-500" />
           </div>
-        )}
-        {/* Producible badge */}
-        <div className={`absolute top-2 right-2 text-xs font-bold px-2 py-0.5 rounded-full shadow-sm ${feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-          {feasible ? `${qty} producible` : 'No stock'}
+          {/* Producible badges */}
+          <div className="absolute top-2 right-2 flex flex-col gap-0.5 items-end">
+            {group.variants.map(v => (
+              <div key={v.recipe.id} className={`flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-sm ${v.feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                {v.color && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${FINISHED_COLOR_DOT[v.color]}`} />}
+                {v.feasible ? `${v.qty}` : '0'}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Compact body */}
+        <div className="px-3 pt-2.5 pb-3">
+          <p className="text-sm font-bold text-slate-800 leading-tight truncate">{group.base}</p>
+
+          {/* Color pills */}
+          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+            {group.variants.map(v => (
+              <div key={v.recipe.id} className="flex items-center gap-1">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${v.color ? FINISHED_COLOR_DOT[v.color] : 'bg-slate-300'}`} />
+                <span className="text-[10px] font-mono text-slate-400">{v.finished.sku}</span>
+              </div>
+            ))}
+          </div>
+
+          {!multi && (
+            <p className="text-[10px] text-slate-400 mt-1">
+              {group.variants[0].recipe.components.length} component{group.variants[0].recipe.components.length !== 1 ? 's' : ''}
+            </p>
+          )}
         </div>
       </div>
 
-      {/* Body */}
-      <div className="p-3 flex flex-col flex-1">
-        <p className="text-sm font-semibold text-slate-800 truncate leading-tight">
-          {finished?.name ?? recipe.finishedProductId}
-        </p>
-        <p className="text-xs font-mono text-slate-400 mt-0.5">{finished?.sku ?? '—'}</p>
-        <p className="text-xs text-slate-400 mt-1.5">
-          {recipe.components.length} component{recipe.components.length !== 1 ? 's' : ''}
-        </p>
+      {/* Animated detail panel */}
+      <div className={`grid transition-all duration-300 ease-in-out ${expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+        <div className="overflow-hidden">
+          <div className="border-t border-slate-100 px-3 py-3 space-y-4">
+            {group.variants.map(v => {
+              return (
+                <div key={v.recipe.id}>
+                  {/* Variant header row */}
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                      {v.color && (
+                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${FINISHED_COLOR_DOT[v.color]}`} />
+                      )}
+                      <span className="text-xs font-bold text-slate-700">{v.color ?? v.finished.name}</span>
+                      <span className="font-mono text-[10px] text-slate-400 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded leading-none">
+                        {v.finished.sku}
+                      </span>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${v.feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                        {v.feasible ? `${v.qty} prod.` : 'No stock'}
+                      </span>
+                    </div>
+                    {/* Per-variant actions */}
+                    <div className="flex gap-0.5 shrink-0 ml-1">
+                      <button onClick={e => { e.stopPropagation(); onClone(v.recipe); }} title="Clone"
+                        className="p-1 rounded text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 transition-colors">
+                        <Copy size={11} />
+                      </button>
+                      <button onClick={e => { e.stopPropagation(); onEdit(v.recipe); }} title="Edit"
+                        className="p-1 rounded text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
+                        <Pencil size={11} />
+                      </button>
+                      <button onClick={e => { e.stopPropagation(); onDelete(v.recipe); }} title="Delete"
+                        className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors">
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  </div>
 
-        {/* Actions — visible on hover */}
-        <div className="flex items-center gap-1 mt-3 pt-2 border-t border-slate-50 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={onClone} title="Clone"
-            className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold text-emerald-600 hover:bg-emerald-50 transition-colors">
-            <Copy size={12} /> Clone
-          </button>
-          <button onClick={onEdit}
-            className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 hover:bg-indigo-50 transition-colors">
-            <Pencil size={12} /> Edit
-          </button>
-          <button onClick={onDelete}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors">
-            <Trash2 size={12} />
-          </button>
+                  {/* Component mini-table */}
+                  <div className="rounded-lg border border-slate-100 overflow-hidden text-[10px]">
+                    <div className="grid grid-cols-[1fr_72px_40px_50px] bg-slate-50 px-2 py-1 font-bold uppercase tracking-wider text-slate-400">
+                      <span>Component</span>
+                      <span>SKU</span>
+                      <span className="text-right">Qty</span>
+                      <span className="text-right">Stock</span>
+                    </div>
+                    <div className="divide-y divide-slate-50">
+                      {v.recipe.components.map(c => {
+                        const prod = productMap.get(c.productId);
+                        const ok   = prod ? prod.stock_level >= c.quantity : false;
+                        return (
+                          <div key={c.productId} className="grid grid-cols-[1fr_72px_40px_50px] px-2 py-1.5 items-center">
+                            <span className="text-slate-700 truncate font-medium">{prod?.name ?? c.productId}</span>
+                            <span className="font-mono text-slate-400 truncate">{prod?.sku ?? ''}</span>
+                            <span className="text-right tabular-nums text-slate-600 font-bold">{c.quantity}</span>
+                            <span className={`text-right tabular-nums font-semibold ${ok ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {prod ? prod.stock_level.toLocaleString() : '?'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
@@ -666,9 +817,9 @@ export default function BOMPage() {
   const [recipes, setRecipes]       = useState<Recipe[]>([]);
   const [productMap, setProductMap] = useState<Map<string, Product>>(new Map());
   const [loading, setLoading]       = useState(true);
-  const [expanded, setExpanded]     = useState<Set<string>>(new Set());
 
   const [collapsedRecipeCats, setCollapsedRecipeCats] = useState<Set<string>>(new Set());
+  const [expandedGroupKey, setExpandedGroupKey]       = useState<string | null>(null);
 
   const [showOverlay, setShowOverlay] = useState(false);
   const [editRecipe, setEditRecipe]   = useState<Recipe | null>(null);
@@ -688,9 +839,6 @@ export default function BOMPage() {
   };
 
   useEffect(() => { load(); }, []);
-
-  const finishedList = [...productMap.values()].filter(p => p.type === 'FINISHED').sort((a, b) => a.name.localeCompare(b.name));
-  void finishedList; // used in overlay via products prop
 
   const addLine    = () => setLines(l => [...l, EMPTY_LINE()]);
   const removeLine = (i: number) => setLines(l => l.length === 1 ? [EMPTY_LINE()] : l.filter((_, idx) => idx !== i));
@@ -757,12 +905,6 @@ export default function BOMPage() {
     return next;
   });
 
-  const toggleExpand = (id: string) => setExpanded(prev => {
-    const next = new Set(prev);
-    next.has(id) ? next.delete(id) : next.add(id);
-    return next;
-  });
-
   const producible = (recipe: Recipe) =>
     recipe.components.reduce((min, c) => {
       const p = productMap.get(c.productId);
@@ -773,6 +915,16 @@ export default function BOMPage() {
   if (loading) {
     return <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Loading…</div>;
   }
+
+  // Build grouped + merged catalogue data
+  const allGroups = buildRecipeGroups(recipes, productMap, producible);
+  const catMap = new Map<string, RecipeGroup[]>();
+  for (const g of allGroups) {
+    if (!catMap.has(g.category)) catMap.set(g.category, []);
+    catMap.get(g.category)!.push(g);
+  }
+  const sortedCats = Array.from(catMap.keys())
+    .sort((a, b) => FP_CAT_PRIORITY(a).localeCompare(FP_CAT_PRIORITY(b)));
 
   return (
     <div className="space-y-6">
@@ -795,58 +947,41 @@ export default function BOMPage() {
           <p className="text-slate-500 font-medium">No BOM recipes yet</p>
           <p className="text-slate-400 text-sm mt-1">Click <span className="font-semibold text-slate-500">New Recipe</span> to define a bill of materials</p>
         </div>
-      ) : (() => {
-        const recipeGroups = Array.from(
-          recipes.reduce((map, r) => {
-            const cat = productMap.get(r.finishedProductId)?.category ?? 'Other';
-            if (!map.has(cat)) map.set(cat, [] as Recipe[]);
-            map.get(cat)!.push(r);
-            return map;
-          }, new Map<string, Recipe[]>())
-        )
-          .map(([cat, items]) => ({ cat, items }))
-          .sort((a, b) => FP_CAT_PRIORITY(a.cat).localeCompare(FP_CAT_PRIORITY(b.cat)));
-
-        return (
-          <div className="space-y-6">
-            {recipeGroups.map(({ cat, items }) => {
-              const isCatCollapsed = collapsedRecipeCats.has(cat);
-              return (
-                <div key={cat}>
-                  <button onClick={() => toggleRecipeCat(cat)}
-                    className="flex items-center gap-2 w-full px-1 py-1.5 mb-3 text-left hover:opacity-80 transition-opacity">
-                    <ChevronDown size={13} className={`text-slate-400 transition-transform shrink-0 ${isCatCollapsed ? '-rotate-90' : ''}`} />
-                    <span className="text-xs font-bold uppercase tracking-widest text-slate-500">{cat}</span>
-                    <span className="text-xs text-slate-400">({items.length})</span>
-                    <div className="flex-1 h-px bg-slate-100 ml-1" />
-                  </button>
-                  {!isCatCollapsed && (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                      {items.map(recipe => {
-                        const finished = productMap.get(recipe.finishedProductId);
-                        const qty = producible(recipe);
-                        const feasible = isFinite(qty) && qty > 0;
-                        return (
-                          <RecipeCard
-                            key={recipe.id}
-                            recipe={recipe}
-                            finished={finished}
-                            qty={qty}
-                            feasible={feasible}
-                            onClone={() => handleClone(recipe)}
-                            onEdit={() => openEdit(recipe)}
-                            onDelete={() => handleDelete(recipe)}
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })()}
+      ) : (
+        <div className="space-y-6">
+          {sortedCats.map(cat => {
+            const groups = catMap.get(cat)!;
+            const isCatCollapsed = collapsedRecipeCats.has(cat);
+            return (
+              <div key={cat}>
+                <button onClick={() => toggleRecipeCat(cat)}
+                  className="flex items-center gap-2 w-full px-1 py-1.5 mb-3 text-left hover:opacity-80 transition-opacity">
+                  <ChevronDown size={13} className={`text-slate-400 transition-transform shrink-0 ${isCatCollapsed ? '-rotate-90' : ''}`} />
+                  <span className="text-xs font-bold uppercase tracking-widest text-slate-500">{cat}</span>
+                  <span className="text-xs text-slate-400">({groups.length})</span>
+                  <div className="flex-1 h-px bg-slate-100 ml-1" />
+                </button>
+                {!isCatCollapsed && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 items-start">
+                    {groups.map(group => (
+                      <GroupedRecipeCard
+                        key={group.key}
+                        group={group}
+                        expanded={expandedGroupKey === group.key}
+                        onToggle={() => setExpandedGroupKey(k => k === group.key ? null : group.key)}
+                        onClone={handleClone}
+                        onEdit={openEdit}
+                        onDelete={handleDelete}
+                        productMap={productMap}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {showOverlay && (
         <RecipeOverlay
