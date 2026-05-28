@@ -5,7 +5,7 @@ import {
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '@/firebase/config';
 import type { ShippingOrder, ShippingOrderLine } from '@/types';
-import { receiveSupplyBatch } from './inventory.service';
+import { receiveSupplyBatch, reconcileUnverifiedStock } from './inventory.service';
 
 const sanitizeFileName = (name: string) => name.replace(/[^a-zA-Z0-9._-]/g, '_');
 
@@ -43,13 +43,26 @@ export const createShippingOrder = async (
 
 export const receiveShippingOrder = async (
   order: ShippingOrder,
-  receipt?: { blNumber?: string; remarks?: string; documentUrl?: string; documentName?: string }
+  receipt?: { blNumber?: string; remarks?: string; documentUrl?: string; documentName?: string },
+  reconcileProductIds?: Set<string>
 ): Promise<void> => {
-  await receiveSupplyBatch(
-    order.lines.map(l => ({ productId: l.productId, qty: l.qty })),
-    order.ref,
-    new Date(order.date)
-  );
+  const normalLines    = order.lines.filter(l => !reconcileProductIds?.has(l.productId));
+  const reconcileLines = order.lines.filter(l => reconcileProductIds?.has(l.productId));
+
+  // Normal lines — add to stock_level + create PURCHASE movements
+  if (normalLines.length > 0) {
+    await receiveSupplyBatch(
+      normalLines.map(l => ({ productId: l.productId, qty: l.qty })),
+      order.ref,
+      new Date(order.date)
+    );
+  }
+
+  // Reconcile lines — reduce unverified_stock only, no stock_level change
+  for (const line of reconcileLines) {
+    await reconcileUnverifiedStock(line.productId, line.qty);
+  }
+
   const update: Record<string, unknown> = { status: 'RECEIVED', receivedAt: Timestamp.now() };
   if (receipt?.blNumber) update.blNumber = receipt.blNumber;
   if (receipt?.remarks) update.remarks = receipt.remarks;

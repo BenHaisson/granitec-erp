@@ -573,18 +573,21 @@ function CreateOrderOverlay({
 // ── Receive Modal ─────────────────────────────────────────────────
 interface ReceiveModalProps {
   order: ShippingOrder;
-  onConfirm: (data: { blNumber: string; remarks: string; file: File | null }) => Promise<void>;
+  productMap: Map<string, Product>;
+  onConfirm: (data: { blNumber: string; remarks: string; file: File | null; reconcileProductIds: Set<string> }) => Promise<void>;
   onClose: () => void;
 }
-function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
+function ReceiveModal({ order, productMap, onConfirm, onClose }: ReceiveModalProps) {
   const [blNumber, setBlNumber] = useState('');
   const [remarks, setRemarks] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [reconcileSet, setReconcileSet] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
+  const linesWithUnverified = order.lines.filter(l => (productMap.get(l.productId)?.unverified_stock ?? 0) > 0);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -596,7 +599,7 @@ function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
     setSaving(true);
     setError('');
     try {
-      await onConfirm({ blNumber, remarks, file });
+      await onConfirm({ blNumber, remarks, file, reconcileProductIds: reconcileSet });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to mark as received.');
       setSaving(false);
@@ -623,6 +626,50 @@ function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
 
         {/* Body */}
         <div className="px-6 py-5 space-y-4">
+
+          {/* Unverified stock reconciliation */}
+          {linesWithUnverified.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 space-y-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Unverified Stock</p>
+                <p className="text-xs text-amber-600 mt-0.5">
+                  Some products in this order have unverified stock. Choose what this shipment does for each:
+                </p>
+              </div>
+              {linesWithUnverified.map(line => {
+                const prod = productMap.get(line.productId);
+                const isReconcile = reconcileSet.has(line.productId);
+                const toggle = (reconcile: boolean) => setReconcileSet(s => {
+                  const n = new Set(s);
+                  reconcile ? n.add(line.productId) : n.delete(line.productId);
+                  return n;
+                });
+                return (
+                  <div key={line.productId} className="space-y-1.5">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-semibold text-slate-700 truncate">{line.productName}</span>
+                      <span className="text-slate-500 tabular-nums shrink-0 ml-2">{line.qty} {prod?.unit ?? 'pcs'}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => toggle(false)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                          !isReconcile ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                        }`}>
+                        Add to live stock
+                      </button>
+                      <button type="button" onClick={() => toggle(true)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                          isReconcile ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                        }`}>
+                        Back unverified ({prod?.unverified_stock} {prod?.unit ?? 'pcs'})
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* BL Number */}
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">
@@ -1384,7 +1431,7 @@ export default function ShippingPage() {
     setReceivingOrder(order);
   };
 
-  const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null }) => {
+  const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null; reconcileProductIds: Set<string> }) => {
     if (!receivingOrder) return;
     setReceiving(s => new Set(s).add(receivingOrder.id));
     let documentUrl: string | undefined;
@@ -1399,7 +1446,7 @@ export default function ShippingPage() {
       remarks: data.remarks.trim() || undefined,
       documentUrl,
       documentName,
-    });
+    }, data.reconcileProductIds);
     setReceiving(s => { const n = new Set(s); n.delete(receivingOrder.id); return n; });
     setReceivingOrder(null);
     await load();
@@ -1614,6 +1661,7 @@ export default function ShippingPage() {
       {receivingOrder && (
         <ReceiveModal
           order={receivingOrder}
+          productMap={new Map(allProducts.map(p => [p.id, p]))}
           onConfirm={handleReceiveConfirm}
           onClose={() => setReceivingOrder(null)}
         />
