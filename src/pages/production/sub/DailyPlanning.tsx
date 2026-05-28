@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, Pencil, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { getTargets, createTarget, updateTarget, deleteTarget } from '@/services/productionTargets.service';
-import { getRecipes, checkFeasibility } from '@/services/production.service';
+import { getRecipes, checkFeasibility, startProductionTarget, completeProductionTarget } from '@/services/production.service';
 import { getProducts, addUnverifiedStock } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
 import type { ProductionTarget, ProductionStage, Recipe, Product } from '@/types';
@@ -181,6 +181,27 @@ export default function DailyPlanning() {
     load();
   };
 
+  const handleStart = async (t: ProductionTarget) => {
+    const recipe = recipes.find(r => r.id === t.recipeId);
+    if (!recipe) { alert('Recipe not found.'); return; }
+    if (!confirm(`Start production of "${t.recipeName}" × ${t.targetQty} sets?\n\nThis will deduct raw materials from inventory immediately and cannot be undone.`)) return;
+    try {
+      await startProductionTarget(t, recipe);
+      load();
+    } catch (e) { alert(`Failed to start: ${e instanceof Error ? e.message : 'Unknown error'}`); }
+  };
+
+  const handleComplete = async (t: ProductionTarget) => {
+    const recipe = recipes.find(r => r.id === t.recipeId);
+    if (!recipe) { alert('Recipe not found.'); return; }
+    if (t.completedQty <= 0) { alert('No completed quantity logged yet. Log entries in Data Entry first.'); return; }
+    if (!confirm(`Complete production of "${t.recipeName}"?\n\n${t.completedQty} sets will be added to warehouse stock.`)) return;
+    try {
+      await completeProductionTarget(t, recipe);
+      load();
+    } catch (e) { alert(`Failed to complete: ${e instanceof Error ? e.message : 'Unknown error'}`); }
+  };
+
   const toggleExpand = (id: string) => {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -306,7 +327,19 @@ export default function DailyPlanning() {
                             <div><span className="text-slate-400">Sets Done</span><br /><strong className="text-slate-700">{t.completedQty}</strong></div>
                             <div><span className="text-slate-400">Notes</span><br /><strong className="text-slate-700">{t.notes ?? '—'}</strong></div>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {!t.materialsDeducted && (
+                              <button onClick={() => handleStart(t)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors">
+                                ▶ Start Production
+                              </button>
+                            )}
+                            {!t.finishedGoodsAdded && t.completedQty > 0 && (
+                              <button onClick={() => handleComplete(t)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors">
+                                ✓ Complete
+                              </button>
+                            )}
                             <button onClick={() => openEdit(t)}
                               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors">
                               <Pencil size={11} /> Edit
