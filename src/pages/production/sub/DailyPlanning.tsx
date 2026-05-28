@@ -109,7 +109,7 @@ export default function DailyPlanning() {
     try {
       const qty = Number(form.targetQty);
       const payload: Omit<ProductionTarget, 'id' | 'createdAt'> = {
-        date,
+        date: form.startDate || date,
         type: form.type,
         stage:       form.type === 'stage' ? form.stage : undefined,
         discType:    form.type === 'stage' ? form.discType : undefined,

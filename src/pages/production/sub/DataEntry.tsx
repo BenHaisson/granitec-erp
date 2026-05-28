@@ -27,8 +27,9 @@ export default function DataEntry() {
   const [goodQty, setGoodQty]     = useState('');
   const [defects, setDefects]     = useState('');
   const [qualityCheck, setQC]     = useState<'passed' | 'review' | 'hold'>('passed');
-  const [logTime, setLogTime]     = useState(nowHHMM());
-  const [useNow, setUseNow]       = useState(true);
+  const [logDate, setLogDate]     = useState(todayISO());
+  const [logTime, setLogTime]     = useState('');
+  const [useNow, setUseNow]       = useState(false);
   const [notes, setNotes]         = useState('');
   const [saving, setSaving]       = useState(false);
   const [success, setSuccess]     = useState('');
@@ -46,6 +47,7 @@ export default function DataEntry() {
   };
 
   useEffect(() => { load(); }, [date]);
+  useEffect(() => { setLogDate(date); }, [date]);
 
   const selected = targets.find(t => t.id === selectedId) ?? null;
   const targetEntries = entries.filter(e => e.targetId === selectedId);
@@ -55,11 +57,12 @@ export default function DataEntry() {
     if (!selected) return;
     const n = Number(qty);
     if (!n || n <= 0) { setError('Enter a valid quantity.'); return; }
+    const time = useNow ? nowHHMM() : logTime;
+    if (!time) { setError('Enter a time.'); return; }
     setError(''); setSaving(true);
     try {
-      const time = useNow ? nowHHMM() : logTime;
       await createEntry({
-        date,
+        date: logDate,
         targetId: selected.id,
         stage: selected.stage!,
         discType: selected.discType ?? selected.recipeName ?? '',
@@ -211,18 +214,26 @@ export default function DataEntry() {
                     </div>
                   </div>
 
-                  {/* Time */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Time</label>
-                    <div className="flex gap-2">
-                      <button type="button"
-                        onClick={() => { setUseNow(true); setLogTime(nowHHMM()); }}
-                        className={`px-3 py-2 rounded-lg text-sm border transition-colors ${useNow ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                        <Clock size={13} className="inline mr-1" />Now
-                      </button>
-                      <input type="time" value={logTime}
-                        onChange={e => { setLogTime(e.target.value); setUseNow(false); }}
-                        className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  {/* Date & Time */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Date</label>
+                      <input type="date" value={logDate}
+                        onChange={e => setLogDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Time <span className="text-red-500">*</span></label>
+                      <div className="flex gap-2">
+                        <button type="button"
+                          onClick={() => { setUseNow(true); setLogTime(nowHHMM()); }}
+                          className={`px-3 py-2 rounded-lg text-sm border transition-colors ${useNow ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                          <Clock size={13} className="inline mr-1" />Now
+                        </button>
+                        <input type="time" value={logTime}
+                          onChange={e => { setLogTime(e.target.value); setUseNow(false); }}
+                          className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      </div>
                     </div>
                   </div>
 
@@ -250,7 +261,7 @@ export default function DataEntry() {
                 {targetEntries.length > 0 && (
                   <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
                     <div className="px-4 py-3 border-b border-slate-50">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Today's Entries for this Target</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Entries for this Target</p>
                     </div>
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50">
