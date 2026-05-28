@@ -22,7 +22,10 @@ export const checkFeasibility = async (recipeId: string, quantity: number) => {
   const recipeDoc = recipesSnap.docs.find(d => d.id === recipeId);
   if (!recipeDoc) throw new Error('Recipe not found');
   const recipe = { id: recipeDoc.id, ...recipeDoc.data() } as Recipe;
-  const stockMap = new Map(productsSnap.docs.map(d => [d.id, d.data().stock_level as number]));
+  const stockMap = new Map(productsSnap.docs.map(d => {
+    const data = d.data();
+    return [d.id, (data.stock_level as number) + ((data.unverified_stock as number) ?? 0)];
+  }));
   const shortfalls: { productId: string; need: number; have: number }[] = [];
   for (const comp of recipe.components) {
     const need = comp.quantity * quantity;

@@ -130,7 +130,7 @@ export default function DailyPlanning() {
         if (!feasible) {
           const recipe = recipes.find(r => r.id === form.recipeId);
           const components = recipe?.components ?? [];
-          const stockMap = new Map(products.map(p => [p.id, p.stock_level]));
+          const stockMap = new Map(products.map(p => [p.id, p.stock_level + (p.unverified_stock ?? 0)]));
           const maxProducible = shortfalls.length > 0
             ? Math.min(...components.map(c => Math.floor((stockMap.get(c.productId) ?? 0) / c.quantity)))
             : qty;
