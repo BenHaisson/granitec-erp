@@ -30,6 +30,7 @@ interface TargetFormState {
   recipeId: string;
   recipeName: string;
   targetQty: string;
+  startDate: string;
   deadline: string;
   deadlineTime: string;
   line: string;
@@ -39,7 +40,7 @@ interface TargetFormState {
 
 const EMPTY_FORM: TargetFormState = {
   type: 'stage', stage: 'Press', discType: '', recipeId: '', recipeName: '',
-  targetQty: '', deadline: todayISO(), deadlineTime: '17:00',
+  targetQty: '', startDate: todayISO(), deadline: todayISO(), deadlineTime: '17:00',
   line: 'Both', status: 'not_started', notes: '',
 };
 
@@ -81,7 +82,7 @@ export default function DailyPlanning() {
 
   const openCreate = () => {
     setEditTarget(null);
-    setForm({ ...EMPTY_FORM, deadline: date });
+    setForm({ ...EMPTY_FORM, startDate: date, deadline: date });
     setError('');
     setShowModal(true);
   };
@@ -91,9 +92,9 @@ export default function DailyPlanning() {
     setForm({
       type: t.type, stage: t.stage ?? 'Press', discType: t.discType ?? '',
       recipeId: t.recipeId ?? '', recipeName: t.recipeName ?? '',
-      targetQty: String(t.targetQty), deadline: t.deadline,
-      deadlineTime: t.deadlineTime ?? '17:00', line: t.line ?? 'Both',
-      status: t.status, notes: t.notes ?? '',
+      targetQty: String(t.targetQty), startDate: t.startDate ?? t.date,
+      deadline: t.deadline, deadlineTime: t.deadlineTime ?? '17:00',
+      line: t.line ?? 'Both', status: t.status, notes: t.notes ?? '',
     });
     setError('');
     setShowModal(true);
@@ -116,6 +117,7 @@ export default function DailyPlanning() {
         recipeName:  form.type === 'recipe' ? form.recipeName : undefined,
         targetQty:   qty,
         completedQty: editTarget?.completedQty ?? 0,
+        startDate:   form.startDate || undefined,
         deadline:    form.deadline,
         deadlineTime: form.deadlineTime || undefined,
         line:        form.line || undefined,
@@ -244,9 +246,9 @@ export default function DailyPlanning() {
                       {isOpen && (
                         <div className="px-4 pb-4 pt-1 border-t border-slate-50">
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-500 mb-3">
+                            <div><span className="text-slate-400">Start Date</span><br /><strong className="text-slate-700">{t.startDate ?? t.date}</strong></div>
                             <div><span className="text-slate-400">Deadline</span><br /><strong className="text-slate-700">{t.deadline}{t.deadlineTime ? ` ${t.deadlineTime}` : ''}</strong></div>
                             <div><span className="text-slate-400">Line</span><br /><strong className="text-slate-700">{t.line ?? '—'}</strong></div>
-                            <div><span className="text-slate-400">Defects</span><br /><strong className="text-slate-700">{t.defects ?? 0}</strong></div>
                             <div><span className="text-slate-400">Notes</span><br /><strong className="text-slate-700">{t.notes ?? '—'}</strong></div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -296,7 +298,8 @@ export default function DailyPlanning() {
                       </button>
                       {isOpen && (
                         <div className="px-4 pb-4 pt-1 border-t border-slate-50">
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs text-slate-500 mb-3">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-500 mb-3">
+                            <div><span className="text-slate-400">Start Date</span><br /><strong className="text-slate-700">{t.startDate ?? t.date}</strong></div>
                             <div><span className="text-slate-400">Deadline</span><br /><strong className="text-slate-700">{t.deadline}{t.deadlineTime ? ` ${t.deadlineTime}` : ''}</strong></div>
                             <div><span className="text-slate-400">Sets Done</span><br /><strong className="text-slate-700">{t.completedQty}</strong></div>
                             <div><span className="text-slate-400">Notes</span><br /><strong className="text-slate-700">{t.notes ?? '—'}</strong></div>
@@ -417,13 +420,20 @@ export default function DailyPlanning() {
               </div>
             )}
 
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                {form.type === 'recipe' ? 'Sets' : 'Units'} Target <span className="text-red-500">*</span>
+              </label>
+              <input type="number" min="1" value={form.targetQty}
+                onChange={e => setForm(f => ({ ...f, targetQty: e.target.value }))}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  {form.type === 'recipe' ? 'Sets' : 'Units'} Target <span className="text-red-500">*</span>
-                </label>
-                <input type="number" min="1" value={form.targetQty}
-                  onChange={e => setForm(f => ({ ...f, targetQty: e.target.value }))}
+                <label className="block text-sm font-medium text-slate-700 mb-1">Start Date</label>
+                <input type="date" value={form.startDate}
+                  onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               <div>

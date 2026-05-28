@@ -106,6 +106,7 @@ export interface ProductionTarget {
   targetQty: number;
   completedQty: number;
   defects?: number;
+  startDate?: string; // YYYY-MM-DD
   deadline: string; // YYYY-MM-DD
   deadlineTime?: string; // HH:MM
   line?: string;
