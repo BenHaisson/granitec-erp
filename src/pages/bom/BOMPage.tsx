@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { getRecipes, createRecipe, updateRecipe, deleteRecipe } from '@/services/production.service';
 import { getProducts } from '@/services/inventory.service';
+import { PRODUCT_IMAGES } from '@/constants/productImages';
 import type { Recipe, Product, RecipeItem } from '@/types';
 
 // ── Recipe line type ──────────────────────────────────────────────
@@ -675,7 +676,7 @@ interface RecipeDetailOverlayProps {
   onDelete: (r: Recipe) => void;
 }
 function RecipeDetailOverlay({ group, productMap, onClose, onClone, onEdit, onDelete }: RecipeDetailOverlayProps) {
-  const imageUrl = group.variants.find(v => v.finished.imageUrl)?.finished.imageUrl;
+  const imageUrl = group.variants.map(v => PRODUCT_IMAGES[v.finished.sku] ?? v.finished.imageUrl).find(Boolean);
   const maxQty   = Math.max(...group.variants.map(v => v.qty));
 
   return (
@@ -861,7 +862,7 @@ interface GroupedRecipeCardProps {
   onDelete: (r: Recipe) => void;
 }
 function GroupedRecipeCard({ group, onViewDetail, onClone, onEdit, onDelete }: GroupedRecipeCardProps) {
-  const imageUrl = group.variants.find(v => v.finished.imageUrl)?.finished.imageUrl;
+  const imageUrl = group.variants.map(v => PRODUCT_IMAGES[v.finished.sku] ?? v.finished.imageUrl).find(Boolean);
   const single   = group.variants.length === 1;
 
   return (
