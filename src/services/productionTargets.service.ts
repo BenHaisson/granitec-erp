@@ -26,10 +26,10 @@ export const getAllTargets = async (): Promise<ProductionTarget[]> => {
 export const createTarget = async (
   t: Omit<ProductionTarget, 'id' | 'createdAt'>
 ): Promise<string> => {
-  const ref = await addDoc(collection(db, 'production_targets'), {
-    ...t,
-    createdAt: Timestamp.now(),
-  });
+  const data = Object.fromEntries(
+    Object.entries({ ...t, createdAt: Timestamp.now() }).filter(([, v]) => v !== undefined)
+  );
+  const ref = await addDoc(collection(db, 'production_targets'), data);
   return ref.id;
 };
 

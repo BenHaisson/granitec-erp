@@ -157,7 +157,8 @@ export default function DailyPlanning() {
       const adjusted = { ...feasibilityDialog.pendingPayload, targetQty: feasibilityDialog.maxProducible };
       await createTarget(adjusted);
       setFeasibilityDialog(null); setShowModal(false); load();
-    } finally { setFeasSaving(false); }
+    } catch { setError('Failed to create target.'); }
+    finally { setFeasSaving(false); }
   };
 
   const handleFeasibilityUnverified = async () => {
@@ -170,7 +171,8 @@ export default function DailyPlanning() {
       }
       await createTarget(feasibilityDialog.pendingPayload);
       setFeasibilityDialog(null); setShowModal(false); load();
-    } finally { setFeasSaving(false); }
+    } catch { setError('Failed to create target.'); }
+    finally { setFeasSaving(false); }
   };
 
   const handleDelete = async (t: ProductionTarget) => {
