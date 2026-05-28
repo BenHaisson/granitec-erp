@@ -148,6 +148,7 @@ export interface ShippingOrderLine {
   productName: string;
   sku: string;
   qty: number;
+  reconcile?: boolean; // if true, receiving backs unverified_stock instead of adding to live stock
 }
 
 export interface ShippingOrder {

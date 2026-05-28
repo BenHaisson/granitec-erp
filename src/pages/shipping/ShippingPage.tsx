@@ -192,6 +192,7 @@ type DraftLine = {
   productName: string;
   sku: string;
   qty: string;
+  reconcile: boolean;
   search: string;
   showSuggestions: boolean;
   highlightIdx: number;
@@ -199,6 +200,7 @@ type DraftLine = {
 
 const EMPTY_LINE = (): DraftLine => ({
   productId: '', productName: '', sku: '', qty: '',
+  reconcile: false,
   search: '', showSuggestions: false, highlightIdx: -1,
 });
 
@@ -243,7 +245,7 @@ function DraftRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemove
   };
 
   return (
-    <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3 items-center px-4 py-2.5 rounded-xl border border-slate-100 bg-white hover:border-indigo-200 hover:shadow-sm transition-all group">
+    <div className="grid grid-cols-[40px_1fr_120px_80px_160px_100px_36px] gap-3 items-center px-4 py-2.5 rounded-xl border border-slate-100 bg-white hover:border-indigo-200 hover:shadow-sm transition-all group">
       <span className="text-sm font-bold text-slate-300 tabular-nums text-center">{rowNum}</span>
 
       {/* Smart search */}
@@ -302,6 +304,18 @@ function DraftRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemove
         onKeyDown={e => { if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); onQtyTab(); } }}
         className="w-full px-4 py-2 border border-slate-300 rounded-lg text-base font-bold text-right focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white tabular-nums"
       />
+
+      <button
+        type="button"
+        onClick={() => onUpdate({ reconcile: !line.reconcile })}
+        title={line.reconcile ? 'Backs unverified stock — click to add to live stock instead' : 'Adds to live stock — click to back unverified stock instead'}
+        className={`flex items-center justify-center py-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+          line.reconcile
+            ? 'bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-200'
+            : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200'
+        }`}>
+        {line.reconcile ? 'Unverified' : 'Live Stock'}
+      </button>
 
       <button type="button" onClick={onRemove}
         className="flex items-center justify-center w-9 h-9 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100">
@@ -487,12 +501,13 @@ function CreateOrderOverlay({
         {/* Main content */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Column headers */}
-          <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3 px-4 py-2.5 border-b border-slate-100 bg-slate-50 shrink-0 text-xs font-bold text-slate-400 uppercase tracking-widest">
+          <div className="grid grid-cols-[40px_1fr_120px_80px_160px_100px_36px] gap-3 px-4 py-2.5 border-b border-slate-100 bg-slate-50 shrink-0 text-xs font-bold text-slate-400 uppercase tracking-widest">
             <span className="text-center">#</span>
             <span>Material</span>
             <span>SKU</span>
             <span className="text-right pr-2">Stock</span>
             <span className="text-right pr-4">Qty to Order</span>
+            <span className="text-center">Destination</span>
             <span />
           </div>
 
@@ -573,21 +588,19 @@ function CreateOrderOverlay({
 // ── Receive Modal ─────────────────────────────────────────────────
 interface ReceiveModalProps {
   order: ShippingOrder;
-  productMap: Map<string, Product>;
-  onConfirm: (data: { blNumber: string; remarks: string; file: File | null; reconcileProductIds: Set<string> }) => Promise<void>;
+  onConfirm: (data: { blNumber: string; remarks: string; file: File | null }) => Promise<void>;
   onClose: () => void;
 }
-function ReceiveModal({ order, productMap, onConfirm, onClose }: ReceiveModalProps) {
+function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
   const [blNumber, setBlNumber] = useState('');
   const [remarks, setRemarks] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [reconcileSet, setReconcileSet] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
-  const linesWithUnverified = order.lines.filter(l => (productMap.get(l.productId)?.unverified_stock ?? 0) > 0);
+  const reconcileCount = order.lines.filter(l => l.reconcile).length;
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -599,7 +612,7 @@ function ReceiveModal({ order, productMap, onConfirm, onClose }: ReceiveModalPro
     setSaving(true);
     setError('');
     try {
-      await onConfirm({ blNumber, remarks, file, reconcileProductIds: reconcileSet });
+      await onConfirm({ blNumber, remarks, file });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to mark as received.');
       setSaving(false);
@@ -627,46 +640,17 @@ function ReceiveModal({ order, productMap, onConfirm, onClose }: ReceiveModalPro
         {/* Body */}
         <div className="px-6 py-5 space-y-4">
 
-          {/* Unverified stock reconciliation */}
-          {linesWithUnverified.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 space-y-3">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Unverified Stock</p>
-                <p className="text-xs text-amber-600 mt-0.5">
-                  Some products in this order have unverified stock. Choose what this shipment does for each:
-                </p>
-              </div>
-              {linesWithUnverified.map(line => {
-                const prod = productMap.get(line.productId);
-                const isReconcile = reconcileSet.has(line.productId);
-                const toggle = (reconcile: boolean) => setReconcileSet(s => {
-                  const n = new Set(s);
-                  reconcile ? n.add(line.productId) : n.delete(line.productId);
-                  return n;
-                });
-                return (
-                  <div key={line.productId} className="space-y-1.5">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-semibold text-slate-700 truncate">{line.productName}</span>
-                      <span className="text-slate-500 tabular-nums shrink-0 ml-2">{line.qty} {prod?.unit ?? 'pcs'}</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <button type="button" onClick={() => toggle(false)}
-                        className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                          !isReconcile ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
-                        }`}>
-                        Add to live stock
-                      </button>
-                      <button type="button" onClick={() => toggle(true)}
-                        className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                          isReconcile ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
-                        }`}>
-                        Back unverified ({prod?.unverified_stock} {prod?.unit ?? 'pcs'})
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+          {/* Destination summary (set at order creation) */}
+          {reconcileCount > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-2.5 flex items-center gap-2.5">
+              <span className="text-amber-600 text-base">⚠</span>
+              <p className="text-xs text-amber-700">
+                <strong>{reconcileCount} line{reconcileCount !== 1 ? 's' : ''}</strong> will back unverified stock ·{' '}
+                {order.lines.length - reconcileCount > 0 && (
+                  <span>{order.lines.length - reconcileCount} will add to live stock</span>
+                )}
+                <span className="block text-amber-600 mt-0.5">Destination was set when the order was created.</span>
+              </p>
             </div>
           )}
 
@@ -1344,6 +1328,7 @@ export default function ShippingPage() {
       productName: l.productName,
       sku: l.sku,
       qty: String(l.qty),
+      reconcile: l.reconcile ?? false,
       search: l.productName,
       showSuggestions: false,
       highlightIdx: -1,
@@ -1373,7 +1358,7 @@ export default function ShippingPage() {
       const [sku, qtyStr] = raw.split(/[\s\t]+/);
       const p = skuMap.get(sku?.toUpperCase());
       const qty = Number(qtyStr);
-      if (p && qty > 0) valid.push({ productId: p.id, productName: p.name, sku: p.sku, qty: String(qty), search: p.name, showSuggestions: false, highlightIdx: -1 });
+      if (p && qty > 0) valid.push({ productId: p.id, productName: p.name, sku: p.sku, qty: String(qty), reconcile: false, search: p.name, showSuggestions: false, highlightIdx: -1 });
       else warnings.push(`${sku}: ${!p ? 'SKU not found' : 'invalid qty'}`);
     }
     setImportWarnings(warnings);
@@ -1394,7 +1379,13 @@ export default function ShippingPage() {
     if (validLines.length === 0) { setSaveError('Add at least one line with a product and quantity.'); return; }
     setSaving(true);
     try {
-      const mappedLines = validLines.map(l => ({ productId: l.productId, productName: l.productName, sku: l.sku, qty: Number(l.qty) }));
+      const mappedLines = validLines.map(l => ({
+        productId: l.productId,
+        productName: l.productName,
+        sku: l.sku,
+        qty: Number(l.qty),
+        ...(l.reconcile ? { reconcile: true } : {}),
+      }));
       if (editingOrder) {
         const patch = { ref: ref_.trim(), supplier: supplier.trim() || undefined, date, lines: mappedLines };
         if (editingOrder.status === 'RECEIVED') {
@@ -1431,7 +1422,7 @@ export default function ShippingPage() {
     setReceivingOrder(order);
   };
 
-  const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null; reconcileProductIds: Set<string> }) => {
+  const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null }) => {
     if (!receivingOrder) return;
     setReceiving(s => new Set(s).add(receivingOrder.id));
     let documentUrl: string | undefined;
@@ -1441,12 +1432,15 @@ export default function ShippingPage() {
       documentUrl = uploaded.url;
       documentName = uploaded.name;
     }
+    const reconcileProductIds = new Set(
+      receivingOrder.lines.filter(l => l.reconcile).map(l => l.productId)
+    );
     await receiveShippingOrder(receivingOrder, {
       blNumber: data.blNumber.trim() || undefined,
       remarks: data.remarks.trim() || undefined,
       documentUrl,
       documentName,
-    }, data.reconcileProductIds);
+    }, reconcileProductIds);
     setReceiving(s => { const n = new Set(s); n.delete(receivingOrder.id); return n; });
     setReceivingOrder(null);
     await load();
@@ -1661,7 +1655,6 @@ export default function ShippingPage() {
       {receivingOrder && (
         <ReceiveModal
           order={receivingOrder}
-          productMap={new Map(allProducts.map(p => [p.id, p]))}
           onConfirm={handleReceiveConfirm}
           onClose={() => setReceivingOrder(null)}
         />

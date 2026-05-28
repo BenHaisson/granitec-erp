@@ -1,6 +1,6 @@
 import {
   collection, addDoc, getDocs, doc, deleteDoc, updateDoc,
-  query, where, Timestamp,
+  query, where, orderBy, limit, Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { ProductionTarget, ProductionEntry } from '@/types';
@@ -9,6 +9,16 @@ import type { ProductionTarget, ProductionEntry } from '@/types';
 
 export const getTargets = async (date: string): Promise<ProductionTarget[]> => {
   const q = query(collection(db, 'production_targets'), where('date', '==', date));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductionTarget));
+};
+
+export const getAllTargets = async (): Promise<ProductionTarget[]> => {
+  const q = query(
+    collection(db, 'production_targets'),
+    orderBy('date', 'desc'),
+    limit(500)
+  );
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductionTarget));
 };
