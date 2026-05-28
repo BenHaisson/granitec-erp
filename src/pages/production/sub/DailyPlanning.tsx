@@ -375,15 +375,45 @@ export default function DailyPlanning() {
             ) : (
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Recipe</label>
-                <select value={form.recipeId}
-                  onChange={e => {
-                    const r = recipes.find(r => r.id === e.target.value);
-                    setForm(f => ({ ...f, recipeId: e.target.value, recipeName: r?.finishedProductId ?? e.target.value }));
-                  }}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                  <option value="">Select recipe…</option>
-                  {recipes.map(r => <option key={r.id} value={r.id}>{r.finishedProductId}</option>)}
-                </select>
+                {(() => {
+                  const productMap = new Map(products.map(p => [p.id, p]));
+                  const catPriority = (c: string) => {
+                    const l = c.toLowerCase();
+                    if (l.includes('set') || l.includes('pack'))          return '0' + l;
+                    if (l.includes('marmite') || l.includes('casserole')) return '1' + l;
+                    if (l.includes('crêpe') || l.includes('crepe'))       return '2' + l;
+                    return '9' + l;
+                  };
+                  const cats = Array.from(new Set(
+                    recipes.map(r => productMap.get(r.finishedProductId)?.category ?? 'Other')
+                  )).sort((a, b) => catPriority(a).localeCompare(catPriority(b)));
+                  return (
+                    <select value={form.recipeId}
+                      onChange={e => {
+                        const r = recipes.find(r => r.id === e.target.value);
+                        const prod = r ? productMap.get(r.finishedProductId) : undefined;
+                        setForm(f => ({ ...f, recipeId: e.target.value, recipeName: prod?.name ?? r?.finishedProductId ?? '' }));
+                      }}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                      <option value="">Select recipe…</option>
+                      {cats.map(cat => {
+                        const catRecipes = recipes.filter(r => (productMap.get(r.finishedProductId)?.category ?? 'Other') === cat);
+                        return (
+                          <optgroup key={cat} label={cat}>
+                            {catRecipes.map(r => {
+                              const prod = productMap.get(r.finishedProductId);
+                              return (
+                                <option key={r.id} value={r.id}>
+                                  {prod?.name ?? r.finishedProductId}
+                                </option>
+                              );
+                            })}
+                          </optgroup>
+                        );
+                      })}
+                    </select>
+                  );
+                })()}
               </div>
             )}
 
