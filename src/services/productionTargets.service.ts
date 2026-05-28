@@ -57,10 +57,10 @@ export const getAllEntries = async (): Promise<ProductionEntry[]> => {
 export const createEntry = async (
   e: Omit<ProductionEntry, 'id' | 'createdAt'>
 ): Promise<void> => {
-  await addDoc(collection(db, 'production_entries'), {
-    ...e,
-    createdAt: Timestamp.now(),
-  });
+  const data = Object.fromEntries(
+    Object.entries({ ...e, createdAt: Timestamp.now() }).filter(([, v]) => v !== undefined)
+  );
+  await addDoc(collection(db, 'production_entries'), data);
 };
 
 export const deleteEntry = (id: string) =>
