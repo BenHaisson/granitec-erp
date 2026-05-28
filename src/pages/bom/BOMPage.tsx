@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  AlertCircle, BookOpen, Check, ChevronDown,
+  AlertCircle, BookOpen, Check, ChevronDown, ChevronRight,
   Copy, FileText, PackagePlus, Pencil, Plus, Search, Trash2, X,
 } from 'lucide-react';
 import { getRecipes, createRecipe, updateRecipe, deleteRecipe } from '@/services/production.service';
@@ -358,7 +358,7 @@ function FpSelect({ value, onChange, products }: FpSelectProps) {
   );
 }
 
-// ── Recipe full-screen overlay ────────────────────────────────────
+// ── Recipe full-screen overlay (create / edit) ────────────────────
 interface RecipeOverlayProps {
   editRecipe: Recipe | null;
   products: Product[];
@@ -502,16 +502,16 @@ function RecipeOverlay({
           <div className="flex-1 overflow-y-auto px-2 pb-3">
             {sidebarCats.map(cat => {
               const catProducts = sidebarProducts.filter(p => (p.category ?? 'Other') === cat);
-              const collapsed = collapsedCats.has(cat);
+              const isCatCollapsed = collapsedCats.has(cat);
               return (
                 <div key={cat} className="mb-1">
                   <button onClick={() => toggleCat(cat)}
                     className="flex items-center gap-1.5 w-full px-2 py-1.5 text-left rounded-lg hover:bg-slate-200/60 transition-colors">
-                    <ChevronDown size={12} className={`text-slate-400 transition-transform shrink-0 ${collapsed ? '-rotate-90' : ''}`} />
+                    <ChevronDown size={12} className={`text-slate-400 transition-transform shrink-0 ${isCatCollapsed ? '-rotate-90' : ''}`} />
                     <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{cat}</span>
                     <span className="ml-auto text-[10px] text-slate-400">{catProducts.length}</span>
                   </button>
-                  {!collapsed && catProducts.map(p => (
+                  {!isCatCollapsed && catProducts.map(p => (
                     <button key={p.id} onClick={() => handleQuickAdd(p)}
                       disabled={addedIds.has(p.id)}
                       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${addedIds.has(p.id) ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white hover:shadow-sm'}`}>
@@ -665,148 +665,267 @@ function RecipeOverlay({
   );
 }
 
-// ── Grouped recipe catalogue card ─────────────────────────────────
-interface GroupedRecipeCardProps {
+// ── Recipe detail full-screen overlay ────────────────────────────
+interface RecipeDetailOverlayProps {
   group: RecipeGroup;
-  expanded: boolean;
-  onToggle: () => void;
+  productMap: Map<string, Product>;
+  onClose: () => void;
   onClone: (r: Recipe) => void;
   onEdit: (r: Recipe) => void;
   onDelete: (r: Recipe) => void;
-  productMap: Map<string, Product>;
 }
-function GroupedRecipeCard({ group, expanded, onToggle, onClone, onEdit, onDelete, productMap }: GroupedRecipeCardProps) {
-  const cardRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (expanded && cardRef.current) {
-      setTimeout(() => cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 280);
-    }
-  }, [expanded]);
-
+function RecipeDetailOverlay({ group, productMap, onClose, onClone, onEdit, onDelete }: RecipeDetailOverlayProps) {
   const imageUrl = group.variants.find(v => v.finished.imageUrl)?.finished.imageUrl;
-  const multi    = group.variants.length > 1;
+  const maxQty   = Math.max(...group.variants.map(v => v.qty));
 
   return (
-    <div ref={cardRef}
-      className={`bg-white rounded-2xl border shadow-sm overflow-hidden transition-all flex flex-col ${expanded ? 'border-indigo-200 shadow-md ring-1 ring-indigo-100' : 'border-slate-100 hover:shadow-md'}`}>
-
-      {/* Clickable header */}
-      <div className="cursor-pointer select-none" onClick={onToggle}>
-        {/* Image area */}
-        <div className="relative h-36 bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center overflow-hidden shrink-0">
-          {imageUrl ? (
-            <img src={imageUrl} alt={group.base} className="w-full h-full object-cover" />
-          ) : (
-            <div className="flex flex-col items-center gap-1.5">
-              <BookOpen size={30} className="text-slate-200" />
-            </div>
-          )}
-          {/* Expand chevron */}
-          <div className={`absolute top-2 left-2 p-1 rounded-full bg-white/80 backdrop-blur-sm shadow-sm transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`}>
-            <ChevronDown size={11} className="text-slate-500" />
-          </div>
-          {/* Producible badges */}
-          <div className="absolute top-2 right-2 flex flex-col gap-0.5 items-end">
-            {group.variants.map(v => (
-              <div key={v.recipe.id} className={`flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-sm ${v.feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-                {v.color && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${FINISHED_COLOR_DOT[v.color]}`} />}
-                {v.feasible ? `${v.qty}` : '0'}
-              </div>
-            ))}
-          </div>
+    <div className="fixed inset-0 z-[150] bg-white flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100 shrink-0 bg-white">
+        <div className="flex items-center gap-2 flex-1 min-w-0 text-sm">
+          <span className="text-slate-400 shrink-0">BOM Recipes</span>
+          <ChevronRight size={13} className="text-slate-300 shrink-0" />
+          <span className="font-semibold text-slate-700 truncate">{group.base}</span>
+          <span className="ml-1 text-xs font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full shrink-0">
+            {group.category}
+          </span>
         </div>
-
-        {/* Compact body */}
-        <div className="px-3 pt-2.5 pb-3">
-          <p className="text-sm font-bold text-slate-800 leading-tight truncate">{group.base}</p>
-
-          {/* Color pills */}
-          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
-            {group.variants.map(v => (
-              <div key={v.recipe.id} className="flex items-center gap-1">
-                <span className={`w-2 h-2 rounded-full shrink-0 ${v.color ? FINISHED_COLOR_DOT[v.color] : 'bg-slate-300'}`} />
-                <span className="text-[10px] font-mono text-slate-400">{v.finished.sku}</span>
-              </div>
-            ))}
-          </div>
-
-          {!multi && (
-            <p className="text-[10px] text-slate-400 mt-1">
-              {group.variants[0].recipe.components.length} component{group.variants[0].recipe.components.length !== 1 ? 's' : ''}
-            </p>
-          )}
-        </div>
+        <button onClick={onClose}
+          className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors shrink-0">
+          <X size={20} />
+        </button>
       </div>
 
-      {/* Animated detail panel */}
-      <div className={`grid transition-all duration-300 ease-in-out ${expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
-        <div className="overflow-hidden">
-          <div className="border-t border-slate-100 px-3 py-3 space-y-4">
-            {group.variants.map(v => {
-              return (
-                <div key={v.recipe.id}>
-                  {/* Variant header row */}
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                      {v.color && (
-                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${FINISHED_COLOR_DOT[v.color]}`} />
-                      )}
-                      <span className="text-xs font-bold text-slate-700">{v.color ?? v.finished.name}</span>
-                      <span className="font-mono text-[10px] text-slate-400 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded leading-none">
-                        {v.finished.sku}
-                      </span>
-                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${v.feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-                        {v.feasible ? `${v.qty} prod.` : 'No stock'}
-                      </span>
-                    </div>
-                    {/* Per-variant actions */}
-                    <div className="flex gap-0.5 shrink-0 ml-1">
-                      <button onClick={e => { e.stopPropagation(); onClone(v.recipe); }} title="Clone"
-                        className="p-1 rounded text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 transition-colors">
-                        <Copy size={11} />
-                      </button>
-                      <button onClick={e => { e.stopPropagation(); onEdit(v.recipe); }} title="Edit"
-                        className="p-1 rounded text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
-                        <Pencil size={11} />
-                      </button>
-                      <button onClick={e => { e.stopPropagation(); onDelete(v.recipe); }} title="Delete"
-                        className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors">
-                        <Trash2 size={11} />
-                      </button>
-                    </div>
-                  </div>
+      {/* Body */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left panel: product info */}
+        <div className="w-72 shrink-0 border-r border-slate-100 flex flex-col overflow-y-auto">
+          {/* Image */}
+          <div className="h-64 bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center overflow-hidden shrink-0">
+            {imageUrl ? (
+              <img src={imageUrl} alt={group.base} className="w-full h-full object-cover" />
+            ) : (
+              <div className="flex flex-col items-center gap-2">
+                <BookOpen size={48} className="text-slate-200" />
+                <span className="text-xs text-slate-300">No image</span>
+              </div>
+            )}
+          </div>
 
-                  {/* Component mini-table */}
-                  <div className="rounded-lg border border-slate-100 overflow-hidden text-[10px]">
-                    <div className="grid grid-cols-[1fr_72px_40px_50px] bg-slate-50 px-2 py-1 font-bold uppercase tracking-wider text-slate-400">
-                      <span>Component</span>
-                      <span>SKU</span>
-                      <span className="text-right">Qty</span>
-                      <span className="text-right">Stock</span>
-                    </div>
-                    <div className="divide-y divide-slate-50">
-                      {v.recipe.components.map(c => {
-                        const prod = productMap.get(c.productId);
-                        const ok   = prod ? prod.stock_level >= c.quantity : false;
-                        return (
-                          <div key={c.productId} className="grid grid-cols-[1fr_72px_40px_50px] px-2 py-1.5 items-center">
-                            <span className="text-slate-700 truncate font-medium">{prod?.name ?? c.productId}</span>
-                            <span className="font-mono text-slate-400 truncate">{prod?.sku ?? ''}</span>
-                            <span className="text-right tabular-nums text-slate-600 font-bold">{c.quantity}</span>
-                            <span className={`text-right tabular-nums font-semibold ${ok ? 'text-emerald-600' : 'text-red-500'}`}>
-                              {prod ? prod.stock_level.toLocaleString() : '?'}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
+          {/* Info */}
+          <div className="p-5 flex flex-col gap-5">
+            <div>
+              <p className="text-xl font-bold text-slate-800 leading-tight">{group.base}</p>
+              <p className="text-sm text-slate-400 mt-0.5">{group.category}</p>
+            </div>
+
+            {/* Quick stats */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-slate-50 rounded-xl p-3 text-center">
+                <p className="text-2xl font-bold text-slate-700">{group.variants.length}</p>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wider mt-0.5">
+                  Variant{group.variants.length !== 1 ? 's' : ''}
+                </p>
+              </div>
+              <div className={`rounded-xl p-3 text-center ${maxQty > 0 ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                <p className={`text-2xl font-bold ${maxQty > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {isFinite(maxQty) ? maxQty : '∞'}
+                </p>
+                <p className={`text-[10px] uppercase tracking-wider mt-0.5 ${maxQty > 0 ? 'text-emerald-500' : 'text-red-400'}`}>
+                  Max prod.
+                </p>
+              </div>
+            </div>
+
+            {/* Variant summary */}
+            <div className="space-y-1">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Variants</p>
+              {group.variants.map(v => (
+                <div key={v.recipe.id}
+                  className="flex items-center gap-2.5 py-2 border-b border-slate-50 last:border-0">
+                  <span className={`w-3 h-3 rounded-full shrink-0 ${v.color ? FINISHED_COLOR_DOT[v.color] : 'bg-slate-300'}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-slate-700 truncate">{v.color ?? 'Default'}</p>
+                    <p className="text-[10px] font-mono text-slate-400">{v.finished.sku}</p>
                   </div>
+                  <span className={`text-sm font-bold tabular-nums shrink-0 ${v.feasible ? 'text-emerald-600' : 'text-red-500'}`}>
+                    {v.qty}
+                  </span>
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
         </div>
+
+        {/* Right: variants + component tables */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-slate-50/30">
+          {group.variants.map(v => {
+            const bottleneckQty = v.recipe.components.reduce((min, c) => {
+              const prod = productMap.get(c.productId);
+              if (!prod) return 0;
+              return Math.min(min, Math.floor(prod.stock_level / c.quantity));
+            }, Infinity);
+
+            return (
+              <div key={v.recipe.id}
+                className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                {/* Variant header */}
+                <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    {v.color && (
+                      <span className={`w-4 h-4 rounded-full border border-white shadow-sm shrink-0 ${FINISHED_COLOR_DOT[v.color]}`} />
+                    )}
+                    <div>
+                      <p className="font-bold text-slate-800">{v.color ?? v.finished.name}</p>
+                      <p className="text-[10px] font-mono text-slate-400">{v.finished.sku}</p>
+                    </div>
+                    <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${isFinite(bottleneckQty) && bottleneckQty > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                      {isFinite(bottleneckQty) && bottleneckQty > 0 ? `${bottleneckQty} producible` : 'No stock'}
+                    </span>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <button onClick={() => onClone(v.recipe)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-200 transition-colors">
+                      <Copy size={12} /> Clone
+                    </button>
+                    <button onClick={() => onEdit(v.recipe)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 transition-colors">
+                      <Pencil size={12} /> Edit
+                    </button>
+                    <button onClick={() => onDelete(v.recipe)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-red-600 hover:bg-red-50 border border-slate-200 hover:border-red-200 transition-colors">
+                      <Trash2 size={12} /> Delete
+                    </button>
+                  </div>
+                </div>
+
+                {/* Component table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        <th className="px-5 py-2.5 text-left">Component</th>
+                        <th className="px-3 py-2.5 text-left">SKU</th>
+                        <th className="px-3 py-2.5 text-right">Qty / unit</th>
+                        <th className="px-3 py-2.5 text-right">Stock</th>
+                        <th className="px-5 py-2.5 text-right">Covers</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {v.recipe.components.map(c => {
+                        const prod   = productMap.get(c.productId);
+                        const covers = prod ? Math.floor(prod.stock_level / c.quantity) : 0;
+                        const stockOk = prod ? prod.stock_level >= c.quantity : false;
+                        const isBottleneck = isFinite(bottleneckQty) && covers === bottleneckQty;
+                        return (
+                          <tr key={c.productId}
+                            className={`transition-colors ${isBottleneck && !v.feasible ? 'bg-red-50/50' : 'hover:bg-slate-50/60'}`}>
+                            <td className="px-5 py-3">
+                              <p className="font-medium text-slate-700">{prod?.name ?? c.productId}</p>
+                              {prod?.unit && <p className="text-[10px] text-slate-400 mt-0.5">{prod.unit}</p>}
+                            </td>
+                            <td className="px-3 py-3 font-mono text-xs text-slate-400">{prod?.sku ?? '—'}</td>
+                            <td className="px-3 py-3 text-right font-bold tabular-nums text-slate-700">{c.quantity}</td>
+                            <td className={`px-3 py-3 text-right font-bold tabular-nums ${stockOk ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {prod ? prod.stock_level.toLocaleString() : '?'}
+                            </td>
+                            <td className="px-5 py-3 text-right">
+                              <span className={`font-bold tabular-nums ${covers > 0 ? 'text-slate-600' : 'text-red-500'}`}>
+                                {covers > 0 ? covers.toLocaleString() : '0'}
+                              </span>
+                              {isBottleneck && (
+                                <span className="ml-1.5 text-[9px] font-bold text-amber-500 align-middle">▲ limit</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Grouped recipe catalogue card ─────────────────────────────────
+interface GroupedRecipeCardProps {
+  group: RecipeGroup;
+  onViewDetail: () => void;
+  onClone: (r: Recipe) => void;
+  onEdit: (r: Recipe) => void;
+  onDelete: (r: Recipe) => void;
+}
+function GroupedRecipeCard({ group, onViewDetail, onClone, onEdit, onDelete }: GroupedRecipeCardProps) {
+  const imageUrl = group.variants.find(v => v.finished.imageUrl)?.finished.imageUrl;
+  const single   = group.variants.length === 1;
+
+  return (
+    <div
+      className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden hover:shadow-md hover:border-indigo-200 transition-all group cursor-pointer"
+      onClick={onViewDetail}
+    >
+      {/* Image area */}
+      <div className="relative h-36 bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center overflow-hidden">
+        {imageUrl ? (
+          <img src={imageUrl} alt={group.base} className="w-full h-full object-cover" />
+        ) : (
+          <BookOpen size={30} className="text-slate-200" />
+        )}
+
+        {/* Producible badges */}
+        <div className="absolute top-2 right-2 flex flex-col gap-0.5 items-end">
+          {group.variants.map(v => (
+            <div key={v.recipe.id} className={`flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-sm ${v.feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+              {v.color && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${FINISHED_COLOR_DOT[v.color]}`} />}
+              {v.feasible ? `${v.qty}` : '0'}
+            </div>
+          ))}
+        </div>
+
+        {/* Quick actions (single-variant only, appear on hover) */}
+        {single && (
+          <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={e => e.stopPropagation()}>
+            <button onClick={() => onClone(group.variants[0].recipe)} title="Clone"
+              className="p-1.5 rounded-lg bg-white/90 shadow text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 transition-colors">
+              <Copy size={11} />
+            </button>
+            <button onClick={() => onEdit(group.variants[0].recipe)} title="Edit"
+              className="p-1.5 rounded-lg bg-white/90 shadow text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
+              <Pencil size={11} />
+            </button>
+            <button onClick={() => onDelete(group.variants[0].recipe)} title="Delete"
+              className="p-1.5 rounded-lg bg-white/90 shadow text-slate-500 hover:text-red-500 hover:bg-red-50 transition-colors">
+              <Trash2 size={11} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Compact body */}
+      <div className="px-3 pt-2.5 pb-3">
+        <p className="text-sm font-bold text-slate-800 leading-tight truncate">{group.base}</p>
+
+        {/* Color pills */}
+        <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+          {group.variants.map(v => (
+            <div key={v.recipe.id} className="flex items-center gap-1">
+              <span className={`w-2 h-2 rounded-full shrink-0 ${v.color ? FINISHED_COLOR_DOT[v.color] : 'bg-slate-300'}`} />
+              <span className="text-[10px] font-mono text-slate-400">{v.finished.sku}</span>
+            </div>
+          ))}
+        </div>
+
+        {single && (
+          <p className="text-[10px] text-slate-400 mt-1">
+            {group.variants[0].recipe.components.length} component{group.variants[0].recipe.components.length !== 1 ? 's' : ''}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -819,7 +938,7 @@ export default function BOMPage() {
   const [loading, setLoading]       = useState(true);
 
   const [collapsedRecipeCats, setCollapsedRecipeCats] = useState<Set<string>>(new Set());
-  const [expandedGroupKey, setExpandedGroupKey]       = useState<string | null>(null);
+  const [detailGroup, setDetailGroup]                 = useState<RecipeGroup | null>(null);
 
   const [showOverlay, setShowOverlay] = useState(false);
   const [editRecipe, setEditRecipe]   = useState<Recipe | null>(null);
@@ -877,11 +996,12 @@ export default function BOMPage() {
     load();
   };
 
-  const handleDelete = async (recipe: Recipe) => {
+  const handleDelete = async (recipe: Recipe): Promise<boolean> => {
     const name = productMap.get(recipe.finishedProductId)?.name ?? recipe.id;
-    if (!confirm(`Delete recipe for "${name}"? This cannot be undone.`)) return;
+    if (!confirm(`Delete recipe for "${name}"? This cannot be undone.`)) return false;
     await deleteRecipe(recipe.id);
     load();
+    return true;
   };
 
   const handleSubmit = async () => {
@@ -916,7 +1036,6 @@ export default function BOMPage() {
     return <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Loading…</div>;
   }
 
-  // Build grouped + merged catalogue data
   const allGroups = buildRecipeGroups(recipes, productMap, producible);
   const catMap = new Map<string, RecipeGroup[]>();
   for (const g of allGroups) {
@@ -967,12 +1086,10 @@ export default function BOMPage() {
                       <GroupedRecipeCard
                         key={group.key}
                         group={group}
-                        expanded={expandedGroupKey === group.key}
-                        onToggle={() => setExpandedGroupKey(k => k === group.key ? null : group.key)}
+                        onViewDetail={() => setDetailGroup(group)}
                         onClone={handleClone}
                         onEdit={openEdit}
                         onDelete={handleDelete}
-                        productMap={productMap}
                       />
                     ))}
                   </div>
@@ -983,6 +1100,7 @@ export default function BOMPage() {
         </div>
       )}
 
+      {/* Recipe create/edit overlay */}
       {showOverlay && (
         <RecipeOverlay
           editRecipe={editRecipe}
@@ -994,6 +1112,18 @@ export default function BOMPage() {
           onAddLine={addLine} onRemoveLine={removeLine}
           onUpdateLine={updateLine} onSelectProduct={selectProduct}
           onImport={importLines}
+        />
+      )}
+
+      {/* Recipe detail overlay */}
+      {detailGroup !== null && (
+        <RecipeDetailOverlay
+          group={detailGroup}
+          productMap={productMap}
+          onClose={() => setDetailGroup(null)}
+          onClone={async (r) => { await handleClone(r); setDetailGroup(null); }}
+          onEdit={(r) => { setDetailGroup(null); openEdit(r); }}
+          onDelete={async (r) => { if (await handleDelete(r)) setDetailGroup(null); }}
         />
       )}
     </div>
