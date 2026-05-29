@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Plus, Pencil, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
-import { getTargets, createTarget, updateTarget, deleteTarget } from '@/services/productionTargets.service';
+import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { getTargets, getAllTargets, createTarget, updateTarget, deleteTarget } from '@/services/productionTargets.service';
 import { getRecipes, checkFeasibility, startProductionTarget, completeProductionTarget } from '@/services/production.service';
 import { getProducts, addUnverifiedStock } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
@@ -45,7 +45,7 @@ const EMPTY_FORM: TargetFormState = {
 };
 
 export default function DailyPlanning() {
-  const [date, setDate]         = useState(todayISO());
+  const [date, setDate]         = useState('');
   const [targets, setTargets]   = useState<ProductionTarget[]>([]);
   const [recipes, setRecipes]   = useState<Recipe[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -69,7 +69,7 @@ export default function DailyPlanning() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([getTargets(date), getRecipes(), getProducts()])
+    Promise.all([date ? getTargets(date) : getAllTargets(), getRecipes(), getProducts()])
       .then(([t, r, p]) => { setTargets(t); setRecipes(r); setProducts(p); })
       .finally(() => setLoading(false));
   };
@@ -82,7 +82,7 @@ export default function DailyPlanning() {
 
   const openCreate = () => {
     setEditTarget(null);
-    setForm({ ...EMPTY_FORM, startDate: date, deadline: date });
+    setForm({ ...EMPTY_FORM, startDate: date || todayISO(), deadline: date || todayISO() });
     setError('');
     setShowModal(true);
   };
@@ -219,11 +219,19 @@ export default function DailyPlanning() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-800">Daily Planning</h2>
-          <p className="text-sm text-slate-500 mt-0.5">{targets.length} target{targets.length !== 1 ? 's' : ''} for {date}</p>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {targets.length} target{targets.length !== 1 ? 's' : ''} — {date ? date : 'all time'}
+          </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <input type="date" value={date} onChange={e => setDate(e.target.value)}
             className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          {date && (
+            <button onClick={() => setDate('')}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+              <X size={13} /> All dates
+            </button>
+          )}
           <button onClick={openCreate}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
             <Plus size={15} /> Add Target
@@ -235,130 +243,158 @@ export default function DailyPlanning() {
         <div className="text-center py-20 text-slate-400 text-sm">Loading…</div>
       ) : targets.length === 0 ? (
         <div className="bg-white rounded-xl border border-dashed border-slate-200 p-16 text-center">
-          <p className="text-slate-500 font-medium">No targets yet</p>
-          <p className="text-slate-400 text-sm mt-1">Create stage or recipe targets for this date</p>
+          <p className="text-slate-500 font-medium">{date ? 'No targets for this date' : 'No production targets yet'}</p>
+          <p className="text-slate-400 text-sm mt-1">{date ? 'Try clearing the date filter' : 'Add a target to get started'}</p>
         </div>
-      ) : (
-        <>
-          {/* Stage Targets */}
-          {stageTargets.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Stage Targets</p>
-              <div className="space-y-2">
-                {stageTargets.map(t => {
-                  const p = pct(t.completedQty, t.targetQty);
-                  const isOpen = expanded.has(t.id);
-                  return (
-                    <div key={t.id} className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-                      <button className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors"
-                        onClick={() => toggleExpand(t.id)}>
-                        {isOpen ? <ChevronDown size={14} className="text-slate-400 shrink-0" /> : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-800">{t.stage} — {t.discType}</p>
-                          <div className="flex items-center gap-3 mt-1">
-                            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${p}%` }} />
-                            </div>
-                            <span className="text-xs text-slate-500 tabular-nums shrink-0">{t.completedQty}/{t.targetQty} ({p}%)</span>
-                          </div>
-                        </div>
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${STATUS_CLS[t.status]}`}>
-                          {STATUS_LABEL[t.status]}
-                        </span>
-                      </button>
-                      {isOpen && (
-                        <div className="px-4 pb-4 pt-1 border-t border-slate-50">
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-500 mb-3">
-                            <div><span className="text-slate-400">Start Date</span><br /><strong className="text-slate-700">{t.startDate ?? t.date}</strong></div>
-                            <div><span className="text-slate-400">Deadline</span><br /><strong className="text-slate-700">{t.deadline}{t.deadlineTime ? ` ${t.deadlineTime}` : ''}</strong></div>
-                            <div><span className="text-slate-400">Line</span><br /><strong className="text-slate-700">{t.line ?? '—'}</strong></div>
-                            <div><span className="text-slate-400">Notes</span><br /><strong className="text-slate-700">{t.notes ?? '—'}</strong></div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button onClick={() => openEdit(t)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors">
-                              <Pencil size={11} /> Edit
-                            </button>
-                            <button onClick={() => handleDelete(t)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors">
-                              <Trash2 size={11} /> Delete
-                            </button>
-                          </div>
-                        </div>
-                      )}
+      ) : (() => {
+        const renderStageCard = (t: ProductionTarget) => {
+          const p = pct(t.completedQty, t.targetQty);
+          const isOpen = expanded.has(t.id);
+          return (
+            <div key={t.id} className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+              <button className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors"
+                onClick={() => toggleExpand(t.id)}>
+                {isOpen ? <ChevronDown size={14} className="text-slate-400 shrink-0" /> : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-slate-800">{t.stage} — {t.discType}</p>
+                  <div className="flex items-center gap-3 mt-1">
+                    <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${p}%` }} />
                     </div>
-                  );
-                })}
-              </div>
+                    <span className="text-xs text-slate-500 tabular-nums shrink-0">{t.completedQty}/{t.targetQty} ({p}%)</span>
+                  </div>
+                </div>
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${STATUS_CLS[t.status]}`}>
+                  {STATUS_LABEL[t.status]}
+                </span>
+              </button>
+              {isOpen && (
+                <div className="px-4 pb-4 pt-1 border-t border-slate-50">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-500 mb-3">
+                    <div><span className="text-slate-400">Start Date</span><br /><strong className="text-slate-700">{t.startDate ?? t.date}</strong></div>
+                    <div><span className="text-slate-400">Deadline</span><br /><strong className="text-slate-700">{t.deadline}{t.deadlineTime ? ` ${t.deadlineTime}` : ''}</strong></div>
+                    <div><span className="text-slate-400">Line</span><br /><strong className="text-slate-700">{t.line ?? '—'}</strong></div>
+                    <div><span className="text-slate-400">Notes</span><br /><strong className="text-slate-700">{t.notes ?? '—'}</strong></div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => openEdit(t)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors">
+                      <Pencil size={11} /> Edit
+                    </button>
+                    <button onClick={() => handleDelete(t)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors">
+                      <Trash2 size={11} /> Delete
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
+          );
+        };
 
-          {/* Recipe Targets */}
-          {recipeTargets.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Recipe Targets</p>
-              <div className="space-y-2">
-                {recipeTargets.map(t => {
-                  const p = pct(t.completedQty, t.targetQty);
-                  const isOpen = expanded.has(t.id);
-                  return (
-                    <div key={t.id} className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-                      <button className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors"
-                        onClick={() => toggleExpand(t.id)}>
-                        {isOpen ? <ChevronDown size={14} className="text-slate-400 shrink-0" /> : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-800">{t.recipeName} × {t.targetQty} sets</p>
-                          <div className="flex items-center gap-3 mt-1">
-                            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-violet-500 rounded-full" style={{ width: `${p}%` }} />
-                            </div>
-                            <span className="text-xs text-slate-500 tabular-nums shrink-0">{t.completedQty}/{t.targetQty} sets ({p}%)</span>
-                          </div>
-                        </div>
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${STATUS_CLS[t.status]}`}>
-                          {STATUS_LABEL[t.status]}
-                        </span>
-                      </button>
-                      {isOpen && (
-                        <div className="px-4 pb-4 pt-1 border-t border-slate-50">
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-500 mb-3">
-                            <div><span className="text-slate-400">Start Date</span><br /><strong className="text-slate-700">{t.startDate ?? t.date}</strong></div>
-                            <div><span className="text-slate-400">Deadline</span><br /><strong className="text-slate-700">{t.deadline}{t.deadlineTime ? ` ${t.deadlineTime}` : ''}</strong></div>
-                            <div><span className="text-slate-400">Sets Done</span><br /><strong className="text-slate-700">{t.completedQty}</strong></div>
-                            <div><span className="text-slate-400">Notes</span><br /><strong className="text-slate-700">{t.notes ?? '—'}</strong></div>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            {!t.materialsDeducted && (
-                              <button onClick={() => handleStart(t)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors">
-                                ▶ Start Production
-                              </button>
-                            )}
-                            {!t.finishedGoodsAdded && t.completedQty > 0 && (
-                              <button onClick={() => handleComplete(t)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors">
-                                ✓ Complete
-                              </button>
-                            )}
-                            <button onClick={() => openEdit(t)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors">
-                              <Pencil size={11} /> Edit
-                            </button>
-                            <button onClick={() => handleDelete(t)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors">
-                              <Trash2 size={11} /> Delete
-                            </button>
-                          </div>
-                        </div>
-                      )}
+        const renderRecipeCard = (t: ProductionTarget) => {
+          const p = pct(t.completedQty, t.targetQty);
+          const isOpen = expanded.has(t.id);
+          return (
+            <div key={t.id} className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+              <button className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors"
+                onClick={() => toggleExpand(t.id)}>
+                {isOpen ? <ChevronDown size={14} className="text-slate-400 shrink-0" /> : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-slate-800">{t.recipeName} × {t.targetQty} sets</p>
+                  <div className="flex items-center gap-3 mt-1">
+                    <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-violet-500 rounded-full" style={{ width: `${p}%` }} />
                     </div>
-                  );
-                })}
-              </div>
+                    <span className="text-xs text-slate-500 tabular-nums shrink-0">{t.completedQty}/{t.targetQty} sets ({p}%)</span>
+                  </div>
+                </div>
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${STATUS_CLS[t.status]}`}>
+                  {STATUS_LABEL[t.status]}
+                </span>
+              </button>
+              {isOpen && (
+                <div className="px-4 pb-4 pt-1 border-t border-slate-50">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-500 mb-3">
+                    <div><span className="text-slate-400">Start Date</span><br /><strong className="text-slate-700">{t.startDate ?? t.date}</strong></div>
+                    <div><span className="text-slate-400">Deadline</span><br /><strong className="text-slate-700">{t.deadline}{t.deadlineTime ? ` ${t.deadlineTime}` : ''}</strong></div>
+                    <div><span className="text-slate-400">Sets Done</span><br /><strong className="text-slate-700">{t.completedQty}</strong></div>
+                    <div><span className="text-slate-400">Notes</span><br /><strong className="text-slate-700">{t.notes ?? '—'}</strong></div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!t.materialsDeducted && (
+                      <button onClick={() => handleStart(t)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors">
+                        ▶ Start Production
+                      </button>
+                    )}
+                    {!t.finishedGoodsAdded && t.completedQty > 0 && (
+                      <button onClick={() => handleComplete(t)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors">
+                        ✓ Complete
+                      </button>
+                    )}
+                    <button onClick={() => openEdit(t)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors">
+                      <Pencil size={11} /> Edit
+                    </button>
+                    <button onClick={() => handleDelete(t)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors">
+                      <Trash2 size={11} /> Delete
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </>
-      )}
+          );
+        };
+
+        if (date) {
+          return (
+            <>
+              {stageTargets.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Stage Targets</p>
+                  <div className="space-y-2">{stageTargets.map(renderStageCard)}</div>
+                </div>
+              )}
+              {recipeTargets.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Recipe Targets</p>
+                  <div className="space-y-2">{recipeTargets.map(renderRecipeCard)}</div>
+                </div>
+              )}
+            </>
+          );
+        }
+
+        // All-records mode: group by date
+        const dateMap = new Map<string, ProductionTarget[]>();
+        for (const t of targets) {
+          const existing = dateMap.get(t.date) ?? [];
+          existing.push(t);
+          dateMap.set(t.date, existing);
+        }
+        const dateGroups = Array.from(dateMap.entries());
+
+        return (
+          <div className="space-y-6">
+            {dateGroups.map(([groupDate, items]) => (
+              <div key={groupDate}>
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="text-xs font-bold text-slate-500">{groupDate}</span>
+                  <div className="flex-1 h-px bg-slate-100" />
+                  <span className="text-[10px] text-slate-400">{items.length} target{items.length !== 1 ? 's' : ''}</span>
+                </div>
+                <div className="space-y-2">
+                  {items.filter(t => t.type === 'stage').map(renderStageCard)}
+                  {items.filter(t => t.type === 'recipe').map(renderRecipeCard)}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Create / Edit Modal */}
       {showModal && (

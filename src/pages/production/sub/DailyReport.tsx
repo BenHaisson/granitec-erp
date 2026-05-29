@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { FileDown, TrendingDown, CheckCircle2, AlertTriangle, Clock } from 'lucide-react';
-import { getTargets, getEntries } from '@/services/productionTargets.service';
+import { FileDown, TrendingDown, CheckCircle2, AlertTriangle, Clock, X } from 'lucide-react';
+import { getTargets, getAllTargets, getEntries, getAllEntries } from '@/services/productionTargets.service';
 import type { ProductionTarget, ProductionEntry } from '@/types';
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -11,15 +11,17 @@ const STATUS_ICON: Record<string, string> = {
 };
 
 export default function DailyReport() {
-  const [date, setDate]         = useState(todayISO());
+  const [date, setDate]         = useState('');
   const [targets, setTargets]   = useState<ProductionTarget[]>([]);
   const [entries, setEntries]   = useState<ProductionEntry[]>([]);
   const [loading, setLoading]   = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([getTargets(date), getEntries(date)])
-      .then(([t, e]) => { setTargets(t); setEntries(e); })
+    Promise.all([
+      date ? getTargets(date) : getAllTargets(),
+      date ? getEntries(date) : getAllEntries(),
+    ]).then(([t, e]) => { setTargets(t); setEntries(e); })
       .finally(() => setLoading(false));
   }, [date]);
 
@@ -111,15 +113,25 @@ export default function DailyReport() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-800">Daily Report</h2>
-          <p className="text-sm text-slate-500 mt-0.5">Production summary for {date}</p>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {date ? `Production summary for ${date}` : 'All production — summary'}
+          </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <input type="date" value={date} onChange={e => setDate(e.target.value)}
             className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-          <button onClick={downloadReport}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
-            <FileDown size={14} /> Download Report
-          </button>
+          {date && (
+            <button onClick={() => setDate('')}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+              <X size={13} /> All dates
+            </button>
+          )}
+          {date && (
+            <button onClick={downloadReport}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
+              <FileDown size={14} /> Download Report
+            </button>
+          )}
         </div>
       </div>
 
@@ -127,7 +139,7 @@ export default function DailyReport() {
         <div className="text-center py-20 text-slate-400 text-sm">Loading…</div>
       ) : targets.length === 0 ? (
         <div className="bg-white rounded-xl border border-dashed border-slate-200 p-16 text-center">
-          <p className="text-slate-500 font-medium">No data for this date</p>
+          <p className="text-slate-500 font-medium">{date ? 'No data for this date' : 'No production data yet'}</p>
         </div>
       ) : (
         <>

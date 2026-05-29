@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { CheckCircle2, Trash2, Clock } from 'lucide-react';
-import { getTargets, getEntries, createEntry, deleteEntry, updateTarget } from '@/services/productionTargets.service';
+import { CheckCircle2, Trash2, Clock, X } from 'lucide-react';
+import { getTargets, getAllTargets, getEntries, getAllEntries, createEntry, deleteEntry, updateTarget } from '@/services/productionTargets.service';
 import type { ProductionTarget, ProductionEntry } from '@/types';
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -17,7 +17,7 @@ const QUALITY_OPTIONS = [
 ];
 
 export default function DataEntry() {
-  const [date, setDate]           = useState(todayISO());
+  const [date, setDate]           = useState('');
   const [targets, setTargets]     = useState<ProductionTarget[]>([]);
   const [entries, setEntries]     = useState<ProductionEntry[]>([]);
   const [selectedId, setSelected] = useState<string | null>(null);
@@ -37,17 +37,18 @@ export default function DataEntry() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([getTargets(date), getEntries(date)])
-      .then(([t, e]) => {
-        setTargets(t);
-        setEntries(e.sort((a, b) => b.loggedAt.localeCompare(a.loggedAt)));
-        if (!selectedId && t.length > 0) setSelected(t[0].id);
-      })
-      .finally(() => setLoading(false));
+    Promise.all([
+      date ? getTargets(date) : getAllTargets(),
+      date ? getEntries(date) : getAllEntries(),
+    ]).then(([t, e]) => {
+      setTargets(t.sort((a, b) => b.date.localeCompare(a.date)));
+      setEntries(e.sort((a, b) => b.loggedAt.localeCompare(a.loggedAt)));
+      if (!selectedId && t.length > 0) setSelected(t[0].id);
+    }).finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, [date]);
-  useEffect(() => { setLogDate(date); }, [date]);
+  useEffect(() => { setLogDate(date || todayISO()); }, [date]);
 
   const selected = targets.find(t => t.id === selectedId) ?? null;
   const targetEntries = entries.filter(e => e.targetId === selectedId);
@@ -102,16 +103,24 @@ export default function DataEntry() {
           <h2 className="text-xl font-bold text-slate-800">Data Entry</h2>
           <p className="text-sm text-slate-500 mt-0.5">Log production batches</p>
         </div>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)}
-          className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <div className="flex items-center gap-2">
+          <input type="date" value={date} onChange={e => setDate(e.target.value)}
+            className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          {date && (
+            <button onClick={() => setDate('')}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+              <X size={13} /> All dates
+            </button>
+          )}
+        </div>
       </div>
 
       {loading ? (
         <div className="text-center py-20 text-slate-400 text-sm">Loading…</div>
       ) : targets.length === 0 ? (
         <div className="bg-white rounded-xl border border-dashed border-slate-200 p-16 text-center">
-          <p className="text-slate-500 font-medium">No targets for this date</p>
-          <p className="text-slate-400 text-sm mt-1">Create targets in Daily Planning first</p>
+          <p className="text-slate-500 font-medium">{date ? 'No targets for this date' : 'No production targets yet'}</p>
+          <p className="text-slate-400 text-sm mt-1">{date ? 'Try clearing the date filter' : 'Create targets in Daily Planning first'}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
@@ -130,6 +139,7 @@ export default function DataEntry() {
                     <p className="text-sm font-semibold text-slate-800">
                       {t.type === 'stage' ? `${t.stage} — ${t.discType}` : `${t.recipeName} × ${t.targetQty}`}
                     </p>
+                    {!date && <p className="text-[10px] text-slate-400 mt-0.5 font-mono">{t.date}</p>}
                     <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${t.status === 'complete' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
                       {p}%
                     </span>
