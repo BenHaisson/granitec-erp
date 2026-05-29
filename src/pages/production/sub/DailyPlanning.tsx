@@ -165,11 +165,11 @@ export default function DailyPlanning() {
     if (!feasibilityDialog) return;
     setFeasSaving(true);
     try {
+      const targetId = await createTarget(feasibilityDialog.pendingPayload);
       for (const sf of feasibilityDialog.shortfalls) {
         const shortAmount = sf.need - sf.have;
-        await addUnverifiedStock(sf.productId, shortAmount, `Production target: ${feasibilityDialog.pendingPayload.recipeName ?? ''}`);
+        await addUnverifiedStock(sf.productId, shortAmount, `Production target ${targetId}: ${feasibilityDialog.pendingPayload.recipeName ?? ''}`);
       }
-      await createTarget(feasibilityDialog.pendingPayload);
       setFeasibilityDialog(null); setShowModal(false); load();
     } catch { setError('Failed to create target.'); }
     finally { setFeasSaving(false); }
