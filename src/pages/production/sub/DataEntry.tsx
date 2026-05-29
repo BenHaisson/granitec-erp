@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { CheckCircle2, Trash2, Clock, X } from 'lucide-react';
 import { getTargets, getAllTargets, getEntries, getAllEntries, createEntry, deleteEntry, updateTarget } from '@/services/productionTargets.service';
-import type { ProductionTarget, ProductionEntry } from '@/types';
+import { getRecipes, startProductionTarget, completeProductionTarget } from '@/services/production.service';
+import type { ProductionTarget, ProductionEntry, Recipe } from '@/types';
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function nowHHMM() {
@@ -20,6 +21,7 @@ export default function DataEntry() {
   const [date, setDate]           = useState('');
   const [targets, setTargets]     = useState<ProductionTarget[]>([]);
   const [entries, setEntries]     = useState<ProductionEntry[]>([]);
+  const [recipes, setRecipes]     = useState<Recipe[]>([]);
   const [selectedId, setSelected] = useState<string | null>(null);
   const [loading, setLoading]     = useState(true);
 
@@ -40,9 +42,11 @@ export default function DataEntry() {
     Promise.all([
       date ? getTargets(date) : getAllTargets(),
       date ? getEntries(date) : getAllEntries(),
-    ]).then(([t, e]) => {
+      getRecipes(),
+    ]).then(([t, e, r]) => {
       setTargets(t.sort((a, b) => b.date.localeCompare(a.date)));
       setEntries(e.sort((a, b) => b.loggedAt.localeCompare(a.loggedAt)));
+      setRecipes(r);
       if (!selectedId && t.length > 0) setSelected(t[0].id);
     }).finally(() => setLoading(false));
   };
@@ -74,15 +78,38 @@ export default function DataEntry() {
         loggedAt: time,
         notes: notes || undefined,
       });
-      // Update target completedQty
+
       const newCompleted = selected.completedQty + n;
       const newStatus = newCompleted >= selected.targetQty ? 'complete'
         : newCompleted > 0 ? 'in_progress' : 'not_started';
       await updateTarget(selected.id, { completedQty: newCompleted, status: newStatus });
 
-      setSuccess(`✓ Logged ${n} units — ${selected.stage} now at ${newCompleted}/${selected.targetQty}`);
+      const recipe = selected.type === 'recipe'
+        ? recipes.find(r => r.id === selected.recipeId) : undefined;
+
+      // Auto-start: deduct raw materials on first batch logged
+      if (recipe && !selected.materialsDeducted && selected.completedQty === 0) {
+        try { await startProductionTarget(selected, recipe); }
+        catch { /* non-fatal — manual Start button still available in Daily Planning */ }
+      }
+
+      // Auto-complete: add finished goods to warehouse when target is met
+      if (recipe && !selected.finishedGoodsAdded && newCompleted >= selected.targetQty) {
+        try {
+          await completeProductionTarget({ ...selected, completedQty: newCompleted }, recipe);
+          setSuccess(`✓ Logged ${n} units — production complete. Added to warehouse stock.`);
+        } catch (err) {
+          setSuccess(`✓ Logged ${n} units. Warehouse update failed: ${err instanceof Error ? err.message : 'check recipe setup'}`);
+        }
+      } else {
+        const label = selected.type === 'stage'
+          ? `${selected.stage} now at ${newCompleted}/${selected.targetQty}`
+          : `${newCompleted}/${selected.targetQty} sets`;
+        setSuccess(`✓ Logged ${n} units — ${label}`);
+      }
+
       setQty(''); setGoodQty(''); setDefects(''); setNotes('');
-      setTimeout(() => setSuccess(''), 4000);
+      setTimeout(() => setSuccess(''), 5000);
       load();
     } catch { setError('Failed to save entry.'); }
     finally { setSaving(false); }
@@ -182,6 +209,16 @@ export default function DataEntry() {
                 {/* Entry form */}
                 <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 space-y-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Log New Batch</p>
+                  {selected.type === 'recipe' && !selected.materialsDeducted && selected.completedQty === 0 && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+                      ⚠ Logging the first batch will automatically deduct raw materials from inventory.
+                    </div>
+                  )}
+                  {selected.type === 'recipe' && selected.finishedGoodsAdded && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-xs text-emerald-700">
+                      ✓ Production complete — finished goods already added to warehouse.
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Units Completed <span className="text-red-500">*</span></label>

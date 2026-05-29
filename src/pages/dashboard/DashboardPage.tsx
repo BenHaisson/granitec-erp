@@ -9,10 +9,10 @@ import {
   Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
 import { getProducts, getMovements } from '@/services/inventory.service';
-import { getProductionOrders } from '@/services/production.service';
+import { getAllTargets } from '@/services/productionTargets.service';
 import { getSales } from '@/services/sales.service';
 import { getOrders } from '@/services/orders.service';
-import type { Product, ProductionOrder, Sale, InventoryMovement } from '@/types';
+import type { Product, ProductionTarget, Sale, InventoryMovement } from '@/types';
 import type { SalesOrder } from '@/types';
 
 // ── Stat card ────────────────────────────────────────────────────
@@ -92,14 +92,14 @@ const today = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'nu
 
 export default function DashboardPage() {
   const [products, setProducts] = useState<Product[]>([]);
-  const [orders, setOrders] = useState<ProductionOrder[]>([]);
+  const [orders, setOrders] = useState<ProductionTarget[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([getProducts(), getProductionOrders(), getSales(), getOrders(), getMovements()])
+    Promise.all([getProducts(), getAllTargets(), getSales(), getOrders(), getMovements()])
       .then(([p, o, s, so, m]) => {
         setProducts(p); setOrders(o); setSales(s); setSalesOrders(so); setMovements(m);
       })
@@ -110,7 +110,7 @@ export default function DashboardPage() {
   const finishedGoods   = products.filter(p => p.type === 'FINISHED');
   const lowStock        = products.filter(p => p.stock_level > 0 && p.stock_level <= p.min_stock);
   const emptyStock      = products.filter(p => p.stock_level <= 0);
-  const activeOrders    = orders.filter(o => o.status === 'PLANNED' || o.status === 'IN_PROGRESS');
+  const activeOrders    = orders.filter(o => o.status === 'not_started' || o.status === 'in_progress');
   const totalRevenue    = sales.reduce((sum, s) => sum + (s.totalAmount ?? 0), 0);
   const totalDiscStock  = rawMaterials.reduce((s, p) => s + p.stock_level, 0);
 
@@ -209,7 +209,7 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Completed Orders"
-          value={orders.filter(o => o.status === 'COMPLETED').length}
+          value={orders.filter(o => o.status === 'complete').length}
           icon={Factory}
           gradient="from-slate-500 to-slate-700"
           shadow="shadow-slate-500/20"
@@ -295,15 +295,17 @@ export default function DashboardPage() {
               {activeOrders.slice(0, 6).map(o => (
                 <div key={o.id} className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-slate-700">Order #{o.id.slice(0, 8)}</p>
-                    <p className="text-xs text-slate-400">Qty: {o.quantity}</p>
+                    <p className="text-sm font-medium text-slate-700">
+                      {o.type === 'recipe' ? (o.recipeName ?? o.recipeId) : `${o.stage} — ${o.discType}`}
+                    </p>
+                    <p className="text-xs text-slate-400">{o.date} · {o.completedQty}/{o.targetQty} units</p>
                   </div>
                   <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                    o.status === 'IN_PROGRESS'
+                    o.status === 'in_progress'
                       ? 'bg-blue-100 text-blue-700'
                       : 'bg-yellow-100 text-yellow-700'
                   }`}>
-                    {o.status}
+                    {o.status.replace('_', ' ')}
                   </span>
                 </div>
               ))}

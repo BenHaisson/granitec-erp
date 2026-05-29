@@ -46,13 +46,14 @@ export const receiveShippingOrder = async (
   order: ShippingOrder,
   receipt?: { blNumber?: string; remarks?: string; documentUrl?: string; documentName?: string },
   reconcileProductIds?: Set<string>
-): Promise<void> => {
+): Promise<string[]> => {
   const normalLines    = order.lines.filter(l => !reconcileProductIds?.has(l.productId));
   const reconcileLines = order.lines.filter(l => reconcileProductIds?.has(l.productId));
 
   // Normal lines — add to stock_level + create PURCHASE movements
+  let failedIds: string[] = [];
   if (normalLines.length > 0) {
-    await receiveSupplyBatch(
+    failedIds = await receiveSupplyBatch(
       normalLines.map(l => ({ productId: l.productId, qty: l.qty })),
       order.ref,
       new Date(order.date)
@@ -70,6 +71,7 @@ export const receiveShippingOrder = async (
   if (receipt?.documentUrl) update.documentUrl = receipt.documentUrl;
   if (receipt?.documentName) update.documentName = receipt.documentName;
   await updateDoc(doc(db, 'shipping_orders', order.id), update);
+  return failedIds;
 };
 
 export const deleteShippingOrder = async (id: string): Promise<void> => {

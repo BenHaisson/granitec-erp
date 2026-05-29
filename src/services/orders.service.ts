@@ -37,8 +37,10 @@ export const createOrder = async (order: Omit<SalesOrder, 'id'>): Promise<string
     for (let i = 0; i < validLines.length; i++) {
       const line = validLines[i];
       const snap = prodSnaps[i];
-      if (!snap.exists()) { console.error(`[createOrder] Product ${line.productId} not found`); continue; }
-      tx.update(snap.ref, { stock_level: (snap.data().stock_level as number) - line.totalQty });
+      if (!snap.exists()) throw new Error(`Product ${line.productName ?? line.productId} not found`);
+      const current = snap.data().stock_level as number;
+      if (current < line.totalQty) throw new Error(`Insufficient stock for ${snap.data().name as string}: need ${line.totalQty}, have ${current}`);
+      tx.update(snap.ref, { stock_level: current - line.totalQty });
       tx.set(doc(collection(db, 'inventory_movements')), {
         productId: line.productId, quantity: -line.totalQty, reason: 'SALE',
         note: order.ref ?? orderRef.id, createdAt: Timestamp.now(),

@@ -225,6 +225,7 @@ export const completeProductionTarget = async (
   await runTransaction(db, async (tx) => {
     const finRef = doc(db, 'products', recipe.finishedProductId);
     const finSnap = await tx.get(finRef);
+    if (!finSnap.exists()) throw new Error(`Finished product "${recipe.finishedProductId}" not found. Add it to the products catalogue first.`);
     const current = (finSnap.data()?.stock_level as number) ?? 0;
     tx.update(finRef, { stock_level: current + qty });
     tx.set(doc(collection(db, 'inventory_movements')), {

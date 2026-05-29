@@ -67,7 +67,7 @@ export const receiveSupplyBatch = async (
   lines: { productId: string; qty: number }[],
   ref: string,
   date: Date
-): Promise<void> => {
+): Promise<string[]> => {
   const failedIds = new Set<string>();
   for (const line of lines) {
     try {
@@ -97,6 +97,7 @@ export const receiveSupplyBatch = async (
     });
     await batch.commit();
   }
+  return Array.from(failedIds);
 };
 
 export const updateProduct = (id: string, patch: Partial<import('@/types').Product>) =>
@@ -137,7 +138,17 @@ export const reconcileUnverifiedStock = async (productId: string, qty: number) =
     const snap = await tx.get(ref);
     if (!snap.exists()) return;
     const current = (snap.data().unverified_stock ?? 0) as number;
+    const deducted = Math.min(current, qty);
     tx.update(ref, { unverified_stock: Math.max(0, current - qty) });
+    if (deducted > 0) {
+      tx.set(doc(collection(db, 'inventory_movements')), {
+        productId,
+        quantity: -deducted,
+        reason: 'ADJUSTMENT',
+        note: `Reconciled unverified: ${qty} units`,
+        createdAt: Timestamp.now(),
+      });
+    }
   });
 };
 

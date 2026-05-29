@@ -1440,7 +1440,7 @@ export default function ShippingPage() {
     const reconcileProductIds = new Set(
       receivingOrder.lines.filter(l => l.reconcile).map(l => l.productId)
     );
-    await receiveShippingOrder(receivingOrder, {
+    const failedIds = await receiveShippingOrder(receivingOrder, {
       blNumber: data.blNumber.trim() || undefined,
       remarks: data.remarks.trim() || undefined,
       documentUrl,
@@ -1448,6 +1448,9 @@ export default function ShippingPage() {
     }, reconcileProductIds);
     setReceiving(s => { const n = new Set(s); n.delete(receivingOrder.id); return n; });
     setReceivingOrder(null);
+    if (failedIds.length > 0) {
+      alert(`⚠ ${failedIds.length} product(s) could not be received (not found in inventory): ${failedIds.join(', ')}`);
+    }
     await load();
   };
 
