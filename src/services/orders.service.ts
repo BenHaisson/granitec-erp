@@ -18,10 +18,10 @@ export const getOrders = async (): Promise<SalesOrder[]> => {
   return snap.docs.map(d => toOrder(d.id, d.data() as Record<string, unknown>));
 };
 
-export const generateOrderRef = async (): Promise<string> => {
+export const generateOrderRef = async (year?: number): Promise<string> => {
   const snap = await getDocs(collection(db, 'sales_orders'));
-  const year = new Date().getFullYear();
-  const prefix = `ORD-${year}-`;
+  const y = year ?? new Date().getFullYear();
+  const prefix = `ORD-${y}-`;
   const max = snap.docs
     .map(d => (d.data().ref as string) ?? '')
     .filter(r => r.startsWith(prefix))

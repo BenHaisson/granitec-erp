@@ -503,7 +503,8 @@ function NewOrderModal({ products, onClose, onSaved }: {
   const boxesRefs = useRef<HTMLInputElement[]>([]);
   const pendingQuickAdd = useRef<{ idx: number; data: Partial<DraftLine> } | null>(null);
 
-  useEffect(() => { generateOrderRef().then(setOrderRef); }, []);
+  const dateYear = date ? new Date(date + 'T12:00:00').getFullYear() : new Date().getFullYear();
+  useEffect(() => { generateOrderRef(dateYear).then(setOrderRef); }, [dateYear]);
   useEffect(() => { setTimeout(() => clientRef.current?.focus(), 80); }, []);
 
   useEffect(() => {
