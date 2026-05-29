@@ -185,16 +185,21 @@ export const startProductionTarget = async (
 ): Promise<void> => {
   if (target.materialsDeducted) throw new Error('Already started');
   await runTransaction(db, async (tx) => {
-    for (const comp of recipe.components) {
+    // Phase 1: all reads first (Firestore requires reads before any writes)
+    const prodRefs = recipe.components.map(comp => doc(db, 'products', comp.productId));
+    const snaps = await Promise.all(prodRefs.map(ref => tx.get(ref)));
+
+    // Phase 2: all writes
+    for (let i = 0; i < recipe.components.length; i++) {
+      const comp = recipe.components[i];
+      const snap = snaps[i];
       const need = comp.quantity * target.targetQty;
-      const prodRef = doc(db, 'products', comp.productId);
-      const snap = await tx.get(prodRef);
       const data = snap.data() ?? {};
       const realStock = (data.stock_level as number) ?? 0;
       const unverifiedStock = (data.unverified_stock as number) ?? 0;
       const realDeduct = Math.min(realStock, need);
       const unverifiedDeduct = Math.min(unverifiedStock, need - realDeduct);
-      tx.update(prodRef, {
+      tx.update(prodRefs[i], {
         stock_level: realStock - realDeduct,
         unverified_stock: unverifiedStock - unverifiedDeduct,
       });
