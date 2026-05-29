@@ -495,6 +495,7 @@ function NewOrderModal({ products, onClose, onSaved }: {
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState('');
   const [quickSearch, setQuickSearch] = useState('');
+  const [hideZero, setHideZero]       = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const [showImport, setShowImport]   = useState(false);
   const [importText, setImportText]   = useState('');
@@ -576,12 +577,15 @@ function NewOrderModal({ products, onClose, onSaved }: {
   const validCount = lines.filter(l => l.productId && l.totalQty > 0).length;
 
   const qs = quickSearch.toLowerCase();
-  const sidebarProducts = qs
-    ? products.filter(p => p.name.toLowerCase().includes(qs) || p.sku.toLowerCase().includes(qs))
-    : products;
+  const addedIds = new Set(lines.map(l => l.productId).filter(Boolean));
+  const sidebarProducts = products.filter(p => {
+    if (addedIds.has(p.id)) return false;
+    if (hideZero && p.stock_level <= 0) return false;
+    if (qs && !p.name.toLowerCase().includes(qs) && !p.sku.toLowerCase().includes(qs)) return false;
+    return true;
+  });
   const sidebarCats = [...CATEGORY_ORDER.filter(c => sidebarProducts.some(p => p.category === c)),
     ...Array.from(new Set(sidebarProducts.map(p => p.category ?? 'Other'))).filter(c => !CATEGORY_ORDER.includes(c))];
-  const addedIds = new Set(lines.map(l => l.productId).filter(Boolean));
 
   return (
     <div className="fixed inset-0 z-[100] bg-white flex flex-col overflow-hidden">
@@ -623,7 +627,13 @@ function NewOrderModal({ products, onClose, onSaved }: {
         {/* Quick Access Sidebar */}
         <div className="w-72 shrink-0 border-r border-slate-200 flex flex-col bg-slate-50 overflow-hidden">
           <div className="px-3 py-3 border-b border-slate-200">
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Quick Add</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Quick Add</p>
+              <button type="button" onClick={() => setHideZero(h => !h)}
+                className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${hideZero ? 'bg-orange-100 text-orange-700 border-orange-300' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>
+                Hide zero
+              </button>
+            </div>
             <div className="relative">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input type="text" value={quickSearch} onChange={e => setQuickSearch(e.target.value)}
@@ -649,17 +659,13 @@ function NewOrderModal({ products, onClose, onSaved }: {
                     <span className="text-slate-400">{collapsed ? '▸' : '▾'}</span>
                   </button>
                   {!collapsed && items.map(p => {
-                    const added = addedIds.has(p.id);
                     const parsed = extractColor(p.name);
                     return (
                       <button key={p.id} type="button" onClick={() => handleQuickAdd(p)}
-                        className={`w-full text-left px-3 py-2 border-b border-slate-100 transition-colors ${added ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-white'}`}>
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            {parsed?.color && <span className={`w-2 h-2 rounded-full shrink-0 ${COLOR_DOT[parsed.color]}`} />}
-                            <span className="text-xs font-medium text-slate-700 truncate">{p.name}</span>
-                          </div>
-                          {added && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />}
+                        className="w-full text-left px-3 py-2 border-b border-slate-100 hover:bg-white transition-colors">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {parsed?.color && <span className={`w-2 h-2 rounded-full shrink-0 ${COLOR_DOT[parsed.color]}`} />}
+                          <span className="text-xs font-medium text-slate-700 truncate">{p.name}</span>
                         </div>
                         <div className="flex items-center justify-between mt-0.5">
                           <span className="text-[10px] font-mono text-slate-400">{p.sku}</span>
