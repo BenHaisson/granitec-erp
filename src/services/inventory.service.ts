@@ -214,6 +214,18 @@ export const resetAllStockToZero = async (): Promise<void> => {
   }
 };
 
+export const resetFinishedProductStock = async (): Promise<number> => {
+  const snap = await getDocs(collection(db, 'products'));
+  const finished = snap.docs.filter(d => d.data().type === 'FINISHED');
+  const CHUNK = 400;
+  for (let i = 0; i < finished.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    finished.slice(i, i + CHUNK).forEach(d => batch.update(d.ref, { stock_level: 0 }));
+    await batch.commit();
+  }
+  return finished.length;
+};
+
 export const deletePhantomAdjustmentMovements = async (): Promise<number> => {
   const snap = await getDocs(
     query(collection(db, 'inventory_movements'), where('reason', '==', 'ADJUSTMENT'))

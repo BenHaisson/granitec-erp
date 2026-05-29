@@ -1,6 +1,6 @@
 import {
   collection, addDoc, getDocs, doc, deleteDoc, updateDoc,
-  query, where, orderBy, limit, Timestamp,
+  query, where, orderBy, limit, Timestamp, writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { ProductionTarget, ProductionEntry } from '@/types';
@@ -65,3 +65,23 @@ export const createEntry = async (
 
 export const deleteEntry = (id: string) =>
   deleteDoc(doc(db, 'production_entries', id));
+
+export const deleteAllProductionTargets = async (): Promise<void> => {
+  const snap = await getDocs(collection(db, 'production_targets'));
+  const CHUNK = 400;
+  for (let i = 0; i < snap.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    snap.docs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+};
+
+export const deleteAllProductionEntries = async (): Promise<void> => {
+  const snap = await getDocs(collection(db, 'production_entries'));
+  const CHUNK = 400;
+  for (let i = 0; i < snap.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    snap.docs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+};

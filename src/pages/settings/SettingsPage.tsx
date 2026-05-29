@@ -6,10 +6,12 @@ import {
 } from 'lucide-react';
 import {
   getProducts, getProductsFresh, upsertProduct,
-  deleteAllMovements, resetAllStockToZero,
+  deleteAllMovements, resetAllStockToZero, clearAllUnverifiedStock,
+  resetFinishedProductStock,
   updateProduct, deleteProduct, recalculateStockFromMovements,
   backfillPurchaseMovements, deletePhantomAdjustmentMovements,
 } from '@/services/inventory.service';
+import { deleteAllProductionTargets, deleteAllProductionEntries } from '@/services/productionTargets.service';
 import { getOrders, deleteAllOrders } from '@/services/orders.service';
 import {
   getRecipes, upsertRecipe, deleteAllRecipes,
@@ -71,6 +73,10 @@ export default function SettingsPage() {
   const [opRecalc,    setOpRecalc]    = useState<OpState>($idle);
   const [opReset,     setOpReset]     = useState<OpState>($idle);
   const [resetText,   setResetText]   = useState('');
+  const [opClearProd, setOpClearProd] = useState<OpState>($idle);
+  const [opClearUnv,  setOpClearUnv]  = useState<OpState>($idle);
+  const [opClearWh,   setOpClearWh]   = useState<OpState>($idle);
+  const [opClearMovs, setOpClearMovs] = useState<OpState>($idle);
 
   const loadStats = async (fresh = false) => {
     const [products, orders, recipes, machines, libItems, prodOrders] = await Promise.all([
@@ -217,6 +223,31 @@ export default function SettingsPage() {
       setOpReset({ running: false, status: 'error', msg: e instanceof Error ? e.message : 'Reset failed.' });
     }
   };
+
+  const handleClearProduction = () => run(setOpClearProd, async () => {
+    if (!confirm('Delete all production targets and batch entries? This cannot be undone.')) throw new Error('Cancelled.');
+    await deleteAllProductionTargets();
+    await deleteAllProductionEntries();
+    return 'All production targets and entries deleted.';
+  });
+
+  const handleClearUnverified = () => run(setOpClearUnv, async () => {
+    if (!confirm('Reset all unverified stock to 0? Movement history is preserved.')) throw new Error('Cancelled.');
+    const result = await clearAllUnverifiedStock();
+    return `Unverified stock cleared for ${result.products} product(s).`;
+  });
+
+  const handleClearWarehouse = () => run(setOpClearWh, async () => {
+    if (!confirm('Reset stock to 0 for all finished products? This cannot be undone.')) throw new Error('Cancelled.');
+    const count = await resetFinishedProductStock();
+    return `Warehouse stock reset to 0 for ${count} finished product(s).`;
+  });
+
+  const handleClearMovements = () => run(setOpClearMovs, async () => {
+    if (!confirm('Delete ALL inventory movements? This cannot be undone.')) throw new Error('Cancelled.');
+    await deleteAllMovements();
+    return 'All inventory movements deleted.';
+  });
 
   const statRows = stats ? [
     { icon: <Database size={15} className="text-blue-500" />,    label: 'Finished Products',    value: stats.finished },
@@ -495,6 +526,27 @@ export default function SettingsPage() {
           </div>
           {opReset.status === 'done' && <p className="text-xs text-emerald-600 mt-3 font-medium">{opReset.msg}</p>}
           {opReset.status === 'error' && <p className="text-xs text-red-600 mt-3">{opReset.msg}</p>}
+        </div>
+
+        {/* Scoped resets */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            { label: 'Clear Production Records', sub: 'Deletes all targets and batch entries', handler: handleClearProduction, op: opClearProd },
+            { label: 'Clear Unverified Stock', sub: 'Resets unverified_stock to 0 (history kept)', handler: handleClearUnverified, op: opClearUnv },
+            { label: 'Reset Warehouse Stock', sub: 'Sets stock to 0 on all finished products', handler: handleClearWarehouse, op: opClearWh },
+            { label: 'Clear All Movements', sub: 'Deletes every inventory movement record', handler: handleClearMovements, op: opClearMovs },
+          ].map(({ label, sub, handler, op }) => (
+            <div key={label} className="bg-red-50 rounded-xl border border-red-200 p-4">
+              <p className="text-sm font-semibold text-red-800">{label}</p>
+              <p className="text-xs text-red-500 mt-0.5 mb-3">{sub}</p>
+              <button onClick={handler} disabled={op.running}
+                className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-40">
+                {op.running ? 'Working…' : label}
+              </button>
+              {op.status === 'done' && <p className="text-xs text-emerald-600 mt-2 font-medium">{op.msg}</p>}
+              {op.status === 'error' && op.msg !== 'Cancelled.' && <p className="text-xs text-red-600 mt-2">{op.msg}</p>}
+            </div>
+          ))}
         </div>
       </section>
 
