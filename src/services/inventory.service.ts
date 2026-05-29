@@ -204,6 +204,18 @@ export const deleteAllMovements = async (): Promise<void> => {
   }
 };
 
+export const deleteMovementsByReasons = async (reasons: string[]): Promise<number> => {
+  const snap = await getDocs(collection(db, 'inventory_movements'));
+  const toDelete = snap.docs.filter(d => reasons.includes(d.data().reason as string));
+  const CHUNK = 400;
+  for (let i = 0; i < toDelete.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    toDelete.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+  return toDelete.length;
+};
+
 export const resetAllStockToZero = async (): Promise<void> => {
   const snap = await getDocs(collection(db, 'products'));
   const CHUNK = 400;

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
   getProducts, getProductsFresh, upsertProduct,
-  deleteAllMovements, resetAllStockToZero, clearAllUnverifiedStock,
+  deleteAllMovements, deleteMovementsByReasons, resetAllStockToZero, clearAllUnverifiedStock,
   resetFinishedProductStock,
   updateProduct, deleteProduct, recalculateStockFromMovements,
   backfillPurchaseMovements, deletePhantomAdjustmentMovements,
@@ -243,11 +243,12 @@ export default function SettingsPage() {
     return `Warehouse stock reset to 0 for ${count} finished product(s).`;
   });
 
-  const handleClearMovements = () => run(setOpClearMovs, async () => {
-    if (!confirm('Delete ALL inventory movements? This cannot be undone.')) throw new Error('Cancelled.');
-    await deleteAllMovements();
-    return 'All inventory movements deleted.';
-  });
+  const handleClearMovementSection = (label: string, reasons: string[]) =>
+    run(setOpClearMovs, async () => {
+      if (!confirm(`Delete all ${label} movements? This cannot be undone.`)) throw new Error('Cancelled.');
+      const count = await deleteMovementsByReasons(reasons);
+      return `${count} ${label} movement(s) deleted.`;
+    });
 
   const statRows = stats ? [
     { icon: <Database size={15} className="text-blue-500" />,    label: 'Finished Products',    value: stats.finished },
@@ -530,11 +531,10 @@ export default function SettingsPage() {
 
         {/* Scoped resets */}
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {[
+            {[
             { label: 'Clear Production Records', sub: 'Deletes all targets and batch entries', handler: handleClearProduction, op: opClearProd },
             { label: 'Clear Unverified Stock', sub: 'Resets unverified_stock to 0 (history kept)', handler: handleClearUnverified, op: opClearUnv },
             { label: 'Reset Warehouse Stock', sub: 'Sets stock to 0 on all finished products', handler: handleClearWarehouse, op: opClearWh },
-            { label: 'Clear All Movements', sub: 'Deletes every inventory movement record', handler: handleClearMovements, op: opClearMovs },
           ].map(({ label, sub, handler, op }) => (
             <div key={label} className="bg-red-50 rounded-xl border border-red-200 p-4">
               <p className="text-sm font-semibold text-red-800">{label}</p>
@@ -547,6 +547,27 @@ export default function SettingsPage() {
               {op.status === 'error' && op.msg !== 'Cancelled.' && <p className="text-xs text-red-600 mt-2">{op.msg}</p>}
             </div>
           ))}
+          <div className="bg-red-50 rounded-xl border border-red-200 p-4 sm:col-span-2">
+            <p className="text-sm font-semibold text-red-800">Clear Movements by Section</p>
+            <p className="text-xs text-red-500 mt-0.5 mb-3">Delete movement records for a specific section only</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                { label: 'Shipping',    reasons: ['PURCHASE'],            cls: 'bg-green-600 hover:bg-green-700'    },
+                { label: 'Production',  reasons: ['PRODUCTION'],          cls: 'bg-blue-600 hover:bg-blue-700'      },
+                { label: 'Sales',       reasons: ['SALE'],                cls: 'bg-emerald-600 hover:bg-emerald-700'},
+                { label: 'Adjustments', reasons: ['ADJUSTMENT', 'WASTE'], cls: 'bg-yellow-600 hover:bg-yellow-700'  },
+              ].map(s => (
+                <button key={s.label}
+                  onClick={() => handleClearMovementSection(s.label, s.reasons)}
+                  disabled={opClearMovs.running}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-colors disabled:opacity-40 ${s.cls}`}>
+                  Clear {s.label}
+                </button>
+              ))}
+            </div>
+            {opClearMovs.status === 'done' && <p className="text-xs text-emerald-600 mt-2 font-medium">{opClearMovs.msg}</p>}
+            {opClearMovs.status === 'error' && opClearMovs.msg !== 'Cancelled.' && <p className="text-xs text-red-600 mt-2">{opClearMovs.msg}</p>}
+          </div>
         </div>
       </section>
 
