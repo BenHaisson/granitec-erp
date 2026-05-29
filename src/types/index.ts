@@ -108,6 +108,8 @@ export interface ProductionTarget {
   defects?: number;
   startDate?: string; // YYYY-MM-DD
   deadline: string; // YYYY-MM-DD
+  materialsDeducted?: boolean;
+  finishedGoodsAdded?: boolean;
   deadlineTime?: string; // HH:MM
   line?: string;
   status: 'not_started' | 'in_progress' | 'at_risk' | 'complete';
@@ -165,4 +167,5 @@ export interface ShippingOrder {
   remarks?: string;
   documentUrl?: string;
   documentName?: string;
+  verification?: boolean;
 }

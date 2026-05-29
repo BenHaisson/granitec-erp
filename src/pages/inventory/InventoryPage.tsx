@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, type FormEvent } from 'react';
 import { Plus, FlaskConical, ArrowDownToLine, ChevronDown, Search, FileText, X, Pencil, Trash2, PackagePlus, FileDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
-import { getProducts, addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch, clearAllUnverifiedStock } from '@/services/inventory.service';
+import { getProducts, addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch } from '@/services/inventory.service';
 import { getShippingOrders } from '@/services/shipping.service';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
@@ -1242,41 +1242,6 @@ export default function InventoryPage() {
                 </div>
               </div>
             ))
-          )}
-
-          {/* Unverified Stock Section */}
-          {rawMaterials.some(p => (p.unverified_stock ?? 0) > 0) && (
-            <div className="bg-amber-50 rounded-xl border border-amber-200 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-amber-200 flex items-center gap-2">
-                <span className="text-amber-600 font-bold text-base">⚠</span>
-                <h2 className="text-sm font-semibold text-amber-800">Unverified Stock</h2>
-                <span className="text-xs text-amber-600 ml-1">Stock used in production without a matching supply receipt</span>
-                <button
-                  className="ml-auto px-3 py-1.5 text-xs font-semibold text-red-700 border border-red-300 bg-white rounded-lg hover:bg-red-50 transition-colors"
-                  onClick={async () => {
-                    const count = rawMaterials.filter(p => (p.unverified_stock ?? 0) > 0).length;
-                    if (!confirm(`Clear all unverified stock for ${count} product(s) and delete related movements? This cannot be undone.`)) return;
-                    await clearAllUnverifiedStock();
-                    load();
-                  }}
-                >
-                  Clear All
-                </button>
-              </div>
-              <div className="divide-y divide-amber-100">
-                {rawMaterials.filter(p => (p.unverified_stock ?? 0) > 0).map(p => (
-                  <div key={p.id} className="px-5 py-3 flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-800">{p.name}</p>
-                      <p className="text-xs font-mono text-slate-400">{p.sku}</p>
-                    </div>
-                    <span className="px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold tabular-nums">
-                      {p.unverified_stock} {p.unit}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
           )}
 
           {/* Supply Receipt History */}

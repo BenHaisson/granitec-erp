@@ -825,6 +825,11 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
                   </td>
                   <td className="px-4 py-3">
                     <span className="font-mono font-bold text-slate-800">{order.ref}</span>
+                    {order.verification && (
+                      <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700">
+                        Verification
+                      </span>
+                    )}
                     {order.status === 'RECEIVED' && (order.blNumber || order.documentUrl) && (
                       <span className="ml-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">
                         <CheckCircle2 size={8} /> BL

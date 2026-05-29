@@ -141,10 +141,8 @@ export const reconcileUnverifiedStock = async (productId: string, qty: number) =
   });
 };
 
-export const clearAllUnverifiedStock = async (): Promise<{ products: number; movements: number }> => {
+export const clearAllUnverifiedStock = async (): Promise<{ products: number }> => {
   const CHUNK = 400;
-
-  // Reset unverified_stock to 0 on every product that has it
   const prodSnap = await getDocs(collection(db, 'products'));
   const withUnverified = prodSnap.docs.filter(d => (d.data().unverified_stock ?? 0) > 0);
   for (let i = 0; i < withUnverified.length; i += CHUNK) {
@@ -152,19 +150,7 @@ export const clearAllUnverifiedStock = async (): Promise<{ products: number; mov
     withUnverified.slice(i, i + CHUNK).forEach(d => batch.update(d.ref, { unverified_stock: 0 }));
     await batch.commit();
   }
-
-  // Delete all ADJUSTMENT movements whose note starts with "Unverified:"
-  const movSnap = await getDocs(
-    query(collection(db, 'inventory_movements'), where('reason', '==', 'ADJUSTMENT'))
-  );
-  const unverifiedMovs = movSnap.docs.filter(d => ((d.data().note as string) ?? '').startsWith('Unverified:'));
-  for (let i = 0; i < unverifiedMovs.length; i += CHUNK) {
-    const batch = writeBatch(db);
-    unverifiedMovs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
-    await batch.commit();
-  }
-
-  return { products: withUnverified.length, movements: unverifiedMovs.length };
+  return { products: withUnverified.length };
 };
 
 export const getMovements = async (): Promise<InventoryMovement[]> => {

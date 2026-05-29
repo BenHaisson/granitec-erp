@@ -12,6 +12,7 @@ import SettingsPage from '@/pages/settings/SettingsPage';
 import AnalyticsPage from '@/pages/analytics/AnalyticsPage';
 import LibraryPage from '@/pages/library/LibraryPage';
 import ShippingPage from '@/pages/shipping/ShippingPage';
+import UnverifiedStockPage from '@/pages/inventory/UnverifiedStockPage';
 
 export default function AppRouter() {
   return (
@@ -21,6 +22,7 @@ export default function AppRouter() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/shipping" element={<ShippingPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/unverified-stock" element={<UnverifiedStockPage />} />
         <Route path="/warehouse" element={<WarehousePage />} />
         <Route path="/sales" element={<SalesPage />} />
         <Route path="/production" element={<ProductionPage />} />

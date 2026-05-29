@@ -38,6 +38,7 @@ export const createShippingOrder = async (
     createdAt: Timestamp.now(),
   };
   if (order.supplier) data.supplier = order.supplier;
+  if (order.verification) data.verification = true;
   await addDoc(collection(db, 'shipping_orders'), data);
 };
 
