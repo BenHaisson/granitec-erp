@@ -3,6 +3,7 @@ import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, X } from 'lucide-react
 import { getTargets, getAllTargets, createTarget, updateTarget, deleteTarget } from '@/services/productionTargets.service';
 import { getRecipes, checkFeasibility, startProductionTarget, completeProductionTarget } from '@/services/production.service';
 import { getProducts, addUnverifiedStock } from '@/services/inventory.service';
+import { createShippingOrder } from '@/services/shipping.service';
 import Modal from '@/components/ui/Modal';
 import type { ProductionTarget, ProductionStage, Recipe, Product } from '@/types';
 
@@ -66,6 +67,14 @@ export default function DailyPlanning() {
     pendingPayload: Omit<ProductionTarget, 'id' | 'createdAt'>;
   } | null>(null);
   const [feasSaving, setFeasSaving] = useState(false);
+
+  // Order form state (shown inside feasibility dialog)
+  const [showOrderForm, setShowOrderForm] = useState(false);
+  const [orderRef,      setOrderRef]      = useState('');
+  const [orderSupplier, setOrderSupplier] = useState('');
+  const [orderDate,     setOrderDate]     = useState('');
+  const [orderQtys,     setOrderQtys]     = useState<Record<string, string>>({});
+  const [orderSaving,   setOrderSaving]   = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -173,6 +182,35 @@ export default function DailyPlanning() {
       setFeasibilityDialog(null); setShowModal(false); load();
     } catch { setError('Failed to create target.'); }
     finally { setFeasSaving(false); }
+  };
+
+  const openOrderForm = () => {
+    if (!feasibilityDialog) return;
+    const year = new Date().getFullYear();
+    const uid  = String(Date.now()).slice(-4);
+    setOrderRef(`SH-${year}-${uid}`);
+    setOrderSupplier('');
+    setOrderDate(todayISO());
+    const qtys: Record<string, string> = {};
+    feasibilityDialog.shortfalls.forEach(sf => { qtys[sf.productId] = String(sf.need - sf.have); });
+    setOrderQtys(qtys);
+    setShowOrderForm(true);
+  };
+
+  const handleCreateOrder = async () => {
+    if (!feasibilityDialog || !orderRef.trim()) return;
+    setOrderSaving(true);
+    try {
+      const lines = feasibilityDialog.shortfalls
+        .filter(sf => Number(orderQtys[sf.productId] ?? 0) > 0)
+        .map(sf => {
+          const p = products.find(prod => prod.id === sf.productId);
+          return { productId: sf.productId, productName: p?.name ?? sf.productId, sku: p?.sku ?? '', qty: Number(orderQtys[sf.productId]), reconcile: false };
+        });
+      await createShippingOrder({ ref: orderRef.trim(), supplier: orderSupplier.trim() || undefined, date: orderDate, lines });
+      setFeasibilityDialog(null); setShowOrderForm(false);
+    } catch (e) { alert(`Failed to create order: ${e instanceof Error ? e.message : 'Unknown error'}`); }
+    finally { setOrderSaving(false); }
   };
 
   const handleDelete = async (t: ProductionTarget) => {
@@ -550,7 +588,7 @@ export default function DailyPlanning() {
 
       {/* Feasibility Gate Dialog */}
       {feasibilityDialog && (
-        <Modal title="Insufficient Stock" onClose={() => setFeasibilityDialog(null)}>
+        <Modal title="Insufficient Stock" onClose={() => { setFeasibilityDialog(null); setShowOrderForm(false); }}>
           <div className="space-y-4">
             <p className="text-sm text-slate-700">
               Not enough raw materials to produce <span className="font-semibold">{feasibilityDialog.pendingPayload.targetQty}</span> units.
@@ -580,30 +618,97 @@ export default function DailyPlanning() {
                 </tbody>
               </table>
             </div>
-            <div className="flex flex-col gap-2 pt-1">
-              <button
-                onClick={handleFeasibilityAutoAdjust}
-                disabled={feasSaving || feasibilityDialog.maxProducible <= 0}
-                className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-              >
-                {feasibilityDialog.maxProducible > 0
-                  ? `Auto-adjust to ${feasibilityDialog.maxProducible} units`
-                  : 'Cannot produce any (stock at zero)'}
-              </button>
-              <button
-                onClick={handleFeasibilityUnverified}
-                disabled={feasSaving}
-                className="w-full py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50"
-              >
-                Use unverified stock &amp; keep {feasibilityDialog.pendingPayload.targetQty} units
-              </button>
-              <button
-                onClick={() => setFeasibilityDialog(null)}
-                className="w-full py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-            </div>
+            {!showOrderForm ? (
+              <div className="flex flex-col gap-2 pt-1">
+                <button
+                  onClick={handleFeasibilityAutoAdjust}
+                  disabled={feasSaving || feasibilityDialog.maxProducible <= 0}
+                  className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {feasibilityDialog.maxProducible > 0
+                    ? `Auto-adjust to ${feasibilityDialog.maxProducible} units`
+                    : 'Cannot produce any (stock at zero)'}
+                </button>
+                <button
+                  onClick={handleFeasibilityUnverified}
+                  disabled={feasSaving}
+                  className="w-full py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50"
+                >
+                  Use unverified stock &amp; keep {feasibilityDialog.pendingPayload.targetQty} units
+                </button>
+                <button
+                  onClick={openOrderForm}
+                  disabled={feasSaving}
+                  className="w-full py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  📦 Order Missing Materials
+                </button>
+                <button
+                  onClick={() => { setFeasibilityDialog(null); setShowOrderForm(false); }}
+                  className="w-full py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3 pt-1">
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Reference</label>
+                    <input type="text" value={orderRef} onChange={e => setOrderRef(e.target.value)}
+                      className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Supplier</label>
+                    <input type="text" value={orderSupplier} onChange={e => setOrderSupplier(e.target.value)}
+                      placeholder="Optional"
+                      className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Date</label>
+                    <input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)}
+                      className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  </div>
+                </div>
+                <div className="border border-slate-200 rounded-lg overflow-hidden text-sm">
+                  {(() => {
+                    const groups = new Map<string, typeof feasibilityDialog.shortfalls>();
+                    feasibilityDialog.shortfalls.forEach(sf => {
+                      const cat = products.find(p => p.id === sf.productId)?.category ?? 'Other';
+                      if (!groups.has(cat)) groups.set(cat, []);
+                      groups.get(cat)!.push(sf);
+                    });
+                    return Array.from(groups.entries()).map(([cat, items]) => (
+                      <div key={cat}>
+                        <div className="bg-slate-50 px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wide">{cat}</div>
+                        {items.map(sf => {
+                          const p = products.find(prod => prod.id === sf.productId);
+                          return (
+                            <div key={sf.productId} className="flex items-center gap-3 px-3 py-2 border-t border-slate-100">
+                              <span className="flex-1 text-slate-700 text-xs truncate">{p?.name ?? sf.productId}</span>
+                              <input type="number" min="0" value={orderQtys[sf.productId] ?? ''}
+                                onChange={e => setOrderQtys(q => ({ ...q, [sf.productId]: e.target.value }))}
+                                className="w-20 px-2 py-1 border border-slate-300 rounded text-xs text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                              <span className="text-[10px] text-slate-400 w-8 shrink-0">{p?.unit}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ));
+                  })()}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={handleCreateOrder} disabled={orderSaving || !orderRef.trim()}
+                    className="flex-1 py-2 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors">
+                    {orderSaving ? 'Creating…' : 'Create Shipping Order'}
+                  </button>
+                  <button onClick={() => setShowOrderForm(false)}
+                    className="px-4 py-2 border border-slate-300 text-slate-600 rounded-lg text-sm hover:bg-slate-50 transition-colors">
+                    Back
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </Modal>
       )}
