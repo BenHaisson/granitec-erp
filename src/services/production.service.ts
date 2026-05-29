@@ -2,7 +2,7 @@ import {
   collection, addDoc, getDocs, doc, runTransaction, Timestamp, setDoc, deleteDoc, updateDoc, writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
-import type { ProductionOrder, Recipe, RecipeItem } from '@/types';
+import type { ProductionOrder, ProductionTarget, Recipe, RecipeItem } from '@/types';
 
 export const getRecipes = async (): Promise<Recipe[]> => {
   const snap = await getDocs(collection(db, 'recipes'));
@@ -177,6 +177,68 @@ export const backfillCrepeProductionHistory = async (): Promise<number> => {
   }
 
   return created;
+};
+
+export const startProductionTarget = async (
+  target: ProductionTarget,
+  recipe: Recipe,
+): Promise<void> => {
+  if (target.materialsDeducted) throw new Error('Already started');
+  await runTransaction(db, async (tx) => {
+    for (const comp of recipe.components) {
+      const need = comp.quantity * target.targetQty;
+      const prodRef = doc(db, 'products', comp.productId);
+      const snap = await tx.get(prodRef);
+      const data = snap.data() ?? {};
+      const realStock = (data.stock_level as number) ?? 0;
+      const unverifiedStock = (data.unverified_stock as number) ?? 0;
+      const realDeduct = Math.min(realStock, need);
+      const unverifiedDeduct = Math.min(unverifiedStock, need - realDeduct);
+      tx.update(prodRef, {
+        stock_level: realStock - realDeduct,
+        unverified_stock: unverifiedStock - unverifiedDeduct,
+      });
+      tx.set(doc(collection(db, 'inventory_movements')), {
+        productId: comp.productId,
+        quantity: -(realDeduct + unverifiedDeduct),
+        reason: 'PRODUCTION',
+        note: unverifiedDeduct > 0
+          ? `Production ${target.id} (incl. unverified stock)`
+          : `Production ${target.id}`,
+        createdAt: Timestamp.now(),
+      });
+    }
+    tx.update(doc(db, 'production_targets', target.id), {
+      status: 'in_progress',
+      materialsDeducted: true,
+    });
+  });
+};
+
+export const completeProductionTarget = async (
+  target: ProductionTarget,
+  recipe: Recipe,
+): Promise<void> => {
+  if (target.finishedGoodsAdded) throw new Error('Already completed');
+  const qty = target.completedQty;
+  if (qty <= 0) throw new Error('No completed quantity to record');
+  await runTransaction(db, async (tx) => {
+    const finRef = doc(db, 'products', recipe.finishedProductId);
+    const finSnap = await tx.get(finRef);
+    const current = (finSnap.data()?.stock_level as number) ?? 0;
+    tx.update(finRef, { stock_level: current + qty });
+    tx.set(doc(collection(db, 'inventory_movements')), {
+      productId: recipe.finishedProductId,
+      quantity: qty,
+      reason: 'PRODUCTION',
+      note: `Finished: ${target.recipeName ?? recipe.finishedProductId}`,
+      createdAt: Timestamp.now(),
+    });
+    tx.update(doc(db, 'production_targets', target.id), {
+      status: 'complete',
+      finishedGoodsAdded: true,
+    });
+  });
 };
 
 export const validateAndCompleteProduction = async (orderId: string) => {
