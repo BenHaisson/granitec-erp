@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { getTargets, getAllTargets, createTarget, updateTarget, deleteTarget } from '@/services/productionTargets.service';
-import { getRecipes, checkFeasibility, startProductionTarget, completeProductionTarget } from '@/services/production.service';
+import { getRecipes, checkFeasibility, startProductionTarget, completeProductionTarget, cancelProductionTarget } from '@/services/production.service';
 import { getProducts, addUnverifiedStock } from '@/services/inventory.service';
 import { createShippingOrder } from '@/services/shipping.service';
 import Modal from '@/components/ui/Modal';
@@ -214,9 +214,32 @@ export default function DailyPlanning() {
   };
 
   const handleDelete = async (t: ProductionTarget) => {
-    if (!confirm(`Delete target "${t.type === 'stage' ? `${t.stage} — ${t.discType}` : t.recipeName}"?`)) return;
-    await deleteTarget(t.id);
-    load();
+    const label = t.type === 'stage' ? `${t.stage} — ${t.discType}` : t.recipeName;
+    const hasInventoryImpact = t.materialsDeducted || t.finishedGoodsAdded;
+    const msg = hasInventoryImpact
+      ? `Delete "${label}"?\n\nMaterials will be returned to inventory and all related movements deleted.`
+      : `Delete "${label}"? This cannot be undone.`;
+    if (!confirm(msg)) return;
+
+    try {
+      const recipe = t.type === 'recipe' ? recipes.find(r => r.id === t.recipeId) : undefined;
+
+      if (recipe && t.materialsDeducted) {
+        // Reverse inventory: return materials, remove movements, delete entries
+        await cancelProductionTarget(t, recipe);
+      } else {
+        // No inventory impact — just delete entries
+        const { getAllEntries, deleteEntry } = await import('@/services/productionTargets.service');
+        const allE = await getAllEntries();
+        await Promise.all(allE.filter(e => e.targetId === t.id).map(e => deleteEntry(e.id)));
+      }
+
+      // Delete the target document itself
+      await deleteTarget(t.id);
+      load();
+    } catch (e) {
+      alert(`Delete failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
   };
 
   const handleStart = async (t: ProductionTarget) => {
