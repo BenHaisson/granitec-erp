@@ -3,8 +3,10 @@ import {
   Truck, Plus, ChevronDown, CheckCircle2, Clock, Trash2,
   Search, X, FileText, PackagePlus, AlertCircle, Sparkles,
   ArrowLeft, ToggleLeft, ToggleRight, Pencil, Upload, ExternalLink,
-  Download, FileDown,
+  Download, FileDown, CalendarCheck,
 } from 'lucide-react';
+import { useDraft, getLastEntryDate, saveLastEntryDate } from '@/hooks/useDraft';
+import DraftBanner from '@/components/ui/DraftBanner';
 import { getProducts } from '@/services/inventory.service';
 import {
   getShippingOrders, createShippingOrder, receiveShippingOrder,
@@ -443,6 +445,12 @@ function CreateOrderOverlay({
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Date</label>
             <input type="date" value={date} onChange={e => onDateChange(e.target.value)}
               className="px-3 py-2 border-2 border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400" />
+            {date !== new Date().toISOString().slice(0, 10) && (
+              <button type="button" onClick={() => onDateChange(new Date().toISOString().slice(0, 10))}
+                className="flex items-center gap-1 px-2 py-2 text-xs font-semibold text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors whitespace-nowrap">
+                <CalendarCheck size={12} /> Today
+              </button>
+            )}
           </div>
           <button onClick={onConfirm} disabled={saving}
             className="px-5 py-2 rounded-xl text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm shadow-indigo-200">
@@ -1271,7 +1279,7 @@ export default function ShippingPage() {
   const [ref_, setRef]                = useState('');
   const [refPrefix, setRefPrefix]     = useState<RefPrefix>('SH');
   const [supplier, setSupplier]       = useState('');
-  const [date, setDate]               = useState(todayISO());
+  const [date, setDate]               = useState(getLastEntryDate());
   const [lines, setLines]             = useState<DraftLine[]>([EMPTY_LINE()]);
   const [saving, setSaving]           = useState(false);
   const [saveError, setSaveError]     = useState('');
@@ -1280,6 +1288,29 @@ export default function ShippingPage() {
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const refInputRef = useRef<HTMLInputElement>(null);
 
+  // Draft persistence for new shipping orders
+  type ShipDraft = { supplier: string; date: string; lineData: Array<{ productId: string; productName: string; sku: string; qty: string }> };
+  const { draft: sd, update: updateSd, clearDraft: clearShipDraft, hasDraft: hasShipDraft, isReady: shipReady, savedAt: shipSavedAt, continueDraft: continueShip, discardDraft: discardShip } =
+    useDraft<ShipDraft>('shipping-new-order', { supplier: '', date: getLastEntryDate(), lineData: [] });
+
+  // Sync lines → draft
+  useEffect(() => {
+    if (!editingOrder) {
+      updateSd({ lineData: lines.filter(l => l.productId).map(l => ({ productId: l.productId, productName: l.productName, sku: l.sku, qty: l.qty })) });
+    }
+  }, [lines, editingOrder]);
+  useEffect(() => { if (!editingOrder) updateSd({ supplier, date }); }, [supplier, date, editingOrder]);
+
+  const handleContinueShipDraft = () => {
+    continueShip();
+    setSupplier(sd.supplier);
+    setDate(sd.date);
+    if (sd.lineData.length > 0) {
+      setLines(sd.lineData.map(l => ({ ...EMPTY_LINE(), productId: l.productId, productName: l.productName, sku: l.sku, search: l.productName, qty: l.qty })));
+    }
+  };
+  const handleDiscardShipDraft = () => { discardShip(); setSupplier(''); setDate(todayISO()); setLines([EMPTY_LINE()]); };
+
   const handlePrefixChange = (p: RefPrefix) => {
     setRefPrefix(p);
     setRef(autoRefByPrefix(orders, p, new Date(date + 'T00:00:00').getFullYear()));
@@ -1287,6 +1318,7 @@ export default function ShippingPage() {
 
   const handleDateChange = (d: string) => {
     setDate(d);
+    saveLastEntryDate(d);
     if (!editingOrder) {
       setRef(autoRefByPrefix(orders, refPrefix, new Date(d + 'T00:00:00').getFullYear()));
     }
@@ -1414,6 +1446,7 @@ export default function ShippingPage() {
           lines: mappedLines,
         });
       }
+      if (!editingOrder) clearShipDraft();
       setShowCreate(false);
       await load();
     } catch (e) {
@@ -1679,6 +1712,15 @@ export default function ShippingPage() {
           onClose={() => setShowSmartOrder(false)}
           onCreated={async () => { setShowSmartOrder(false); await load(); }}
         />
+      )}
+
+      {/* Draft banner for new shipping order */}
+      {showCreate && !editingOrder && hasShipDraft && !shipReady && (
+        <div className="fixed inset-0 z-[101] flex items-start justify-center pt-20 px-4 pointer-events-none">
+          <div className="pointer-events-auto w-full max-w-xl">
+            <DraftBanner savedAt={shipSavedAt} onContinue={handleContinueShipDraft} onDiscard={handleDiscardShipDraft} />
+          </div>
+        </div>
       )}
 
       {/* Create / Edit Order Overlay */}

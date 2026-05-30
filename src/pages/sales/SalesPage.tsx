@@ -1,9 +1,11 @@
 import { useEffect, useState, useRef, type FormEvent } from 'react';
-import { Plus, X, ShoppingBag, Download, Eye, Pencil, FileDown, Search, Trash2 } from 'lucide-react';
+import { Plus, X, ShoppingBag, Download, Eye, Pencil, FileDown, Search, Trash2, CalendarCheck } from 'lucide-react';
 import { getOrders, createOrder, updateOrder, deleteOrder, generateOrderRef } from '@/services/orders.service';
 import { getProducts } from '@/services/inventory.service';
 import Modal from '@/components/ui/Modal';
 import type { SalesOrder, SalesOrderLine, Product } from '@/types';
+import { useDraft, getLastEntryDate, saveLastEntryDate } from '@/hooks/useDraft';
+import DraftBanner from '@/components/ui/DraftBanner';
 
 // ── Color helpers (mirrors WarehousePage) ────────────────────────
 const COLOR_NAMES = ['Black', 'Gray', 'Cream', 'Blue', 'Red'] as const;
@@ -489,11 +491,24 @@ function NewOrderModal({ products, onClose, onSaved }: {
   products: Product[]; onClose: () => void; onSaved: () => void;
 }) {
   const [orderRef, setOrderRef] = useState('');
-  const [client, setClient]     = useState('');
-  const [date, setDate]         = useState(new Date().toISOString().slice(0, 10));
-  const [lines, setLines]       = useState<DraftLine[]>([EMPTY_DRAFT()]);
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState('');
+
+  type SalesDraft = { client: string; date: string; lineData: Array<{ productId: string; productName: string; sku: string; boxes: number; qtyPerBox: number; totalQty: number }> };
+  const { draft: sd, update: updateSd, clearDraft: clearSalesDraft, hasDraft, isReady, savedAt, continueDraft, discardDraft } =
+    useDraft<SalesDraft>('sales-new-order', { client: '', date: getLastEntryDate(), lineData: [] });
+
+  const client = sd.client;
+  const date   = sd.date;
+  const setClient = (v: string) => updateSd({ client: v });
+  const setDate   = (v: string) => { updateSd({ date: v }); saveLastEntryDate(v); };
+
+  const [lines, setLines] = useState<DraftLine[]>([EMPTY_DRAFT()]);
+
+  // Sync lines → draft on every change
+  useEffect(() => {
+    updateSd({ lineData: lines.filter(l => l.productId).map(l => ({ productId: l.productId, productName: l.productName, sku: l.sku, boxes: l.boxes, qtyPerBox: l.qtyPerBox, totalQty: l.totalQty })) });
+  }, [lines]);
   const [quickSearch, setQuickSearch] = useState('');
   const [hideZero, setHideZero]       = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
@@ -561,6 +576,18 @@ function NewOrderModal({ products, onClose, onSaved }: {
     }
   };
 
+  const handleContinueDraft = () => {
+    continueDraft();
+    if (sd.lineData.length > 0) {
+      setLines(sd.lineData.map(l => ({ ...EMPTY_DRAFT(), productId: l.productId, productName: l.productName, sku: l.sku, search: l.productName, boxes: l.boxes, qtyPerBox: l.qtyPerBox, totalQty: l.totalQty })));
+    }
+  };
+
+  const handleDiscardDraft = () => {
+    discardDraft();
+    setLines([EMPTY_DRAFT()]);
+  };
+
   const handleSave = async () => {
     const validLines = lines.filter(l => l.productId && l.totalQty > 0);
     if (!client.trim()) { setError('Client name is required.'); return; }
@@ -568,6 +595,7 @@ function NewOrderModal({ products, onClose, onSaved }: {
     setError(''); setSaving(true);
     try {
       await createOrder({ ref: orderRef, client, date: new Date(date), lines: validLines as SalesOrderLine[] });
+      clearSalesDraft();
       onSaved(); onClose();
     } catch { setError('Failed to save order.'); }
     finally { setSaving(false); }
@@ -587,8 +615,17 @@ function NewOrderModal({ products, onClose, onSaved }: {
   const sidebarCats = [...CATEGORY_ORDER.filter(c => sidebarProducts.some(p => p.category === c)),
     ...Array.from(new Set(sidebarProducts.map(p => p.category ?? 'Other'))).filter(c => !CATEGORY_ORDER.includes(c))];
 
+  const todayStr = new Date().toISOString().slice(0, 10);
+
   return (
     <div className="fixed inset-0 z-[100] bg-white flex flex-col overflow-hidden">
+
+      {/* Draft banner */}
+      {hasDraft && isReady === false && (
+        <div className="shrink-0 px-6 pt-4">
+          <DraftBanner savedAt={savedAt} onContinue={handleContinueDraft} onDiscard={handleDiscardDraft} />
+        </div>
+      )}
 
       {/* Header */}
       <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-6 py-4">
@@ -606,8 +643,16 @@ function NewOrderModal({ products, onClose, onSaved }: {
             placeholder="Client name *"
             className="flex-1 max-w-xs px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
           />
-          <input type="date" value={date} onChange={e => setDate(e.target.value)}
-            className="px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shrink-0" />
+          <div className="flex items-center gap-1 shrink-0">
+            <input type="date" value={date} onChange={e => setDate(e.target.value)}
+              className="px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            {date !== todayStr && (
+              <button type="button" onClick={() => setDate(todayStr)}
+                className="flex items-center gap-1 px-2.5 py-2 text-xs font-semibold text-indigo-600 border border-indigo-200 rounded-xl hover:bg-indigo-50 transition-colors whitespace-nowrap">
+                <CalendarCheck size={12} /> Today
+              </button>
+            )}
+          </div>
           {validCount > 0 && (
             <span className="text-sm font-bold text-blue-600 bg-blue-50 border border-blue-100 px-4 py-1.5 rounded-full shrink-0">
               {validCount} SKU{validCount !== 1 ? 's' : ''} · {totalPcs.toLocaleString('fr-FR')} pcs
