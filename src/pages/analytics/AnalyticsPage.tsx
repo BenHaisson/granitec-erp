@@ -7,12 +7,7 @@ import { Layers, TrendingUp, Package, AlertTriangle } from 'lucide-react';
 import { getProducts, getMovements } from '@/services/inventory.service';
 import type { Product, InventoryMovement } from '@/types';
 
-// ── Helpers ──────────────────────────────────────────────────────
-function tsToDate(v: unknown): Date {
-  if (v instanceof Date) return v;
-  if (v && typeof v === 'object' && 'toDate' in v) return (v as { toDate(): Date }).toDate();
-  return new Date(v as string);
-}
+import { tsToDate } from '@/utils/dates';
 
 // ── Chart tooltip ────────────────────────────────────────────────
 function ChartTooltip({ active, payload, label }: {

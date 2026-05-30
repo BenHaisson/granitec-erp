@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, X, AlertCircle } from 'lucide-react';
+import { todayISO } from '@/utils/dates';
+import { pct } from '@/utils/math';
 import { getTargets, getAllTargets, createTarget, updateTarget, deleteTarget } from '@/services/productionTargets.service';
 import { getRecipes, checkFeasibilitySync, startProductionTarget, completeProductionTarget, cancelProductionTarget } from '@/services/production.service';
 import { getProducts, addUnverifiedStock } from '@/services/inventory.service';
@@ -10,8 +12,6 @@ import type { ProductionTarget, ProductionStage, Recipe, Product } from '@/types
 const STAGES: ProductionStage[] = ['Press', 'Tourna', 'Laser', 'Pounta', 'Screw', 'Gather', 'Box'];
 const LINES = ['Line 1', 'Line 2', 'Both', 'Auto'];
 
-function todayISO() { return new Date().toISOString().slice(0, 10); }
-function pct(done: number, total: number) { return total === 0 ? 0 : Math.round((done / total) * 100); }
 
 const STATUS_CLS: Record<string, string> = {
   not_started: 'bg-slate-100 text-slate-600',
@@ -247,29 +247,29 @@ export default function DailyPlanning() {
   };
 
   const handleStart = async (t: ProductionTarget) => {
-    if (actingId) return; // prevent double-fire
+    if (actingId) return;
     const recipe = recipes.find(r => r.id === t.recipeId);
-    if (!recipe) { alert('Recipe not found.'); return; }
+    if (!recipe) { setError('Recipe not found for this target.'); return; }
     if (!confirm(`Start production of "${t.recipeName}" × ${t.targetQty} sets?\n\nThis will deduct raw materials from inventory immediately and cannot be undone.`)) return;
-    setActingId(t.id);
+    setActingId(t.id); setError('');
     try {
       await startProductionTarget(t, recipe);
       load();
-    } catch (e) { alert(`Failed to start: ${e instanceof Error ? e.message : 'Unknown error'}`); }
+    } catch (e) { setError(`Failed to start: ${e instanceof Error ? e.message : 'Unknown error'}`); }
     finally { setActingId(null); }
   };
 
   const handleComplete = async (t: ProductionTarget) => {
-    if (actingId) return; // prevent double-fire
+    if (actingId) return;
     const recipe = recipes.find(r => r.id === t.recipeId);
-    if (!recipe) { alert('Recipe not found.'); return; }
-    if (t.completedQty <= 0) { alert('No completed quantity logged yet. Log entries in Data Entry first.'); return; }
+    if (!recipe) { setError('Recipe not found for this target.'); return; }
+    if (t.completedQty <= 0) { setError('No completed quantity logged yet. Log entries in Data Entry first.'); return; }
     if (!confirm(`Complete production of "${t.recipeName}"?\n\n${t.completedQty} sets will be added to warehouse stock.`)) return;
-    setActingId(t.id);
+    setActingId(t.id); setError('');
     try {
       await completeProductionTarget(t, recipe);
       load();
-    } catch (e) { alert(`Failed to complete: ${e instanceof Error ? e.message : 'Unknown error'}`); }
+    } catch (e) { setError(`Failed to complete: ${e instanceof Error ? e.message : 'Unknown error'}`); }
     finally { setActingId(null); }
   };
 
@@ -287,6 +287,13 @@ export default function DailyPlanning() {
   return (
     <div className="space-y-6">
       {/* Header */}
+      {error && (
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
+          <AlertCircle size={15} className="shrink-0" />
+          <span className="flex-1">{error}</span>
+          <button onClick={() => setError('')} className="text-red-400 hover:text-red-600"><X size={13} /></button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-800">Daily Planning</h2>

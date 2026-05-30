@@ -65,12 +65,7 @@ function MiniTooltip({ active, payload, label }: { active?: boolean; payload?: {
   );
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
-function tsToDate(v: unknown): Date {
-  if (v instanceof Date) return v;
-  if (v && typeof v === 'object' && 'toDate' in v) return (v as { toDate(): Date }).toDate();
-  return new Date(v as string);
-}
+import { tsToDate } from '@/utils/dates';
 
 function buildRecentMonths(orders: SalesOrder[], n = 6) {
   const now = new Date();

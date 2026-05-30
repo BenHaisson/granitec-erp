@@ -15,11 +15,7 @@ import {
 } from '@/services/shipping.service';
 import { getRecipes } from '@/services/production.service';
 import type { Product, ShippingOrder, ShippingOrderLine, Recipe } from '@/types';
-
-// ── Helpers ───────────────────────────────────────────────────────
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
+import { todayISO } from '@/utils/dates';
 
 const PREFIX_LABEL: Record<string, string> = {
   DISC: 'Aluminium Disc', PKG: 'Packaging', ACC: 'Accessories', SH: 'General',

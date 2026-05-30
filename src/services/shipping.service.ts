@@ -1,6 +1,6 @@
 import {
   collection, addDoc, getDocs, doc, updateDoc, deleteDoc, Timestamp,
-  query, where, limit, runTransaction, writeBatch,
+  query, where, orderBy, limit, runTransaction, writeBatch,
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '@/firebase/config';
@@ -20,11 +20,9 @@ export const uploadReceiptDocument = async (orderId: string, file: File): Promis
 
 export const getShippingOrders = async (): Promise<ShippingOrder[]> => {
   const snap = await getDocs(
-    query(collection(db, 'shipping_orders'), limit(500))
+    query(collection(db, 'shipping_orders'), orderBy('date', 'desc'), limit(500))
   );
-  return snap.docs
-    .map(d => ({ id: d.id, ...d.data() } as ShippingOrder))
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  return snap.docs.map(d => ({ id: d.id, ...d.data() } as ShippingOrder));
 };
 
 export const createShippingOrder = async (

@@ -4,7 +4,7 @@ import { getProducts, getMovements, clearAllUnverifiedStock } from '@/services/i
 import { createShippingOrder } from '@/services/shipping.service';
 import type { Product, InventoryMovement } from '@/types';
 
-function todayISO() { return new Date().toISOString().slice(0, 10); }
+import { todayISO } from '@/utils/dates';
 
 function fmtDate(v: unknown): string {
   try {

@@ -11,21 +11,8 @@ const RAW_CATEGORIES = ['Aluminium Disc', 'Accessories', 'Packaging'] as const;
 type RawCategory = typeof RAW_CATEGORIES[number];
 const RAW_CATEGORY_ORDER = [...RAW_CATEGORIES];
 
-function sortCategories(cats: string[], order: string[]): string[] {
-  return [...cats].sort((a, b) => {
-    const ai = order.indexOf(a), bi = order.indexOf(b);
-    if (ai === -1 && bi === -1) return a.localeCompare(b);
-    if (ai === -1) return 1; if (bi === -1) return -1;
-    return ai - bi;
-  });
-}
-
-function tsToDate(v: unknown): Date {
-  if (v instanceof Date) return v;
-  if (v && typeof (v as { toDate?: unknown }).toDate === 'function')
-    return (v as { toDate: () => Date }).toDate();
-  return new Date();
-}
+import { sortCategories } from '@/utils/categories';
+import { tsToDate, todayISO } from '@/utils/dates';
 
 function stockBadge(p: Product) {
   if (p.stock_level <= 0) return <Badge label="Empty" variant="red" />;
@@ -502,10 +489,6 @@ function RawMaterialGroupCard({ group, onReceive, onEdit, onDelete }: {
   );
 }
 
-// ── Today as YYYY-MM-DD ───────────────────────────────────────────
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 type ReceiptLine = { productId: string; qty: string; search: string; showSuggestions: boolean; highlightIdx: number };
 

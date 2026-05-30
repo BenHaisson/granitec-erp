@@ -12,31 +12,9 @@ const FINISHED_CATEGORY_ORDER = [
   'Sets & Packs', 'Marmite', 'Crepe & Specialty', 'Frypans', 'Saucepots', 'Cake & Molds',
 ];
 
-function sortCategories(cats: string[], order: string[]): string[] {
-  return [...cats].sort((a, b) => {
-    const ai = order.indexOf(a), bi = order.indexOf(b);
-    if (ai === -1 && bi === -1) return a.localeCompare(b);
-    if (ai === -1) return 1; if (bi === -1) return -1;
-    return ai - bi;
-  });
-}
-
-// ── Color helpers ────────────────────────────────────────────────
-const COLOR_NAMES = ['Black', 'Gray', 'Cream', 'Blue', 'Red'] as const;
-type ColorName = typeof COLOR_NAMES[number];
-const COLOR_DOT: Record<ColorName, string> = {
-  Black: 'bg-gray-900', Gray: 'bg-gray-400',
-  Cream: 'bg-amber-100 border border-amber-300', Blue: 'bg-blue-500', Red: 'bg-red-500',
-};
-
-function extractColor(name: string): { base: string; color: ColorName } | null {
-  for (const color of COLOR_NAMES) {
-    if (name.endsWith(color)) {
-      return { base: name.slice(0, name.length - color.length).replace(/[\s—\-]+$/, '').trim(), color };
-    }
-  }
-  return null;
-}
+import { sortCategories } from '@/utils/categories';
+import { COLOR_NAMES, COLOR_DOT, extractColor } from '@/utils/productColor';
+import type { ColorName } from '@/utils/productColor';
 
 interface ProductGroup {
   base: string; category: string;

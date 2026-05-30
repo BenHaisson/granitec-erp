@@ -15,6 +15,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+import { todayISO } from '@/utils/dates';
+
 const PREFIX = 'granitec:draft:';
 export const LAST_DATE_KEY = 'granitec:lastEntryDate';
 
@@ -23,9 +25,6 @@ export function getLastEntryDate(): string {
 }
 export function saveLastEntryDate(date: string) {
   if (date) localStorage.setItem(LAST_DATE_KEY, date);
-}
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
 }
 
 type DraftState = 'loading' | 'asking' | 'ready';

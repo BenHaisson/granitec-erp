@@ -5,13 +5,8 @@ import { getRecipes, startProductionTarget, completeProductionTarget, cancelProd
 import type { ProductionTarget, ProductionEntry, Recipe } from '@/types';
 import { useDraft, getLastEntryDate, saveLastEntryDate } from '@/hooks/useDraft';
 import DraftBanner from '@/components/ui/DraftBanner';
-
-function todayISO() { return new Date().toISOString().slice(0, 10); }
-function nowHHMM() {
-  const d = new Date();
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-function pct(done: number, total: number) { return total === 0 ? 0 : Math.round((done / total) * 100); }
+import { todayISO, nowHHMM } from '@/utils/dates';
+import { pct } from '@/utils/math';
 
 const QUALITY_OPTIONS = [
   { value: 'passed', label: '✓ Passed', cls: 'bg-emerald-50 border-emerald-300 text-emerald-700' },
@@ -31,14 +26,15 @@ type FormDraft = {
   notes: string;
 };
 
-const EMPTY_DRAFT: FormDraft = {
+// Factory so getLastEntryDate() is called at mount time, not module-load time
+const makeEmptyDraft = (): FormDraft => ({
   selectedId: null,
   qty: '', goodQty: '', defects: '',
   qualityCheck: 'passed',
   logDate: getLastEntryDate(),
   logTime: '', useNow: false,
   notes: '',
-};
+});
 
 export default function DataEntry() {
   const [filterDate, setFilterDate] = useState('');
@@ -51,7 +47,7 @@ export default function DataEntry() {
   const [error, setError]           = useState('');
 
   const { draft, update, clearDraft, hasDraft, isReady, savedAt, continueDraft, discardDraft } =
-    useDraft<FormDraft>('dataentry', EMPTY_DRAFT);
+    useDraft<FormDraft>('dataentry', makeEmptyDraft());
 
   // Derived selections
   const selectedId = draft.selectedId;
@@ -249,7 +245,7 @@ export default function DataEntry() {
 
           {/* Right — form + log */}
           <div className="lg:col-span-3 space-y-4">
-            {selected && isReady && (
+            {selected && (
               <>
                 {/* Current status card */}
                 <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">

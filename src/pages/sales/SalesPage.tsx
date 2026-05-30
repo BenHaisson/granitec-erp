@@ -8,26 +8,8 @@ import { useDraft, getLastEntryDate, saveLastEntryDate } from '@/hooks/useDraft'
 import DraftBanner from '@/components/ui/DraftBanner';
 
 // ── Color helpers (mirrors WarehousePage) ────────────────────────
-const COLOR_NAMES = ['Black', 'Gray', 'Cream', 'Blue', 'Red'] as const;
-type ColorName = typeof COLOR_NAMES[number];
-
-const COLOR_DOT: Record<ColorName, string> = {
-  Black: 'bg-gray-900',
-  Gray:  'bg-gray-400',
-  Cream: 'bg-amber-100 border border-amber-300',
-  Blue:  'bg-blue-500',
-  Red:   'bg-red-500',
-};
-
-function extractColor(name: string): { base: string; color: ColorName } | null {
-  for (const color of COLOR_NAMES) {
-    if (name.endsWith(color)) {
-      const base = name.slice(0, name.length - color.length).replace(/[\s—\-]+$/, '').trim();
-      return { base, color };
-    }
-  }
-  return null;
-}
+import { COLOR_NAMES, COLOR_DOT, extractColor } from '@/utils/productColor';
+import type { ColorName } from '@/utils/productColor';
 
 // ── Summary card data ─────────────────────────────────────────────
 interface VariantStats {

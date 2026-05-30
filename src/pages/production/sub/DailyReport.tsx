@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react';
 import { FileDown, TrendingDown, CheckCircle2, AlertTriangle, Clock, X } from 'lucide-react';
 import { getTargets, getAllTargets, getEntries, getAllEntries } from '@/services/productionTargets.service';
 import type { ProductionTarget, ProductionEntry } from '@/types';
-
-function todayISO() { return new Date().toISOString().slice(0, 10); }
-function pct(done: number, total: number) { return total === 0 ? 0 : Math.round((done / total) * 100); }
+import { todayISO } from '@/utils/dates';
+import { pct } from '@/utils/math';
 
 const STATUS_ICON: Record<string, string> = {
   complete: '✓', in_progress: '⏳', not_started: '□', at_risk: '⚠',
