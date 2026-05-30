@@ -190,6 +190,7 @@ function calcRequirements(
 
 // ── Draft line type ───────────────────────────────────────────────
 type DraftLine = {
+  uid: string;          // stable identity for React key — never changes after creation
   productId: string;
   productName: string;
   sku: string;
@@ -199,8 +200,12 @@ type DraftLine = {
   showSuggestions: boolean;
   highlightIdx: number;
 };
+const newUid = () => (typeof crypto !== 'undefined' && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 const EMPTY_LINE = (): DraftLine => ({
+  uid: newUid(),
   productId: '', productName: '', sku: '', qty: '',
   reconcile: false,
   search: '', showSuggestions: false, highlightIdx: -1,
@@ -224,12 +229,15 @@ function DraftRow({ line, rowNum, products, qtyRef, onUpdate, onSelect, onRemove
     : [];
   const selected = products.find(p => p.id === line.productId);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Latest-ref pattern: keeps onUpdate current without re-registering the event listener every render
+  const onUpdateRef = useRef(onUpdate);
+  useEffect(() => { onUpdateRef.current = onUpdate; });
 
   useEffect(() => {
     if (!line.showSuggestions) return;
     const handler = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node))
-        onUpdate({ showSuggestions: false });
+        onUpdateRef.current({ showSuggestions: false }); // always calls latest onUpdate
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -523,7 +531,7 @@ function CreateOrderOverlay({
           <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1.5">
             {lines.map((line, i) => (
               <DraftRow
-                key={i}
+                key={line.uid}
                 line={line} rowNum={i + 1}
                 products={rawMaterials}
                 qtyRef={el => { qtyRefs.current[i] = el!; }}
@@ -1361,6 +1369,7 @@ export default function ShippingPage() {
     setSupplier(order.supplier ?? '');
     setDate(order.date);
     setLines(order.lines.map(l => ({
+      uid: newUid(),
       productId: l.productId,
       productName: l.productName,
       sku: l.sku,
@@ -1395,7 +1404,7 @@ export default function ShippingPage() {
       const [sku, qtyStr] = raw.split(/[\s\t]+/);
       const p = skuMap.get(sku?.toUpperCase());
       const qty = Number(qtyStr);
-      if (p && qty > 0) valid.push({ productId: p.id, productName: p.name, sku: p.sku, qty: String(qty), reconcile: false, search: p.name, showSuggestions: false, highlightIdx: -1 });
+      if (p && qty > 0) valid.push({ uid: newUid(), productId: p.id, productName: p.name, sku: p.sku, qty: String(qty), reconcile: false, search: p.name, showSuggestions: false, highlightIdx: -1 });
       else warnings.push(`${sku}: ${!p ? 'SKU not found' : 'invalid qty'}`);
     }
     setImportWarnings(warnings);

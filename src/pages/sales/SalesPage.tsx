@@ -365,6 +365,7 @@ const CATEGORY_ORDER = ['Sets & Packs', 'Marmite', 'Crepe & Specialty', 'Frypans
 
 // ── Draft line (internal form state) ─────────────────────────────
 interface DraftLine {
+  uid: string;          // stable identity for React key — never changes after creation
   productId: string;
   productName: string;
   sku: string;
@@ -375,7 +376,11 @@ interface DraftLine {
   showSuggestions: boolean;
   highlightIdx: number;
 }
+const newUid = () => (typeof crypto !== 'undefined' && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const EMPTY_DRAFT = (): DraftLine => ({
+  uid: newUid(),
   productId: '', productName: '', sku: '',
   boxes: 1, qtyPerBox: 1, totalQty: 1,
   search: '', showSuggestions: false, highlightIdx: -1,
@@ -391,6 +396,10 @@ function SalesOrderRow({ line, rowNum, products, boxesRef, onUpdate, onSelect, o
   onBoxesTab: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // Latest-ref pattern: keeps onUpdate current without re-registering the event listener every render
+  const onUpdateRef = useRef(onUpdate);
+  useEffect(() => { onUpdateRef.current = onUpdate; });
+
   const q = line.search.toLowerCase();
   const suggestions = line.search.length > 0
     ? products.filter(p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)).slice(0, 10)
@@ -401,7 +410,7 @@ function SalesOrderRow({ line, rowNum, products, boxesRef, onUpdate, onSelect, o
     if (!line.showSuggestions) return;
     const handler = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node))
-        onUpdate({ showSuggestions: false });
+        onUpdateRef.current({ showSuggestions: false }); // always calls latest onUpdate
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -505,9 +514,14 @@ function NewOrderModal({ products, onClose, onSaved }: {
 
   const [lines, setLines] = useState<DraftLine[]>([EMPTY_DRAFT()]);
 
-  // Sync lines → draft on every change
+  // Sync lines → draft with 400ms debounce — avoids writing localStorage on every keystroke
+  const draftSyncTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
-    updateSd({ lineData: lines.filter(l => l.productId).map(l => ({ productId: l.productId, productName: l.productName, sku: l.sku, boxes: l.boxes, qtyPerBox: l.qtyPerBox, totalQty: l.totalQty })) });
+    clearTimeout(draftSyncTimer.current);
+    draftSyncTimer.current = setTimeout(() => {
+      updateSd({ lineData: lines.filter(l => l.productId).map(l => ({ productId: l.productId, productName: l.productName, sku: l.sku, boxes: l.boxes, qtyPerBox: l.qtyPerBox, totalQty: l.totalQty })) });
+    }, 400);
+    return () => clearTimeout(draftSyncTimer.current);
   }, [lines]);
   const [quickSearch, setQuickSearch] = useState('');
   const [hideZero, setHideZero]       = useState(false);
@@ -592,6 +606,9 @@ function NewOrderModal({ products, onClose, onSaved }: {
     const validLines = lines.filter(l => l.productId && l.totalQty > 0);
     if (!client.trim()) { setError('Client name is required.'); return; }
     if (validLines.length === 0) { setError('Add at least one product line.'); return; }
+    const seenIds = new Set<string>();
+    const dup = validLines.find(l => seenIds.size === seenIds.add(l.productId).size);
+    if (dup) { setError(`Duplicate product: "${dup.productName}" appears more than once. Merge the quantities into one line.`); return; }
     setError(''); setSaving(true);
     try {
       await createOrder({ ref: orderRef, client, date: new Date(date), lines: validLines as SalesOrderLine[] });
@@ -750,7 +767,7 @@ function NewOrderModal({ products, onClose, onSaved }: {
           <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1.5">
             {lines.map((line, i) => (
               <SalesOrderRow
-                key={i} line={line} rowNum={i + 1} products={products}
+                key={line.uid} line={line} rowNum={i + 1} products={products}
                 boxesRef={el => { if (el) boxesRefs.current[i] = el; }}
                 onUpdate={patch => updateLine(i, patch)}
                 onSelect={p => selectProduct(i, p)}
@@ -902,7 +919,7 @@ function EditOrderModal({ order, products, onClose, onSaved }: {
   const [client, setClient] = useState(order.client);
   const [date, setDate] = useState(toDateStr(order.date));
   const [lines, setLines] = useState<DraftLine[]>(
-    order.lines.map(l => ({ ...l, search: l.productName, showSuggestions: false, highlightIdx: -1 }))
+    order.lines.map(l => ({ ...l, uid: newUid(), search: l.productName, showSuggestions: false, highlightIdx: -1 }))
   );
   const [openPicker, setOpenPicker] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
@@ -910,7 +927,7 @@ function EditOrderModal({ order, products, onClose, onSaved }: {
 
   const addLine = () => {
     const idx = lines.length;
-    setLines(prev => [...prev, { productId: '', productName: '', sku: '', boxes: 1, qtyPerBox: 1, totalQty: 1, search: '', showSuggestions: false, highlightIdx: -1 }]);
+    setLines(prev => [...prev, EMPTY_DRAFT()]);
     setOpenPicker(idx);
   };
 

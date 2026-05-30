@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { getTargets, getAllTargets, createTarget, updateTarget, deleteTarget } from '@/services/productionTargets.service';
-import { getRecipes, checkFeasibility, startProductionTarget, completeProductionTarget, cancelProductionTarget } from '@/services/production.service';
+import { getRecipes, checkFeasibilitySync, startProductionTarget, completeProductionTarget, cancelProductionTarget } from '@/services/production.service';
 import { getProducts, addUnverifiedStock } from '@/services/inventory.service';
 import { createShippingOrder } from '@/services/shipping.service';
 import Modal from '@/components/ui/Modal';
@@ -135,10 +135,13 @@ export default function DailyPlanning() {
         notes:       form.notes || undefined,
       };
       // Feasibility gate for new recipe targets only
+      // Uses sync check — products + recipes already in component state, no extra Firestore reads
       if (form.type === 'recipe' && !editTarget) {
-        const { feasible, shortfalls } = await checkFeasibility(form.recipeId, qty);
+        const recipe = recipes.find(r => r.id === form.recipeId);
+        const { feasible, shortfalls } = recipe
+          ? checkFeasibilitySync(recipe, qty, products)
+          : { feasible: true, shortfalls: [] };
         if (!feasible) {
-          const recipe = recipes.find(r => r.id === form.recipeId);
           const components = recipe?.components ?? [];
           const stockMap = new Map(products.map(p => [p.id, p.stock_level + (p.unverified_stock ?? 0)]));
           const maxProducible = shortfalls.length > 0

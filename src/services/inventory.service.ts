@@ -5,14 +5,24 @@ import {
 import { db, auth } from '@/firebase/config';
 import type { Product, InventoryMovement } from '@/types';
 
+/** Safe product mapper — adds numeric defaults so callers never get NaN from missing fields */
+const toProduct = (id: string, data: Record<string, unknown>): Product => ({
+  stock_level: 0,
+  min_stock: 0,
+  unverified_stock: 0,
+  cost: 0,
+  ...data,
+  id,
+} as Product);
+
 export const getProducts = async (): Promise<Product[]> => {
   const snap = await getDocs(collection(db, 'products'));
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as Product));
+  return snap.docs.map(d => toProduct(d.id, d.data() as Record<string, unknown>));
 };
 
 export const getProductsFresh = async (): Promise<Product[]> => {
   const snap = await getDocsFromServer(collection(db, 'products'));
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as Product));
+  return snap.docs.map(d => toProduct(d.id, d.data() as Record<string, unknown>));
 };
 
 export const addProduct = (product: Omit<Product, 'id'>) =>
@@ -68,25 +78,25 @@ export const receiveSupplyBatch = async (
   ref: string,
   date: Date
 ): Promise<string[]> => {
-  const failedIds = new Set<string>();
-  for (const line of lines) {
-    try {
-      await runTransaction(db, async (tx) => {
-        const prodRef = doc(db, 'products', line.productId);
-        const snap = await tx.get(prodRef);
-        if (!snap.exists()) throw new Error(`Product ${line.productId} not found`);
-        tx.update(prodRef, { stock_level: (snap.data().stock_level as number) + line.qty });
+  if (lines.length === 0) return [];
+
+  // Single atomic transaction for all stock updates (was N separate serial transactions)
+  await runTransaction(db, async (tx) => {
+    const prodRefs = lines.map(l => doc(db, 'products', l.productId));
+    const snaps = await Promise.all(prodRefs.map(r => tx.get(r)));
+    for (let i = 0; i < lines.length; i++) {
+      if (!snaps[i].exists()) throw new Error(`Product "${lines[i].productId}" not found in catalogue`);
+      tx.update(prodRefs[i], {
+        stock_level: (snaps[i].data()!.stock_level as number) + lines[i].qty,
       });
-    } catch (e) {
-      console.error('[receiveSupplyBatch]', e);
-      failedIds.add(line.productId);
     }
-  }
-  const successLines = lines.filter(l => !failedIds.has(l.productId));
+  });
+
+  // Write PURCHASE movements in a batch (outside transaction — movements are append-only)
   const CHUNK = 400;
-  for (let i = 0; i < successLines.length; i += CHUNK) {
+  for (let i = 0; i < lines.length; i += CHUNK) {
     const batch = writeBatch(db);
-    successLines.slice(i, i + CHUNK).forEach(line => {
+    lines.slice(i, i + CHUNK).forEach(line => {
       batch.set(doc(collection(db, 'inventory_movements')), {
         productId: line.productId,
         quantity: line.qty,
@@ -97,7 +107,8 @@ export const receiveSupplyBatch = async (
     });
     await batch.commit();
   }
-  return Array.from(failedIds);
+
+  return []; // all succeeded; errors throw and propagate to caller
 };
 
 export const updateProduct = (id: string, patch: Partial<import('@/types').Product>) =>

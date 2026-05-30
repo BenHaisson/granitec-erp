@@ -5,13 +5,16 @@ import {
 import { db } from '@/firebase/config';
 import type { SalesOrder, SalesOrderLine } from '@/types';
 
-const toOrder = (id: string, data: Record<string, unknown>): SalesOrder => ({
-  id,
-  ref: data.ref as string,
-  client: data.client as string,
-  date: (data.date as Timestamp).toDate(),
-  lines: data.lines as SalesOrderLine[],
-});
+const toOrder = (id: string, data: Record<string, unknown>): SalesOrder => {
+  const ts = data.date as Timestamp | undefined;
+  return {
+    id,
+    ref: (data.ref as string) ?? '',
+    client: (data.client as string) ?? '',
+    date: ts?.toDate?.() ?? new Date(),   // null-guard: missing date falls back to now
+    lines: (data.lines as SalesOrderLine[]) ?? [],
+  };
+};
 
 export const getOrders = async (): Promise<SalesOrder[]> => {
   const snap = await getDocs(query(collection(db, 'sales_orders'), orderBy('date', 'desc'), limit(500)));
@@ -19,15 +22,20 @@ export const getOrders = async (): Promise<SalesOrder[]> => {
 };
 
 export const generateOrderRef = async (year?: number): Promise<string> => {
-  const snap = await getDocs(collection(db, 'sales_orders'));
   const y = year ?? new Date().getFullYear();
   const prefix = `ORD-${y}-`;
-  const max = snap.docs
-    .map(d => (d.data().ref as string) ?? '')
-    .filter(r => r.startsWith(prefix))
-    .map(r => parseInt(r.slice(prefix.length), 10))
-    .filter(n => !isNaN(n))
-    .reduce((m, n) => Math.max(m, n), 0);
+  // Query only orders with matching prefix — reads 1 doc instead of the whole collection
+  const snap = await getDocs(
+    query(
+      collection(db, 'sales_orders'),
+      where('ref', '>=', prefix),
+      where('ref', '<', prefix + ''),
+      orderBy('ref', 'desc'),
+      limit(1)
+    )
+  );
+  const maxRef = snap.docs[0]?.data().ref as string | undefined;
+  const max = maxRef ? (parseInt(maxRef.slice(prefix.length), 10) || 0) : 0;
   return `${prefix}${String(max + 1).padStart(4, '0')}`;
 };
 

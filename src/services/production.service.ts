@@ -15,7 +15,26 @@ export const getProductionOrders = async (): Promise<ProductionOrder[]> => {
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductionOrder));
 };
 
-export const checkFeasibility = async (recipeId: string, quantity: number) => {
+type FeasibilityResult = { feasible: boolean; shortfalls: { productId: string; need: number; have: number }[] };
+
+/** Synchronous check — use this when the caller already has products + recipe loaded (avoids 2 extra Firestore reads) */
+export const checkFeasibilitySync = (
+  recipe: Recipe,
+  quantity: number,
+  products: import('@/types').Product[],
+): FeasibilityResult => {
+  const stockMap = new Map(products.map(p => [p.id, p.stock_level + (p.unverified_stock ?? 0)]));
+  const shortfalls: FeasibilityResult['shortfalls'] = [];
+  for (const comp of recipe.components) {
+    const need = comp.quantity * quantity;
+    const have = stockMap.get(comp.productId) ?? 0;
+    if (have < need) shortfalls.push({ productId: comp.productId, need, have });
+  }
+  return { feasible: shortfalls.length === 0, shortfalls };
+};
+
+/** Async fallback — fetches products + recipe from Firestore. Prefer checkFeasibilitySync when data is already in state. */
+export const checkFeasibility = async (recipeId: string, quantity: number): Promise<FeasibilityResult> => {
   const [recipesSnap, productsSnap] = await Promise.all([
     getDocs(collection(db, 'recipes')),
     getDocs(collection(db, 'products')),
@@ -23,17 +42,8 @@ export const checkFeasibility = async (recipeId: string, quantity: number) => {
   const recipeDoc = recipesSnap.docs.find(d => d.id === recipeId);
   if (!recipeDoc) throw new Error('Recipe not found');
   const recipe = { id: recipeDoc.id, ...recipeDoc.data() } as Recipe;
-  const stockMap = new Map(productsSnap.docs.map(d => {
-    const data = d.data();
-    return [d.id, (data.stock_level as number) + ((data.unverified_stock as number) ?? 0)];
-  }));
-  const shortfalls: { productId: string; need: number; have: number }[] = [];
-  for (const comp of recipe.components) {
-    const need = comp.quantity * quantity;
-    const have = stockMap.get(comp.productId) ?? 0;
-    if (have < need) shortfalls.push({ productId: comp.productId, need, have });
-  }
-  return { feasible: shortfalls.length === 0, shortfalls };
+  const products = productsSnap.docs.map(d => ({ id: d.id, ...d.data() } as import('@/types').Product));
+  return checkFeasibilitySync(recipe, quantity, products);
 };
 
 export const deleteRecipe = (id: string) => deleteDoc(doc(db, 'recipes', id));
