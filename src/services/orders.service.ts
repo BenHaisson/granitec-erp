@@ -87,39 +87,74 @@ async function reverseSaleMovements(orderRef: string): Promise<void> {
       const movDoc = saleMoves[i];
       const qty = movDoc.data().quantity as number; // stored as negative (e.g. -500)
       const snap = prodSnaps[i];
-      if (snap.exists()) {
-        tx.update(snap.ref, { stock_level: (snap.data().stock_level as number) - qty }); // -(-500) = +500
-      } else {
-        console.error(`[reverseSaleMovements] Product ${movDoc.data().productId as string} not found`);
+      if (!snap.exists()) {
+        // Abort — deleting the movement without restoring stock would corrupt inventory
+        throw new Error(`Cannot reverse sale: product "${movDoc.data().productId as string}" not found in catalogue. Restore it first or adjust manually.`);
       }
+      tx.update(snap.ref, { stock_level: (snap.data().stock_level as number) - qty }); // -(-qty) = restore
       tx.delete(movDoc.ref);
     }
   });
 }
 
 export const updateOrder = async (order: SalesOrder): Promise<void> => {
-  await reverseSaleMovements(order.ref);
+  // Fetch existing SALE movements outside the transaction (queries can't run inside)
+  const movSnap = await getDocs(
+    query(collection(db, 'inventory_movements'), where('note', '==', order.ref))
+  );
+  const saleMoves = movSnap.docs.filter(d => d.data().reason === 'SALE');
   const validLines = order.lines.filter(l => l.totalQty > 0);
-  if (validLines.length > 0) {
-    await runTransaction(db, async (tx) => {
-      const prodSnaps = await Promise.all(validLines.map(l => tx.get(doc(db, 'products', l.productId))));
-      for (let i = 0; i < validLines.length; i++) {
-        const line = validLines[i];
-        const snap = prodSnaps[i];
-        if (!snap.exists()) { console.error(`[updateOrder] Product ${line.productId} not found`); continue; }
-        tx.update(snap.ref, { stock_level: (snap.data().stock_level as number) - line.totalQty });
-        tx.set(doc(collection(db, 'inventory_movements')), {
-          productId: line.productId, quantity: -line.totalQty, reason: 'SALE',
-          note: order.ref, createdAt: Timestamp.now(),
-        });
+
+  // Single atomic transaction: reverse old movements + apply new lines + update order doc
+  await runTransaction(db, async (tx) => {
+    // Re-read movements inside transaction for fresh data
+    const movSnapsInTx = await Promise.all(saleMoves.map(m => tx.get(m.ref)));
+
+    // Collect all unique product IDs (from old movements + new lines)
+    const oldProductIds = [...new Set(saleMoves.map(m => m.data().productId as string))];
+    const newProductIds = [...new Set(validLines.map(l => l.productId))];
+    const allProductIds = [...new Set([...oldProductIds, ...newProductIds])];
+
+    const prodRefs = allProductIds.map(id => doc(db, 'products', id));
+    const prodSnaps = await Promise.all(prodRefs.map(r => tx.get(r)));
+
+    // Build a mutable stock map from current Firestore values
+    const stockMap = new Map(
+      allProductIds.map((id, i) => [id, (prodSnaps[i].data()?.stock_level as number) ?? 0])
+    );
+
+    // Step 1: reverse old movements (restore stock)
+    for (const movSnap of movSnapsInTx) {
+      if (!movSnap.exists()) continue;
+      const productId = movSnap.data().productId as string;
+      const qty = movSnap.data().quantity as number; // stored negative
+      stockMap.set(productId, (stockMap.get(productId) ?? 0) - qty); // restore: -(-qty)
+      tx.delete(movSnap.ref);
+    }
+
+    // Step 2: apply new lines (check stock, deduct, create movements)
+    for (const line of validLines) {
+      const current = stockMap.get(line.productId) ?? 0;
+      if (current < line.totalQty) {
+        throw new Error(`Insufficient stock for ${line.productName ?? line.productId}: need ${line.totalQty}, have ${current}`);
       }
+      stockMap.set(line.productId, current - line.totalQty);
+      tx.set(doc(collection(db, 'inventory_movements')), {
+        productId: line.productId, quantity: -line.totalQty, reason: 'SALE',
+        note: order.ref, createdAt: Timestamp.now(),
+      });
+    }
+
+    // Step 3: write all updated stock levels
+    for (const [productId, newStock] of stockMap.entries()) {
+      tx.update(prodRefs[allProductIds.indexOf(productId)], { stock_level: newStock });
+    }
+
+    // Step 4: update the order document
+    tx.set(doc(db, 'sales_orders', order.id), {
+      ref: order.ref, client: order.client, lines: order.lines,
+      date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
     });
-  }
-  await setDoc(doc(db, 'sales_orders', order.id), {
-    ref: order.ref,
-    client: order.client,
-    lines: order.lines,
-    date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
   });
 };
 

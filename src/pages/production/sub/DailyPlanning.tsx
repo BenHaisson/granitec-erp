@@ -67,6 +67,7 @@ export default function DailyPlanning() {
     pendingPayload: Omit<ProductionTarget, 'id' | 'createdAt'>;
   } | null>(null);
   const [feasSaving, setFeasSaving] = useState(false);
+  const [actingId, setActingId]     = useState<string | null>(null); // target currently being started/completed
 
   // Order form state (shown inside feasibility dialog)
   const [showOrderForm, setShowOrderForm] = useState(false);
@@ -243,24 +244,30 @@ export default function DailyPlanning() {
   };
 
   const handleStart = async (t: ProductionTarget) => {
+    if (actingId) return; // prevent double-fire
     const recipe = recipes.find(r => r.id === t.recipeId);
     if (!recipe) { alert('Recipe not found.'); return; }
     if (!confirm(`Start production of "${t.recipeName}" × ${t.targetQty} sets?\n\nThis will deduct raw materials from inventory immediately and cannot be undone.`)) return;
+    setActingId(t.id);
     try {
       await startProductionTarget(t, recipe);
       load();
     } catch (e) { alert(`Failed to start: ${e instanceof Error ? e.message : 'Unknown error'}`); }
+    finally { setActingId(null); }
   };
 
   const handleComplete = async (t: ProductionTarget) => {
+    if (actingId) return; // prevent double-fire
     const recipe = recipes.find(r => r.id === t.recipeId);
     if (!recipe) { alert('Recipe not found.'); return; }
     if (t.completedQty <= 0) { alert('No completed quantity logged yet. Log entries in Data Entry first.'); return; }
     if (!confirm(`Complete production of "${t.recipeName}"?\n\n${t.completedQty} sets will be added to warehouse stock.`)) return;
+    setActingId(t.id);
     try {
       await completeProductionTarget(t, recipe);
       load();
     } catch (e) { alert(`Failed to complete: ${e instanceof Error ? e.message : 'Unknown error'}`); }
+    finally { setActingId(null); }
   };
 
   const toggleExpand = (id: string) => {
@@ -385,14 +392,16 @@ export default function DailyPlanning() {
                   <div className="flex flex-wrap items-center gap-2">
                     {!t.materialsDeducted && (
                       <button onClick={() => handleStart(t)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors">
-                        ▶ Start Production
+                        disabled={actingId === t.id}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors">
+                        {actingId === t.id ? 'Starting…' : '▶ Start Production'}
                       </button>
                     )}
                     {!t.finishedGoodsAdded && t.completedQty > 0 && (
                       <button onClick={() => handleComplete(t)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors">
-                        ✓ Complete
+                        disabled={actingId === t.id}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 transition-colors">
+                        {actingId === t.id ? 'Completing…' : '✓ Complete'}
                       </button>
                     )}
                     <button onClick={() => openEdit(t)}

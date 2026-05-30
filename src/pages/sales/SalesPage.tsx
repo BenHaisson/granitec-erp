@@ -1052,7 +1052,11 @@ export default function SalesPage() {
     setDeleting(order.id);
     try {
       await deleteOrder(order);
+      // Only remove from local state after Firestore confirms success
       setOrders(o => o.filter(x => x.id !== order.id));
+    } catch (e) {
+      alert(`Failed to delete order: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      load(); // Re-sync with Firestore to ensure UI matches actual state
     } finally {
       setDeleting(null);
     }

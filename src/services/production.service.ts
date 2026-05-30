@@ -252,7 +252,7 @@ export const cancelProductionTarget = async (
   target: ProductionTarget,
   recipe: Recipe,
 ): Promise<void> => {
-  // Find material deduction movements created by startProductionTarget
+  // Query movement refs outside the transaction (Firestore doesn't allow queries inside)
   const materialMovSnap = await getDocs(
     query(
       collection(db, 'inventory_movements'),
@@ -262,8 +262,12 @@ export const cancelProductionTarget = async (
       ])
     )
   );
+  const movRefs = materialMovSnap.docs.map(d => d.ref);
 
   await runTransaction(db, async (tx) => {
+    // Re-read each movement doc inside the transaction for fresh, consistent data (fixes TOCTOU)
+    const movSnapsInTx = await Promise.all(movRefs.map(r => tx.get(r)));
+
     // Read all component product docs
     const prodRefs = recipe.components.map(comp => doc(db, 'products', comp.productId));
     const snaps = await Promise.all(prodRefs.map(ref => tx.get(ref)));
@@ -279,9 +283,14 @@ export const cancelProductionTarget = async (
       const comp = recipe.components[i];
       const snap = snaps[i];
       const data = snap.data() ?? {};
-      const mvDoc = materialMovSnap.docs.find(d => d.data().productId === comp.productId);
-      const deductedQty = mvDoc ? Math.abs(mvDoc.data().quantity as number) : comp.quantity * target.targetQty;
-      const wasUnverified = mvDoc?.data().note?.includes('unverified') ?? false;
+      // Use fresh in-transaction snapshot to get accurate quantity (prevents stale-read race)
+      const mvSnap = movSnapsInTx.find(s => s.exists() && s.data()?.productId === comp.productId);
+      const deductedQty = mvSnap?.exists()
+        ? Math.abs(mvSnap.data()!.quantity as number)
+        : comp.quantity * target.targetQty;
+      const wasUnverified = mvSnap?.exists()
+        ? (mvSnap.data()!.note as string | undefined)?.includes('unverified') ?? false
+        : false;
 
       if (wasUnverified) {
         // Return to unverified_stock and just delete the movement (no audit trail for unverified)
@@ -293,7 +302,7 @@ export const cancelProductionTarget = async (
         tx.update(prodRefs[i], { stock_level: current + deductedQty });
       }
 
-      if (mvDoc) tx.delete(mvDoc.ref);
+      if (mvSnap?.exists()) tx.delete(mvSnap.ref);
     }
 
     // Reverse finished goods addition if already completed

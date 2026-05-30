@@ -115,7 +115,14 @@ export default function DataEntry() {
 
       if (recipe && !selected.materialsDeducted && selected.completedQty === 0) {
         try { await startProductionTarget(selected, recipe); }
-        catch { /* non-fatal */ }
+        catch (startErr) {
+          // Entry was logged but material deduction failed — warn the user so they can fix inventory manually
+          setSuccess(`⚠ Batch logged but raw material deduction failed: ${startErr instanceof Error ? startErr.message : 'unknown error'}. Check inventory and deduct manually from Daily Planning.`);
+          clearDraft();
+          update({ qty: '', goodQty: '', defects: '', notes: '', logTime: '', useNow: false, qualityCheck: 'passed' });
+          load();
+          return;
+        }
       }
 
       if (recipe && !selected.finishedGoodsAdded && newCompleted >= selected.targetQty) {

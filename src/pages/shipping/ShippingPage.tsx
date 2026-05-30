@@ -1499,7 +1499,11 @@ export default function ShippingPage() {
       } else {
         await deleteShippingOrder(order.id);
       }
+      // Only remove from local state after Firestore confirms success
       setOrders(o => o.filter(x => x.id !== order.id));
+    } catch (e) {
+      alert(`Failed to delete order: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      await load(); // Re-sync with Firestore to ensure UI is accurate
     } finally {
       setDeleting(s => { const n = new Set(s); n.delete(order.id); return n; });
     }
