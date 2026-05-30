@@ -112,7 +112,7 @@ export interface ProductionTarget {
   finishedGoodsAdded?: boolean;
   deadlineTime?: string; // HH:MM
   line?: string;
-  status: 'not_started' | 'in_progress' | 'at_risk' | 'complete';
+  status: 'not_started' | 'in_progress' | 'at_risk' | 'complete' | 'cancelled';
   notes?: string;
   createdAt: { toDate: () => Date } | Date;
 }

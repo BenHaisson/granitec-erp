@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { CheckCircle2, Trash2, Clock, X } from 'lucide-react';
+import { CheckCircle2, Trash2, Clock, X, Ban } from 'lucide-react';
 import { getTargets, getAllTargets, getEntries, getAllEntries, createEntry, deleteEntry, updateTarget } from '@/services/productionTargets.service';
-import { getRecipes, startProductionTarget, completeProductionTarget } from '@/services/production.service';
+import { getRecipes, startProductionTarget, completeProductionTarget, cancelProductionTarget } from '@/services/production.service';
 import type { ProductionTarget, ProductionEntry, Recipe } from '@/types';
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -122,6 +122,35 @@ export default function DataEntry() {
     load();
   };
 
+  const handleCancelProduction = async () => {
+    if (!selected) return;
+    const recipe = selected.type === 'recipe'
+      ? recipes.find(r => r.id === selected.recipeId) : undefined;
+    const msg = selected.materialsDeducted
+      ? 'Cancel this production? Raw materials will be returned to inventory and all logged entries deleted.'
+      : 'Cancel this production target? All logged entries will be deleted.';
+    if (!confirm(msg)) return;
+    setSaving(true);
+    setError('');
+    try {
+      if (recipe && selected.materialsDeducted) {
+        await cancelProductionTarget(selected, recipe);
+      } else {
+        // Stage target or recipe target that never started — reset and delete entries
+        await updateTarget(selected.id, { status: 'cancelled', completedQty: 0 });
+        const allE = await getAllEntries();
+        await Promise.all(allE.filter(e => e.targetId === selected.id).map(e => deleteEntry(e.id)));
+      }
+      setSuccess('Production cancelled — inventory restored.');
+      setTimeout(() => setSuccess(''), 5000);
+      load();
+    } catch (err) {
+      setError(`Cancel failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -204,10 +233,24 @@ export default function DataEntry() {
                   {selected.defects ? (
                     <p className="text-xs text-amber-600 mt-2">⚠ {selected.defects} defects recorded</p>
                   ) : null}
+                  {selected.status !== 'cancelled' && (
+                    <div className="mt-3 pt-3 border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={handleCancelProduction}
+                        disabled={saving}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors">
+                        <Ban size={12} /> Cancel Production
+                      </button>
+                    </div>
+                  )}
+                  {selected.status === 'cancelled' && (
+                    <p className="text-xs text-red-500 mt-2 font-semibold">✕ Production cancelled</p>
+                  )}
                 </div>
 
                 {/* Entry form */}
-                <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 space-y-4">
+                {selected.status === 'cancelled' ? null : <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 space-y-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Log New Batch</p>
                   {selected.type === 'recipe' && !selected.materialsDeducted && selected.completedQty === 0 && (
                     <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
@@ -291,18 +334,18 @@ export default function DataEntry() {
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                   </div>
 
-                  {error && <p className="text-red-600 text-sm">{error}</p>}
-                  {success && (
-                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 text-sm text-emerald-700">
-                      <CheckCircle2 size={14} /> {success}
-                    </div>
-                  )}
-
                   <button type="submit" disabled={saving}
                     className="w-full py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors">
                     {saving ? 'Saving…' : 'Submit Entry'}
                   </button>
-                </form>
+                </form>}
+
+                {error && <p className="text-red-600 text-sm">{error}</p>}
+                {success && (
+                  <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 text-sm text-emerald-700">
+                    <CheckCircle2 size={14} /> {success}
+                  </div>
+                )}
 
                 {/* Recent entries for this target */}
                 {targetEntries.length > 0 && (

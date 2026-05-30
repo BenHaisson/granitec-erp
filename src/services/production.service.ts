@@ -1,5 +1,6 @@
 import {
   collection, addDoc, getDocs, doc, runTransaction, Timestamp, setDoc, deleteDoc, updateDoc, writeBatch,
+  query, where,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { ProductionOrder, ProductionTarget, Recipe, RecipeItem } from '@/types';
@@ -245,6 +246,87 @@ export const completeProductionTarget = async (
       finishedGoodsAdded: true,
     });
   });
+};
+
+export const cancelProductionTarget = async (
+  target: ProductionTarget,
+  recipe: Recipe,
+): Promise<void> => {
+  // Find material deduction movements created by startProductionTarget
+  const materialMovSnap = await getDocs(
+    query(
+      collection(db, 'inventory_movements'),
+      where('note', 'in', [
+        `Production ${target.id}`,
+        `Production ${target.id} (incl. unverified stock)`,
+      ])
+    )
+  );
+
+  await runTransaction(db, async (tx) => {
+    // Read all component product docs
+    const prodRefs = recipe.components.map(comp => doc(db, 'products', comp.productId));
+    const snaps = await Promise.all(prodRefs.map(ref => tx.get(ref)));
+
+    // Read finished product if goods were already added to warehouse
+    const finRef = target.finishedGoodsAdded
+      ? doc(db, 'products', recipe.finishedProductId)
+      : null;
+    const finSnap = finRef ? await tx.get(finRef) : null;
+
+    // Restore component stock and delete original movements
+    for (let i = 0; i < recipe.components.length; i++) {
+      const comp = recipe.components[i];
+      const snap = snaps[i];
+      const data = snap.data() ?? {};
+      const mvDoc = materialMovSnap.docs.find(d => d.data().productId === comp.productId);
+      const deductedQty = mvDoc ? Math.abs(mvDoc.data().quantity as number) : comp.quantity * target.targetQty;
+      const wasUnverified = mvDoc?.data().note?.includes('unverified') ?? false;
+
+      if (wasUnverified) {
+        // Return to unverified_stock and just delete the movement (no audit trail for unverified)
+        const current = (data.unverified_stock as number) ?? 0;
+        tx.update(prodRefs[i], { unverified_stock: current + deductedQty });
+      } else {
+        // Return to verified stock
+        const current = (data.stock_level as number) ?? 0;
+        tx.update(prodRefs[i], { stock_level: current + deductedQty });
+      }
+
+      if (mvDoc) tx.delete(mvDoc.ref);
+    }
+
+    // Reverse finished goods addition if already completed
+    if (target.finishedGoodsAdded && finSnap && finRef) {
+      const current = (finSnap.data()?.stock_level as number) ?? 0;
+      tx.update(finRef, { stock_level: current - target.completedQty });
+      tx.set(doc(collection(db, 'inventory_movements')), {
+        productId: recipe.finishedProductId,
+        quantity: -target.completedQty,
+        reason: 'ADJUSTMENT',
+        note: `Cancelled production: ${target.recipeName ?? recipe.finishedProductId}`,
+        createdAt: Timestamp.now(),
+      });
+    }
+
+    // Mark target as cancelled
+    tx.update(doc(db, 'production_targets', target.id), {
+      status: 'cancelled',
+      completedQty: 0,
+      materialsDeducted: false,
+      finishedGoodsAdded: false,
+    });
+  });
+
+  // Delete all production entries for this target
+  const entriesSnap = await getDocs(
+    query(collection(db, 'production_entries'), where('targetId', '==', target.id))
+  );
+  if (entriesSnap.docs.length > 0) {
+    const batch = writeBatch(db);
+    entriesSnap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
 };
 
 export const validateAndCompleteProduction = async (orderId: string) => {
