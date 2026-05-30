@@ -1347,7 +1347,7 @@ export default function ShippingPage() {
     setRefPrefix(initialPrefix);
     setDate(today);
     setRef(autoRefByPrefix(orders, initialPrefix, new Date(today + 'T00:00:00').getFullYear()));
-    setSupplier('');
+    setSupplier(localStorage.getItem('granitec:lastSupplier') ?? '');
     setLines([EMPTY_LINE()]);
     setSaveError('');
     setShowImport(false);
@@ -1444,6 +1444,7 @@ export default function ShippingPage() {
           return cats.length > 0 && cats.every(c => c === cats[0]) ? cats[0] : undefined;
         })();
         const finalRef = ref_.trim() || autoRef(orders, detectedCat);
+        if (supplier.trim()) localStorage.setItem('granitec:lastSupplier', supplier.trim());
         await createShippingOrder({
           ref: finalRef,
           supplier: supplier.trim() || undefined,
