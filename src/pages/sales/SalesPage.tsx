@@ -1,9 +1,13 @@
 import { useEffect, useState, useRef, type FormEvent } from 'react';
-import { Plus, X, ShoppingBag, Download, Eye, Pencil, FileDown, Search, Trash2, CalendarCheck } from 'lucide-react';
+import { Plus, X, ShoppingBag, Download, Eye, Pencil, FileDown, Search, Trash2, CalendarCheck, AlertTriangle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { getOrders, createOrder, updateOrder, deleteOrder, generateOrderRef } from '@/services/orders.service';
 import { getProducts } from '@/services/inventory.service';
+import { getRecipes } from '@/services/production.service';
+import { createTarget } from '@/services/productionTargets.service';
 import Modal from '@/components/ui/Modal';
-import type { SalesOrder, SalesOrderLine, Product } from '@/types';
+import type { SalesOrder, SalesOrderLine, Product, Recipe } from '@/types';
+import { todayISO } from '@/utils/dates';
 import { useDraft, getLastEntryDate, saveLastEntryDate } from '@/hooks/useDraft';
 import DraftBanner from '@/components/ui/DraftBanner';
 
@@ -478,12 +482,22 @@ function SalesOrderRow({ line, rowNum, products, boxesRef, onUpdate, onSelect, o
 }
 
 // ── New Sales Order Full-Screen ───────────────────────────────────
-function NewOrderModal({ products, onClose, onSaved }: {
-  products: Product[]; onClose: () => void; onSaved: () => void;
+function NewOrderModal({ products, recipes, onClose, onSaved }: {
+  products: Product[]; recipes: Recipe[]; onClose: () => void; onSaved: () => void;
 }) {
+  const navigate = useNavigate();
   const [orderRef, setOrderRef] = useState('');
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState('');
+
+  // Shortfall dialog state — shown when stock < order qty AND a recipe exists
+  type ShortfallTarget = {
+    productId: string; productName: string;
+    recipeId: string;  recipeName: string;
+    need: number; have: number;
+  };
+  const [shortfalls, setShortfalls] = useState<ShortfallTarget[]>([]);
+  const [creatingTargets, setCreatingTargets] = useState(false);
 
   type SalesDraft = { client: string; date: string; lineData: Array<{ productId: string; productName: string; sku: string; boxes: number; qtyPerBox: number; totalQty: number }> };
   const { draft: sd, update: updateSd, clearDraft: clearSalesDraft, hasDraft, isReady, savedAt, continueDraft, discardDraft } =
@@ -591,6 +605,34 @@ function NewOrderModal({ products, onClose, onSaved }: {
     const seenIds = new Set<string>();
     const dup = validLines.find(l => seenIds.size === seenIds.add(l.productId).size);
     if (dup) { setError(`Duplicate product: "${dup.productName}" appears more than once. Merge the quantities into one line.`); return; }
+
+    // ── Stock shortfall check ──────────────────────────────────────────────
+    // Before saving, detect lines where warehouse stock < ordered qty
+    // and a matching recipe exists → offer to auto-create production targets
+    const detected: ShortfallTarget[] = [];
+    for (const line of validLines) {
+      const product = products.find(p => p.id === line.productId);
+      if (!product) continue;
+      const available = product.stock_level;
+      if (available < line.totalQty) {
+        const recipe = recipes.find(r => r.finishedProductId === line.productId);
+        if (recipe) {
+          detected.push({
+            productId: line.productId,
+            productName: line.productName,
+            recipeId: recipe.id,
+            recipeName: line.productName,
+            need: line.totalQty,
+            have: available,
+          });
+        }
+      }
+    }
+    if (detected.length > 0) {
+      setShortfalls(detected);
+      return; // show the shortfall dialog instead of saving
+    }
+
     setError(''); setSaving(true);
     try {
       await createOrder({ ref: orderRef, client, date: new Date(date), lines: validLines as SalesOrderLine[] });
@@ -598,6 +640,32 @@ function NewOrderModal({ products, onClose, onSaved }: {
       onSaved(); onClose();
     } catch { setError('Failed to save order.'); }
     finally { setSaving(false); }
+  };
+
+  const handleCreateProductionTargets = async () => {
+    setCreatingTargets(true);
+    try {
+      for (const sf of shortfalls) {
+        await createTarget({
+          date: todayISO(),
+          type: 'recipe',
+          recipeId: sf.recipeId,
+          recipeName: sf.recipeName,
+          targetQty: sf.need - sf.have, // produce exactly the shortfall amount
+          completedQty: 0,
+          deadline: todayISO(),
+          status: 'not_started',
+        });
+      }
+      clearSalesDraft();
+      onClose();
+      navigate('/production', { state: { tab: 'planning' } });
+    } catch (e) {
+      setError(`Failed to create production targets: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      setShortfalls([]);
+    } finally {
+      setCreatingTargets(false);
+    }
   };
 
   const totalPcs = lines.reduce((s, l) => s + (l.productId ? l.totalQty : 0), 0);
@@ -801,6 +869,57 @@ function NewOrderModal({ products, onClose, onSaved }: {
               <button type="button" onClick={() => { setShowImport(false); setImportText(''); }}
                 className="flex-1 py-2.5 border-2 border-slate-200 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors">
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Shortfall dialog — shown when warehouse stock < ordered qty */}
+      {shortfalls.length > 0 && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                <AlertTriangle size={18} className="text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-800">Insufficient Warehouse Stock</h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  The following products don't have enough stock. A production target will be created automatically.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden divide-y divide-amber-100">
+              {shortfalls.map(sf => (
+                <div key={sf.productId} className="px-4 py-3">
+                  <p className="text-sm font-semibold text-slate-800">{sf.productName}</p>
+                  <div className="flex items-center gap-4 mt-1.5 text-xs">
+                    <span className="text-slate-500">Ordered: <strong className="text-slate-700 tabular-nums">{sf.need.toLocaleString()}</strong></span>
+                    <span className="text-slate-500">In stock: <strong className="text-slate-700 tabular-nums">{sf.have.toLocaleString()}</strong></span>
+                    <span className="text-red-600 font-semibold">Short: {(sf.need - sf.have).toLocaleString()}</span>
+                  </div>
+                  <p className="text-xs text-indigo-600 mt-1.5">
+                    → Will create production target for <strong>{(sf.need - sf.have).toLocaleString()} units</strong>
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            {error && <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={handleCreateProductionTargets}
+                disabled={creatingTargets}
+                className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+                {creatingTargets ? 'Creating…' : '▶ Create Production Target'}
+              </button>
+              <button
+                onClick={() => setShortfalls([])}
+                className="px-4 py-2.5 border border-slate-200 text-slate-600 rounded-xl text-sm hover:bg-slate-50 transition-colors">
+                Back
               </button>
             </div>
           </div>
@@ -1034,6 +1153,7 @@ function EditOrderModal({ order, products, onClose, onSaved }: {
 export default function SalesPage() {
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
   const [detail, setDetail] = useState<SalesOrder | null>(null);
@@ -1043,8 +1163,8 @@ export default function SalesPage() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([getOrders(), getProducts()])
-      .then(([o, p]) => { setOrders(o); setProducts(p.filter(x => x.type === 'FINISHED')); })
+    Promise.all([getOrders(), getProducts(), getRecipes()])
+      .then(([o, p, r]) => { setOrders(o); setProducts(p.filter(x => x.type === 'FINISHED')); setRecipes(r); })
       .finally(() => setLoading(false));
   };
 
@@ -1223,7 +1343,7 @@ export default function SalesPage() {
       )}
 
       {showNew && (
-        <NewOrderModal products={products} onClose={() => setShowNew(false)} onSaved={load} />
+        <NewOrderModal products={products} recipes={recipes} onClose={() => setShowNew(false)} onSaved={load} />
       )}
       {detail && (
         <OrderDetailModal order={detail} onClose={() => setDetail(null)} />

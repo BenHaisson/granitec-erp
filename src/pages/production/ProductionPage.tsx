@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, CalendarDays, PenLine, Layers, FileText, BookOpen,
 } from 'lucide-react';
@@ -21,7 +22,19 @@ const TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
 ];
 
 export default function ProductionPage() {
-  const [tab, setTab] = useState<Tab>('dashboard');
+  const location = useLocation();
+  const [tab, setTab] = useState<Tab>(() => {
+    const state = location.state as { tab?: string } | null;
+    return (TABS.find(t => t.id === state?.tab)?.id ?? 'dashboard') as Tab;
+  });
+
+  // Clear the navigation state so a refresh doesn't re-trigger the tab switch
+  useEffect(() => {
+    if ((location.state as { tab?: string } | null)?.tab) {
+      window.history.replaceState({}, '');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="space-y-5">
