@@ -529,7 +529,8 @@ function RecipeOverlay({
           </div>
         </aside>
 
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden overflow-x-auto">
+          <div className="min-w-[640px]">
           <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3 px-4 py-2.5 border-b border-slate-100 bg-slate-50 shrink-0 text-xs font-bold text-slate-400 uppercase tracking-widest">
             <span className="text-center">#</span>
             <span>Component</span>
@@ -552,6 +553,7 @@ function RecipeOverlay({
                 onQtyTab={() => handleQtyTab(i)}
               />
             ))}
+          </div>
           </div>
 
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50 shrink-0">

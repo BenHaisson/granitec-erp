@@ -197,6 +197,7 @@ export default function UnverifiedStockPage() {
             {movements.length === 0 ? (
               <div className="px-5 py-10 text-center text-slate-400 text-sm">No unverified stock history</div>
             ) : (
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50">
                   <tr>
@@ -240,6 +241,7 @@ export default function UnverifiedStockPage() {
                   })}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         </>
@@ -265,7 +267,7 @@ export default function UnverifiedStockPage() {
 
             <form onSubmit={handleVerifySubmit} className="p-6 space-y-5">
               {/* Ref + Supplier + Date */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Reference <span className="text-red-500">*</span></label>
                   <input type="text" value={verifyRef} onChange={e => setVerifyRef(e.target.value)}
@@ -296,6 +298,7 @@ export default function UnverifiedStockPage() {
                   </button>
                 </div>
                 <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50">
                       <tr>
@@ -358,6 +361,7 @@ export default function UnverifiedStockPage() {
                       )}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
 

@@ -636,6 +636,7 @@ export default function DailyPlanning() {
               Not enough raw materials to produce <span className="font-semibold">{feasibilityDialog.pendingPayload.targetQty}</span> units.
             </p>
             <div className="bg-red-50 border border-red-200 rounded-lg overflow-hidden">
+              <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-red-100 text-red-700">
@@ -659,6 +660,7 @@ export default function DailyPlanning() {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
             {!showOrderForm ? (
               <div className="flex flex-col gap-2 pt-1">

@@ -150,6 +150,7 @@ export default function MovementsPage() {
         {loading ? (
           <div className="p-8 text-center text-slate-400 text-sm">Loading…</div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50">
@@ -191,6 +192,7 @@ export default function MovementsPage() {
               )}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

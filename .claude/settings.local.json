@@ -1,7 +1,29 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(firebase firestore:query production_targets --project granitec-erp)",
+      "Bash(node scripts/reset-to-supply.mjs)",
+      "Bash(ls \"C:\\\\Users\\\\ben\\\\granitec-erp\" | grep -i \"service\\\\|admin\\\\|key\\\\|secret\" 2>/dev/null; ls \"C:\\\\Users\\\\ben\" | grep -i \"service\\\\|firebase\\\\|key\" 2>/dev/null)",
+      "Bash(firebase login:list)",
+      "Bash(firebase use *)",
+      "Bash(firebase projects:list)",
+      "Bash(firebase deploy *)",
+      "Bash(firebase login:use ben.haissoun01@gmail.com)",
+      "Bash(firebase login *)",
+      "Bash(firebase login:use bhbenayb@gmail.com)",
+      "Bash(grep -n \"key={i}\\\\|key={idx}\\\\|\\\\.map.*index\\\\|map\\(\\(l, i\\)\\\\|map\\(\\(line, i\\)\\\\|map\\(\\(item, i\\)\" src/pages/sales/SalesPage.tsx src/pages/shipping/ShippingPage.tsx)",
+      "Bash(sed -n '14,30p' src/pages/inventory/InventoryPage.tsx)",
+      "Bash(sed -n '69,80p' src/pages/dashboard/DashboardPage.tsx)",
+      "Bash(sed -n '11,20p' src/pages/analytics/AnalyticsPage.tsx)",
+      "Bash(sed -n '15,22p' src/pages/inventory/InventoryPage.tsx)",
+      "Bash(sed -n '15,22p' src/pages/warehouse/WarehousePage.tsx)",
+      "Bash(npx vite *)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(xargs cat)"
     ]
   }
 }

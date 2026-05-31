@@ -425,7 +425,7 @@ function CreateOrderOverlay({
           </button>
           <h1 className="text-lg font-bold text-slate-800">{isEditing ? 'Edit Shipping Order' : 'New Shipping Order'}</h1>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 justify-end">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Ref *</label>
             <select
@@ -511,7 +511,8 @@ function CreateOrderOverlay({
         </aside>
 
         {/* Main content */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden overflow-x-auto">
+          <div className="min-w-[640px]">
           {/* Column headers */}
           <div className="grid grid-cols-[40px_1fr_120px_80px_160px_100px_36px] gap-3 px-4 py-2.5 border-b border-slate-100 bg-slate-50 shrink-0 text-xs font-bold text-slate-400 uppercase tracking-widest">
             <span className="text-center">#</span>
@@ -538,6 +539,7 @@ function CreateOrderOverlay({
               />
             ))}
           </div>
+          </div>{/* end min-w wrapper */}
 
           {/* Footer */}
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50 shrink-0">
@@ -808,6 +810,7 @@ interface OrderTableProps {
 function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onReceive, onEdit, onDelete }: OrderTableProps) {
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-slate-100 bg-slate-50">
@@ -915,6 +918,7 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -1222,6 +1226,7 @@ function SmartOrderWizard({ finishedProducts, allProducts, recipes, orders, onCl
                   </div>
 
                   {/* Rows */}
+                  <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-slate-100">
@@ -1248,6 +1253,7 @@ function SmartOrderWizard({ finishedProducts, allProducts, recipes, orders, onCl
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               );
             })}

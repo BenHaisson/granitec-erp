@@ -267,6 +267,7 @@ export default function DailyReport() {
                 <h3 className="text-sm font-semibold text-slate-700">Entry Log</h3>
                 <span className="text-xs text-slate-400 ml-1">{entries.length} entries</span>
               </div>
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50">
                   <tr>{['Time', 'Stage', 'Disc/Recipe', 'Units', 'Defects', 'Quality', 'Notes'].map(h => (
@@ -294,6 +295,7 @@ export default function DailyReport() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </>

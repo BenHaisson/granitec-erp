@@ -628,7 +628,7 @@ function NewOrderModal({ products, onClose, onSaved }: {
 
       {/* Header */}
       <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-6 py-4">
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3">
           <button type="button" onClick={onClose}
             className="flex items-center gap-2 text-slate-500 hover:text-slate-800 transition-colors font-medium text-sm shrink-0">
             <X size={16} /> Cancel
@@ -640,7 +640,7 @@ function NewOrderModal({ products, onClose, onSaved }: {
             type="text" value={client}
             onChange={e => setClient(e.target.value)}
             placeholder="Client name *"
-            className="flex-1 max-w-xs px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
+            className="flex-1 min-w-[140px] max-w-xs px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
           />
           <div className="flex items-center gap-1 shrink-0">
             <input type="date" value={date} onChange={e => setDate(e.target.value)}
@@ -733,7 +733,8 @@ function NewOrderModal({ products, onClose, onSaved }: {
         </div>
 
         {/* Main table */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden overflow-x-auto">
+          <div className="min-w-[720px]">
           <div className="shrink-0 bg-white border-b border-slate-100 px-4 py-2">
             <div className="grid grid-cols-[40px_1fr_140px_90px_110px_110px_90px_44px] gap-2">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-center">#</span>
@@ -765,6 +766,7 @@ function NewOrderModal({ products, onClose, onSaved }: {
               <Plus size={14} /> Add Line
             </button>
           </div>
+          </div>{/* end min-w wrapper */}
         </div>
       </div>
 
@@ -820,6 +822,7 @@ function OrderDetailModal({ order, onClose }: { order: SalesOrder; onClose: () =
           <div><span className="text-slate-400">Client</span><p className="font-semibold text-slate-800 mt-0.5">{order.client}</p></div>
           <div><span className="text-slate-400">Date</span><p className="font-semibold text-slate-800 mt-0.5">{date.toLocaleDateString('fr-FR')}</p></div>
         </div>
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs text-slate-400 uppercase tracking-wide">
@@ -846,6 +849,7 @@ function OrderDetailModal({ order, onClose }: { order: SalesOrder; onClose: () =
             </tr>
           </tfoot>
         </table>
+        </div>
         <div className="flex gap-3 pt-1">
           <button onClick={() => downloadInvoice(order)}
             className="flex-1 flex items-center justify-center gap-2 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
@@ -1162,6 +1166,7 @@ export default function SalesPage() {
               <FileDown size={13} /> Download Report
             </button>
           </div>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs text-slate-400 uppercase tracking-wide bg-white">
@@ -1213,6 +1218,7 @@ export default function SalesPage() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

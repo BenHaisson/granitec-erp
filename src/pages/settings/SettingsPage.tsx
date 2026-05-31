@@ -341,7 +341,8 @@ export default function SettingsPage() {
             </button>
 
             {extrasOpen && (
-              <div className="border-t border-blue-200 divide-y divide-blue-100">
+              <div className="border-t border-blue-200 divide-y divide-blue-100 overflow-x-auto">
+                <div className="min-w-[640px]">
                 <div className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-3 px-5 py-2 text-[10px] font-semibold uppercase tracking-widest text-blue-400">
                   <span>Name</span><span>SKU</span><span>Added by</span><span>Date</span><span className="w-28" />
                 </div>
@@ -366,6 +367,7 @@ export default function SettingsPage() {
                     </div>
                   </div>
                 ))}
+                </div>{/* end min-w wrapper */}
               </div>
             )}
           </div>

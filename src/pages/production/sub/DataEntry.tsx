@@ -401,6 +401,7 @@ export default function DataEntry() {
                     <div className="px-4 py-3 border-b border-slate-50">
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Entries for this Target</p>
                     </div>
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50">
                         <tr>
@@ -434,6 +435,7 @@ export default function DataEntry() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 )}
               </>

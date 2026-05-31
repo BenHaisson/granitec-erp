@@ -802,7 +802,8 @@ function SupplyReceiptScreen({
         </div>
 
         {/* Main: column headers + rows */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden overflow-x-auto">
+          <div className="min-w-[640px]">
           <div className="shrink-0 bg-white border-b border-slate-100 px-4 py-2">
             <div className="grid grid-cols-[40px_1fr_160px_100px_180px_44px] gap-3">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-center">#</span>
@@ -830,6 +831,7 @@ function SupplyReceiptScreen({
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors text-sm font-medium mt-1">
               <Plus size={14} /> Add Line
             </button>
+          </div>
           </div>
         </div>
       </div>
@@ -1374,7 +1376,7 @@ export default function InventoryPage() {
                 {RAW_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Initial Stock</label>
                 <input type="number" min="0" value={form.stock_level} required
@@ -1433,7 +1435,7 @@ export default function InventoryPage() {
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
                 <select value={editForm.category}
