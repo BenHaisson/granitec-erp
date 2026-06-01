@@ -470,7 +470,8 @@ function CreateOrderOverlay({
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden min-h-0">
+      <div className="flex flex-1 overflow-hidden min-h-0 flex-col">
+        <div className="flex flex-1 overflow-hidden min-h-0">
         {/* Sidebar — quick product list */}
         <aside className="w-64 shrink-0 border-r border-slate-100 flex flex-col overflow-hidden bg-slate-50 min-h-0">
           <div className="px-3 pt-3 pb-2 shrink-0">
@@ -541,26 +542,6 @@ function CreateOrderOverlay({
           </div>
           </div>{/* end min-w wrapper */}
 
-          {/* Footer */}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50 shrink-0">
-            <div className="flex items-center gap-3">
-              <button type="button" onClick={onAddLine}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-dashed border-slate-300 text-sm font-semibold text-slate-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
-                <Plus size={15} /> Add Line
-              </button>
-              <button type="button" onClick={() => setShowImport(!showImport)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
-                <FileText size={14} /> Import TXT
-              </button>
-            </div>
-            {total > 0 && (
-              <p className="text-sm font-semibold text-slate-500">
-                {validCount} item{validCount !== 1 ? 's' : ''} ·{' '}
-                <span className="text-slate-800 font-bold">{total.toLocaleString('fr-FR')} pcs</span>
-              </p>
-            )}
-          </div>
-
           {/* Import panel */}
           {showImport && (
             <div className="border-t border-slate-200 bg-white px-4 py-3 shrink-0">
@@ -592,6 +573,27 @@ function CreateOrderOverlay({
                 </div>
               )}
             </div>
+          )}
+        </div>
+        </div>{/* end sidebar + main content flex */}
+
+        {/* Footer — always visible, not constrained by horizontal scroll */}
+        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50 shrink-0">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button type="button" onClick={onAddLine}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-dashed border-slate-300 text-sm font-semibold text-slate-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
+              <Plus size={15} /> Add Line
+            </button>
+            <button type="button" onClick={() => setShowImport(!showImport)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
+              <FileText size={14} /> Import TXT
+            </button>
+          </div>
+          {total > 0 && (
+            <p className="text-sm font-semibold text-slate-500">
+              {validCount} item{validCount !== 1 ? 's' : ''} ·{' '}
+              <span className="text-slate-800 font-bold">{total.toLocaleString('fr-FR')} pcs</span>
+            </p>
           )}
         </div>
       </div>
