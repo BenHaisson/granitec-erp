@@ -352,13 +352,14 @@ interface CreateOverlayProps {
   onConfirm: () => void;
   onClose: () => void;
   onParseImport: () => void;
+  onImportLines: (newLines: DraftLine[]) => void;
   isEditing?: boolean;
 }
 function CreateOrderOverlay({
   rawMaterials, ref_, setRef, refPrefix, onPrefixChange, supplier, setSupplier, date, onDateChange,
   lines, saving, error, refInputRef, showImport, setShowImport,
   importText, setImportText, importWarnings,
-  onAddLine, onRemoveLine, onUpdateLine, onSelectProduct, onConfirm, onClose, onParseImport,
+  onAddLine, onRemoveLine, onUpdateLine, onSelectProduct, onConfirm, onClose, onParseImport, onImportLines,
   isEditing = false,
 }: CreateOverlayProps) {
   const qtyRefs = useRef<HTMLInputElement[]>([]);
@@ -452,12 +453,7 @@ function CreateOrderOverlay({
   };
 
   const handleConfirmImport = () => {
-    setLines(prev => {
-      const empties = prev.filter(l => !l.productId);
-      const kept = prev.filter(l => !!l.productId);
-      const combined = [...kept, ...parsedItemsRef.current];
-      return empties.length > 0 ? combined : [...combined, EMPTY_LINE()];
-    });
+    onImportLines(parsedItemsRef.current);
     setImportModalOpen(false);
     setImportModalText('');
     setParsedItems([]);
@@ -1878,6 +1874,13 @@ export default function ShippingPage() {
           onConfirm={handleConfirm}
           onClose={() => { setShowCreate(false); setEditingOrder(null); }}
           onParseImport={parseImport}
+          onImportLines={(newLines) => {
+            setLines(prev => {
+              const kept = prev.filter(l => !!l.productId);
+              const combined = [...kept, ...newLines];
+              return [...combined, EMPTY_LINE()];
+            });
+          }}
           isEditing={!!editingOrder}
         />
       )}
