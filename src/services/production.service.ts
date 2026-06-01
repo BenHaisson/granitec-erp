@@ -200,6 +200,9 @@ export const startProductionTarget = async (
     const prodRefs = recipe.components.map(comp => doc(db, 'products', comp.productId));
     const snaps = await Promise.all(prodRefs.map(ref => tx.get(ref)));
 
+    // Track auto-added unverified amounts so cancelProductionTarget can reverse perfectly
+    const autoAddedUnverified: Record<string, number> = {};
+
     // Phase 2: all writes
     for (let i = 0; i < recipe.components.length; i++) {
       const comp = recipe.components[i];
@@ -207,13 +210,35 @@ export const startProductionTarget = async (
       const need = comp.quantity * target.targetQty;
       const data = snap.data() ?? {};
       const realStock = (data.stock_level as number) ?? 0;
-      const unverifiedStock = (data.unverified_stock as number) ?? 0;
+      const existingUnverified = (data.unverified_stock as number) ?? 0;
       const realDeduct = Math.min(realStock, need);
-      const unverifiedDeduct = Math.min(unverifiedStock, need - realDeduct);
+
+      // If combined stock (verified + unverified) is less than needed,
+      // auto-add the shortfall as unverified stock.
+      // This represents: "we physically have the materials, document pending."
+      const shortfall = Math.max(0, need - (realStock + existingUnverified));
+      const totalUnverified = existingUnverified + shortfall;
+      const unverifiedDeduct = Math.min(totalUnverified, need - realDeduct);
+
       tx.update(prodRefs[i], {
         stock_level: realStock - realDeduct,
-        unverified_stock: unverifiedStock - unverifiedDeduct,
+        unverified_stock: totalUnverified - unverifiedDeduct,
       });
+
+      // If we auto-added unverified stock, record it as an ADJUSTMENT so the
+      // audit trail shows the incoming materials (document to be provided later)
+      if (shortfall > 0) {
+        autoAddedUnverified[comp.productId] = shortfall;
+        tx.set(doc(collection(db, 'inventory_movements')), {
+          productId: comp.productId,
+          quantity: shortfall,
+          reason: 'ADJUSTMENT',
+          note: `Unverified: auto-added for Production ${target.id} — document pending`,
+          createdAt: Timestamp.now(),
+        });
+      }
+
+      // Record the production deduction (always shows real quantity, never -0)
       tx.set(doc(collection(db, 'inventory_movements')), {
         productId: comp.productId,
         quantity: -(realDeduct + unverifiedDeduct),
@@ -224,9 +249,12 @@ export const startProductionTarget = async (
         createdAt: Timestamp.now(),
       });
     }
+
     tx.update(doc(db, 'production_targets', target.id), {
       status: 'in_progress',
       materialsDeducted: true,
+      // Stored so cancelProductionTarget can cleanly reverse auto-added stock
+      ...(Object.keys(autoAddedUnverified).length > 0 && { autoAddedUnverified }),
     });
   });
 };
@@ -262,7 +290,7 @@ export const cancelProductionTarget = async (
   target: ProductionTarget,
   recipe: Recipe,
 ): Promise<void> => {
-  // Query movement refs outside the transaction (Firestore doesn't allow queries inside)
+  // Query PRODUCTION movement refs outside the transaction
   const materialMovSnap = await getDocs(
     query(
       collection(db, 'inventory_movements'),
@@ -272,11 +300,27 @@ export const cancelProductionTarget = async (
       ])
     )
   );
+
+  // Query auto-added ADJUSTMENT movements (created when stock was insufficient)
+  const autoAddMovSnap = await getDocs(
+    query(
+      collection(db, 'inventory_movements'),
+      where('note', '==', `Unverified: auto-added for Production ${target.id} — document pending`)
+    )
+  );
+
+  // Map of auto-added amounts by productId (to subtract from what we restore)
+  const autoAddedMap = new Map(
+    autoAddMovSnap.docs.map(d => [d.data().productId as string, { ref: d.ref, amount: d.data().quantity as number }])
+  );
+
   const movRefs = materialMovSnap.docs.map(d => d.ref);
+  const autoAddRefs = autoAddMovSnap.docs.map(d => d.ref);
 
   await runTransaction(db, async (tx) => {
-    // Re-read each movement doc inside the transaction for fresh, consistent data (fixes TOCTOU)
+    // Re-read all movement docs inside transaction for fresh, consistent data (prevents TOCTOU)
     const movSnapsInTx = await Promise.all(movRefs.map(r => tx.get(r)));
+    const autoAddSnapsInTx = await Promise.all(autoAddRefs.map(r => tx.get(r)));
 
     // Read all component product docs
     const prodRefs = recipe.components.map(comp => doc(db, 'products', comp.productId));
@@ -293,7 +337,7 @@ export const cancelProductionTarget = async (
       const comp = recipe.components[i];
       const snap = snaps[i];
       const data = snap.data() ?? {};
-      // Use fresh in-transaction snapshot to get accurate quantity (prevents stale-read race)
+
       const mvSnap = movSnapsInTx.find(s => s.exists() && s.data()?.productId === comp.productId);
       const deductedQty = mvSnap?.exists()
         ? Math.abs(mvSnap.data()!.quantity as number)
@@ -302,17 +346,33 @@ export const cancelProductionTarget = async (
         ? (mvSnap.data()!.note as string | undefined)?.includes('unverified') ?? false
         : false;
 
-      if (wasUnverified) {
-        // Return to unverified_stock and just delete the movement (no audit trail for unverified)
-        const current = (data.unverified_stock as number) ?? 0;
-        tx.update(prodRefs[i], { unverified_stock: current + deductedQty });
-      } else {
-        // Return to verified stock
-        const current = (data.stock_level as number) ?? 0;
-        tx.update(prodRefs[i], { stock_level: current + deductedQty });
+      // Check how much was auto-added for this component
+      // Auto-added stock was never "real" — subtract it from what we restore
+      const autoAddSnap = autoAddSnapsInTx.find(
+        s => s.exists() && s.data()?.productId === comp.productId
+      );
+      const autoAddedAmount = autoAddSnap?.exists()
+        ? (autoAddSnap.data()!.quantity as number)
+        : 0;
+
+      // restoreQty = what actually came from real stock (deducted - auto-added portion)
+      const restoreQty = Math.max(0, deductedQty - autoAddedAmount);
+
+      if (restoreQty > 0) {
+        if (wasUnverified) {
+          const current = (data.unverified_stock as number) ?? 0;
+          tx.update(prodRefs[i], { unverified_stock: current + restoreQty });
+        } else {
+          const current = (data.stock_level as number) ?? 0;
+          tx.update(prodRefs[i], { stock_level: current + restoreQty });
+        }
       }
 
+      // Delete PRODUCTION movement
       if (mvSnap?.exists()) tx.delete(mvSnap.ref);
+
+      // Delete auto-add ADJUSTMENT movement (it's being reversed by cancellation)
+      if (autoAddSnap?.exists()) tx.delete(autoAddSnap.ref);
     }
 
     // Reverse finished goods addition if already completed

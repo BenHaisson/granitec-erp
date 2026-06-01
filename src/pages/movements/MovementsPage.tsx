@@ -60,6 +60,7 @@ export default function MovementsPage() {
   const filtered = useMemo(() => {
     const activeSection = SECTIONS.find(s => s.key === section);
     return movements.filter(m => {
+      if (m.quantity === 0) return false; // hide zero-quantity noise (e.g. -0 from empty stock)
       const d = tsToDate(m.createdAt);
       if (from && d < new Date(from)) return false;
       if (to   && d > new Date(to + 'T23:59:59')) return false;
