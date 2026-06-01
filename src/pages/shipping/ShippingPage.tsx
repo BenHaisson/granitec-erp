@@ -369,8 +369,12 @@ function CreateOrderOverlay({
   const [importModalText, setImportModalText] = useState('');
   const [parsedItems, setParsedItems] = useState<DraftLine[]>([]);
   const [parseErrors, setParseErrors] = useState<string[]>([]);
+  const parsedItemsRef = useRef<DraftLine[]>([]);
   const validCount = lines.filter(l => l.productId && Number(l.qty) > 0).length;
   const total = lines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+
+  // Keep ref in sync with state for latest-ref pattern
+  useEffect(() => { parsedItemsRef.current = parsedItems; }, [parsedItems]);
 
   useEffect(() => {
     if (!pendingQuickAdd.current) return;
@@ -451,7 +455,7 @@ function CreateOrderOverlay({
     setLines(prev => {
       const empties = prev.filter(l => !l.productId);
       const kept = prev.filter(l => !!l.productId);
-      const combined = [...kept, ...parsedItems];
+      const combined = [...kept, ...parsedItemsRef.current];
       return empties.length > 0 ? combined : [...combined, EMPTY_LINE()];
     });
     setImportModalOpen(false);
