@@ -1482,15 +1482,12 @@ export default function ShippingPage() {
       documentUrl = uploaded.url;
       documentName = uploaded.name;
     }
-    const reconcileProductIds = new Set(
-      receivingOrder.lines.filter(l => l.reconcile).map(l => l.productId)
-    );
     const failedIds = await receiveShippingOrder(receivingOrder, {
       blNumber: data.blNumber.trim() || undefined,
       remarks: data.remarks.trim() || undefined,
       documentUrl,
       documentName,
-    }, reconcileProductIds);
+    });
     setReceiving(s => { const n = new Set(s); n.delete(receivingOrder.id); return n; });
     setReceivingOrder(null);
     if (failedIds.length > 0) {

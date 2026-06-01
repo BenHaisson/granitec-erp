@@ -5,7 +5,7 @@ import {
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '@/firebase/config';
 import type { ShippingOrder, ShippingOrderLine } from '@/types';
-import { receiveSupplyBatch, reconcileUnverifiedStock } from './inventory.service';
+import { receiveSupplyBatch } from './inventory.service';
 
 const sanitizeFileName = (name: string) => name.replace(/[^a-zA-Z0-9._-]/g, '_');
 
@@ -42,25 +42,20 @@ export const createShippingOrder = async (
 
 export const receiveShippingOrder = async (
   order: ShippingOrder,
-  receipt?: { blNumber?: string; remarks?: string; documentUrl?: string; documentName?: string },
-  reconcileProductIds?: Set<string>
+  receipt?: { blNumber?: string; remarks?: string; documentUrl?: string; documentName?: string }
 ): Promise<string[]> => {
-  const normalLines    = order.lines.filter(l => !reconcileProductIds?.has(l.productId));
-  const reconcileLines = order.lines.filter(l => reconcileProductIds?.has(l.productId));
-
-  // Normal lines — add to stock_level + create PURCHASE movements
-  let failedIds: string[] = [];
-  if (normalLines.length > 0) {
-    failedIds = await receiveSupplyBatch(
-      normalLines.map(l => ({ productId: l.productId, qty: l.qty })),
+  if (order.verification) {
+    // Verification orders exist purely for document history.
+    // unverified_stock was already reduced when the user clicked Verify in the
+    // Unverified Stock page. No stock change happens here — just mark as RECEIVED.
+  } else {
+    // Regular supply order — add to stock_level + create PURCHASE movements.
+    // Never touch unverified_stock here.
+    await receiveSupplyBatch(
+      order.lines.map(l => ({ productId: l.productId, qty: l.qty })),
       order.ref,
       new Date(order.date)
     );
-  }
-
-  // Reconcile lines — reduce unverified_stock only, no stock_level change
-  for (const line of reconcileLines) {
-    await reconcileUnverifiedStock(line.productId, line.qty);
   }
 
   const update: Record<string, unknown> = { status: 'RECEIVED', receivedAt: Timestamp.now() };
@@ -69,7 +64,7 @@ export const receiveShippingOrder = async (
   if (receipt?.documentUrl) update.documentUrl = receipt.documentUrl;
   if (receipt?.documentName) update.documentName = receipt.documentName;
   await updateDoc(doc(db, 'shipping_orders', order.id), update);
-  return failedIds;
+  return [];
 };
 
 export const deleteShippingOrder = async (id: string): Promise<void> => {

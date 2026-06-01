@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { AlertCircle, CheckCircle2, X, Plus, Trash2 } from 'lucide-react';
-import { getProducts, getMovements, clearAllUnverifiedStock } from '@/services/inventory.service';
+import { getProducts, getMovements, clearAllUnverifiedStock, reconcileUnverifiedStock } from '@/services/inventory.service';
 import { createShippingOrder } from '@/services/shipping.service';
 import type { Product, InventoryMovement } from '@/types';
 
@@ -101,6 +101,7 @@ export default function UnverifiedStockPage() {
     if (validLines.length === 0) { setVerifyError('At least one line with qty > 0 required.'); return; }
     setVerifyError(''); setVerifying(true);
     try {
+      // 1. Create the shipping document record (for supply receipt history)
       await createShippingOrder({
         ref: verifyRef.trim(),
         supplier: verifySupplier.trim() || undefined,
@@ -114,6 +115,14 @@ export default function UnverifiedStockPage() {
           reconcile: true,
         })),
       });
+
+      // 2. Immediately reduce unverified_stock for each verified line.
+      //    This is the ONLY place unverified_stock is reduced — never from
+      //    shipping receives or inventory adjustments.
+      for (const l of validLines) {
+        await reconcileUnverifiedStock(l.productId, Number(l.qty));
+      }
+
       setShowVerify(false);
       await load();
     } catch (err) {
