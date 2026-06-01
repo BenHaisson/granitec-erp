@@ -29,7 +29,6 @@ service cloud.firestore {
     match /production_entries/{id} { allow read, write: if auth(); }
     match /library_items/{id}      { allow read, write: if auth(); }
 
-    // Fallback — keeps any unlisted collections accessible for authenticated users
     match /{document=**} { allow read, write: if auth(); }
   }
 }

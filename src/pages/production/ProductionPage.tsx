@@ -21,16 +21,22 @@ const TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'recipes',     label: 'Recipes',       icon: BookOpen         },
 ];
 
+interface NavigationState {
+  tab?: string;
+  shortfalls?: Array<{ recipeId: string; recipeName: string; targetQty: number }>;
+}
+
 export default function ProductionPage() {
   const location = useLocation();
+  const state = location.state as NavigationState | null;
   const [tab, setTab] = useState<Tab>(() => {
-    const state = location.state as { tab?: string } | null;
     return (TABS.find(t => t.id === state?.tab)?.id ?? 'dashboard') as Tab;
   });
+  const [shortfalls, setShortfalls] = useState<NavigationState['shortfalls']>(state?.shortfalls);
 
   // Clear the navigation state so a refresh doesn't re-trigger the tab switch
   useEffect(() => {
-    if ((location.state as { tab?: string } | null)?.tab) {
+    if (state?.tab) {
       window.history.replaceState({}, '');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -62,7 +68,7 @@ export default function ProductionPage() {
       {/* Content */}
       <div>
         {tab === 'dashboard'   && <ProductionDashboard onNavigate={(t) => setTab(t as Tab)} />}
-        {tab === 'planning'    && <DailyPlanning />}
+        {tab === 'planning'    && <DailyPlanning initialShortfalls={shortfalls} onShortfallsCleared={() => setShortfalls(undefined)} />}
         {tab === 'data-entry'  && <DataEntry />}
         {tab === 'disc-status' && <DiscStatusDashboard />}
         {tab === 'report'      && <DailyReport />}

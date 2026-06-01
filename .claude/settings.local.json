@@ -23,7 +23,9 @@
       "Bash(sed -n '15,22p' src/pages/warehouse/WarehousePage.tsx)",
       "Bash(npx vite *)",
       "mcp__Claude_in_Chrome__tabs_context_mcp",
-      "Bash(xargs cat)"
+      "Bash(xargs cat)",
+      "Bash(node scripts/cleanup-june1.mjs)",
+      "mcp__Claude_Preview__preview_start"
     ]
   }
 }

@@ -45,7 +45,12 @@ const EMPTY_FORM: TargetFormState = {
   line: 'Both', status: 'not_started', notes: '',
 };
 
-export default function DailyPlanning() {
+interface DailyPlanningProps {
+  initialShortfalls?: Array<{ recipeId: string; recipeName: string; targetQty: number }>;
+  onShortfallsCleared?: () => void;
+}
+
+export default function DailyPlanning({ initialShortfalls, onShortfallsCleared }: DailyPlanningProps) {
   const [date, setDate]         = useState('');
   const [targets, setTargets]   = useState<ProductionTarget[]>([]);
   const [recipes, setRecipes]   = useState<Recipe[]>([]);
@@ -53,7 +58,7 @@ export default function DailyPlanning() {
   const [loading, setLoading]   = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const [showModal, setShowModal]   = useState(false);
+  const [showModal, setShowModal]   = useState(!!initialShortfalls?.length);
   const [editTarget, setEditTarget] = useState<ProductionTarget | null>(null);
   const [form, setForm]             = useState<TargetFormState>(EMPTY_FORM);
   const [saving, setSaving]         = useState(false);
@@ -85,6 +90,22 @@ export default function DailyPlanning() {
   };
 
   useEffect(() => { load(); }, [date]);
+
+  // When shortfalls from sales page arrive, pre-fill the form with first shortfall
+  useEffect(() => {
+    if (initialShortfalls?.length && recipes.length > 0) {
+      const sf = initialShortfalls[0];
+      setForm(prev => ({
+        ...prev,
+        type: 'recipe',
+        recipeId: sf.recipeId,
+        recipeName: sf.recipeName,
+        targetQty: String(sf.targetQty),
+        startDate: date || todayISO(),
+        deadline: date || todayISO(),
+      }));
+    }
+  }, [initialShortfalls, recipes]);
 
   const discTypes = Array.from(new Set(
     products.filter(p => p.category === 'Aluminium Disc').map(p => p.name)
@@ -156,6 +177,10 @@ export default function DailyPlanning() {
         await updateTarget(editTarget.id, payload);
       } else {
         await createTarget(payload);
+        // Clear sales-page shortfall state after first target created
+        if (initialShortfalls?.length && onShortfallsCleared) {
+          onShortfallsCleared();
+        }
       }
       setShowModal(false);
       load();
@@ -169,6 +194,9 @@ export default function DailyPlanning() {
     try {
       const adjusted = { ...feasibilityDialog.pendingPayload, targetQty: feasibilityDialog.maxProducible };
       await createTarget(adjusted);
+      if (initialShortfalls?.length && onShortfallsCleared) {
+        onShortfallsCleared();
+      }
       setFeasibilityDialog(null); setShowModal(false); load();
     } catch { setError('Failed to create target.'); }
     finally { setFeasSaving(false); }
@@ -182,6 +210,9 @@ export default function DailyPlanning() {
       for (const sf of feasibilityDialog.shortfalls) {
         const shortAmount = sf.need - sf.have;
         await addUnverifiedStock(sf.productId, shortAmount, `Production target ${targetId}: ${feasibilityDialog.pendingPayload.recipeName ?? ''}`);
+      }
+      if (initialShortfalls?.length && onShortfallsCleared) {
+        onShortfallsCleared();
       }
       setFeasibilityDialog(null); setShowModal(false); load();
     } catch { setError('Failed to create target.'); }

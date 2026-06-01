@@ -643,29 +643,19 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
   };
 
   const handleCreateProductionTargets = async () => {
-    setCreatingTargets(true);
-    try {
-      for (const sf of shortfalls) {
-        await createTarget({
-          date: todayISO(),
-          type: 'recipe',
+    clearSalesDraft();
+    onClose();
+    // Pass shortfall data to Production page so user can review & confirm before creating targets
+    navigate('/production', {
+      state: {
+        tab: 'planning',
+        shortfalls: shortfalls.map(sf => ({
           recipeId: sf.recipeId,
           recipeName: sf.recipeName,
-          targetQty: sf.need - sf.have, // produce exactly the shortfall amount
-          completedQty: 0,
-          deadline: todayISO(),
-          status: 'not_started',
-        });
+          targetQty: sf.need - sf.have,
+        }))
       }
-      clearSalesDraft();
-      onClose();
-      navigate('/production', { state: { tab: 'planning' } });
-    } catch (e) {
-      setError(`Failed to create production targets: ${e instanceof Error ? e.message : 'Unknown error'}`);
-      setShortfalls([]);
-    } finally {
-      setCreatingTargets(false);
-    }
+    });
   };
 
   const totalPcs = lines.reduce((s, l) => s + (l.productId ? l.totalQty : 0), 0);
