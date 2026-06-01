@@ -365,6 +365,10 @@ function CreateOrderOverlay({
   const pendingQuickAdd = useRef<{ idx: number; data: Partial<DraftLine> } | null>(null);
   const [quickSearch, setQuickSearch] = useState('');
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importModalText, setImportModalText] = useState('');
+  const [parsedItems, setParsedItems] = useState<DraftLine[]>([]);
+  const [parseErrors, setParseErrors] = useState<string[]>([]);
   const validCount = lines.filter(l => l.productId && Number(l.qty) > 0).length;
   const total = lines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
 
@@ -414,6 +418,47 @@ function CreateOrderOverlay({
     prev.has(cat) ? next.delete(cat) : next.add(cat);
     return next;
   });
+
+  const handleParseImportModal = () => {
+    const skuMap = new Map(rawMaterials.map(p => [p.sku.toUpperCase(), p]));
+    const valid: DraftLine[] = [];
+    const errors: string[] = [];
+    for (const raw of importModalText.split('\n').map(l => l.trim()).filter(Boolean)) {
+      const [sku, qtyStr] = raw.split(/[\s\t]+/);
+      const p = skuMap.get(sku?.toUpperCase());
+      const qty = Number(qtyStr);
+      if (p && qty > 0) {
+        valid.push({
+          uid: newUid(),
+          productId: p.id,
+          productName: p.name,
+          sku: p.sku,
+          qty: String(qty),
+          reconcile: false,
+          search: p.name,
+          showSuggestions: false,
+          highlightIdx: -1
+        });
+      } else {
+        errors.push(`${sku}: ${!p ? 'SKU not found' : 'invalid qty'}`);
+      }
+    }
+    setParsedItems(valid);
+    setParseErrors(errors);
+  };
+
+  const handleConfirmImport = () => {
+    setLines(prev => {
+      const empties = prev.filter(l => !l.productId);
+      const kept = prev.filter(l => !!l.productId);
+      const combined = [...kept, ...parsedItems];
+      return empties.length > 0 ? combined : [...combined, EMPTY_LINE()];
+    });
+    setImportModalOpen(false);
+    setImportModalText('');
+    setParsedItems([]);
+    setParseErrors([]);
+  };
 
   return (
     <div className="fixed inset-0 z-[100] bg-white flex flex-col overflow-hidden">
@@ -541,39 +586,6 @@ function CreateOrderOverlay({
             ))}
           </div>
           </div>{/* end min-w wrapper */}
-
-          {/* Import panel */}
-          {showImport && (
-            <div className="border-t border-slate-200 bg-white px-4 py-3 shrink-0">
-              <p className="text-xs font-semibold text-slate-500 mb-2">
-                Paste <code className="bg-slate-100 px-1 rounded">SKU qty</code> per line — e.g. <code className="bg-slate-100 px-1 rounded">DISC-200X2-N 500</code>
-              </p>
-              <div className="flex gap-3">
-                <textarea
-                  value={importText} onChange={e => setImportText(e.target.value)}
-                  rows={4} placeholder={'DISC-200X2-N 500\nDISC-240X2-CR 300'}
-                  className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                />
-                <div className="flex flex-col gap-2">
-                  <button onClick={onParseImport}
-                    className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 transition-colors whitespace-nowrap">
-                    Parse & Add
-                  </button>
-                  <button onClick={() => { setShowImport(false); setImportText(''); }}
-                    className="px-4 py-2 rounded-lg border border-slate-200 text-slate-500 text-sm hover:bg-slate-50 transition-colors">
-                    Cancel
-                  </button>
-                </div>
-              </div>
-              {importWarnings.length > 0 && (
-                <div className="mt-2 space-y-1">
-                  {importWarnings.map((w, i) => (
-                    <p key={i} className="text-xs text-amber-600">⚠ {w}</p>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </div>
         </div>{/* end sidebar + main content flex */}
 
@@ -584,7 +596,7 @@ function CreateOrderOverlay({
               className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-dashed border-slate-300 text-sm font-semibold text-slate-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
               <Plus size={15} /> Add Line
             </button>
-            <button type="button" onClick={() => setShowImport(!showImport)}
+            <button type="button" onClick={() => setImportModalOpen(true)}
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
               <FileText size={14} /> Import TXT
             </button>
@@ -596,6 +608,105 @@ function CreateOrderOverlay({
             </p>
           )}
         </div>
+
+        {/* Import Modal */}
+        {importModalOpen && (
+          <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col">
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+                <h2 className="text-lg font-bold text-slate-800">Import from Text</h2>
+                <button onClick={() => { setImportModalOpen(false); setImportModalText(''); setParsedItems([]); setParseErrors([]); }}
+                  className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                {parsedItems.length === 0 ? (
+                  <div>
+                    <p className="text-sm text-slate-600 mb-3">
+                      Paste SKU and quantity per line (e.g. <code className="bg-slate-100 px-2 py-1 rounded text-xs">DISC-200X2-N 500</code>)
+                    </p>
+                    <textarea
+                      value={importModalText}
+                      onChange={(e) => {
+                        setImportModalText(e.target.value);
+                        if (e.target.value.trim()) handleParseImportModal();
+                      }}
+                      placeholder={'DISC-200X2-N 500\nDISC-240X2-CR 300\nDISC-250X3-G 250'}
+                      rows={6}
+                      className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+                      autoFocus
+                    />
+                    {parseErrors.length > 0 && (
+                      <div className="mt-3 space-y-1">
+                        <p className="text-xs font-semibold text-slate-500">Issues found:</p>
+                        {parseErrors.map((err, i) => (
+                          <p key={i} className="text-xs text-red-600">⚠ {err}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <p className="text-sm font-semibold text-slate-700 mb-3">
+                      Found {parsedItems.length} item{parsedItems.length !== 1 ? 's' : ''} — confirm to add
+                    </p>
+                    <div className="space-y-2 bg-slate-50 rounded-xl p-3">
+                      {parsedItems.map((item, i) => (
+                        <div key={item.uid} className="flex items-center justify-between px-3 py-2 bg-white rounded-lg border border-slate-200">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-slate-800 truncate">{item.productName}</p>
+                            <p className="text-xs text-slate-400 font-mono">{item.sku}</p>
+                          </div>
+                          <div className="flex items-center gap-2 ml-4">
+                            <input
+                              type="number"
+                              value={item.qty}
+                              onChange={(e) => {
+                                const updated = [...parsedItems];
+                                updated[i] = { ...item, qty: e.target.value };
+                                setParsedItems(updated);
+                              }}
+                              className="w-20 px-2 py-1 text-right border border-slate-200 rounded-lg text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                            <span className="text-sm text-slate-500">pcs</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {parseErrors.length > 0 && (
+                      <div className="mt-3 p-3 bg-red-50 rounded-xl border border-red-200">
+                        <p className="text-xs font-semibold text-red-700 mb-2">Skipped items:</p>
+                        <div className="space-y-1">
+                          {parseErrors.map((err, i) => (
+                            <p key={i} className="text-xs text-red-600">• {err}</p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 shrink-0 bg-slate-50">
+                <button onClick={() => { setImportModalOpen(false); setImportModalText(''); setParsedItems([]); setParseErrors([]); }}
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-sm font-semibold text-slate-700 hover:bg-slate-100 transition-colors">
+                  Cancel
+                </button>
+                {parsedItems.length > 0 && (
+                  <button onClick={handleConfirmImport}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors">
+                    ✓ Add {parsedItems.length} Item{parsedItems.length !== 1 ? 's' : ''}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
