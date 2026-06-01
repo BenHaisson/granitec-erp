@@ -470,9 +470,9 @@ function CreateOrderOverlay({
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden min-h-0">
         {/* Sidebar — quick product list */}
-        <aside className="w-64 shrink-0 border-r border-slate-100 flex flex-col overflow-hidden bg-slate-50">
+        <aside className="w-64 shrink-0 border-r border-slate-100 flex flex-col overflow-hidden bg-slate-50 min-h-0">
           <div className="px-3 pt-3 pb-2 shrink-0">
             <div className="relative">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -511,8 +511,8 @@ function CreateOrderOverlay({
         </aside>
 
         {/* Main content */}
-        <div className="flex-1 flex flex-col overflow-hidden overflow-x-auto">
-          <div className="min-w-[640px]">
+        <div className="flex-1 flex flex-col overflow-hidden overflow-x-auto min-h-0">
+          <div className="min-w-[640px] flex flex-col h-full">
           {/* Column headers */}
           <div className="grid grid-cols-[40px_1fr_120px_80px_160px_100px_36px] gap-3 px-4 py-2.5 border-b border-slate-100 bg-slate-50 shrink-0 text-xs font-bold text-slate-400 uppercase tracking-widest">
             <span className="text-center">#</span>
