@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, type FormEvent } from 'react';
-import { Plus, FlaskConical, ArrowDownToLine, ChevronDown, Search, FileText, X, Pencil, Trash2, PackagePlus, FileDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Plus, FlaskConical, ArrowDownToLine, ChevronDown, Search, FileText, X, Pencil, Trash2, PackagePlus, FileDown, ChevronRight, AlertTriangle, RefreshCw } from 'lucide-react';
 import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
-import { getProducts, addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch } from '@/services/inventory.service';
+import { getProducts, addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch, reconcileInventoryToMovements } from '@/services/inventory.service';
 import { getShippingOrders } from '@/services/shipping.service';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
@@ -896,6 +896,11 @@ export default function InventoryPage() {
   const [search, setSearch]           = useState('');
   const [stockFilter, setStockFilter] = useState<'all' | 'hide-zero' | 'zero-only' | 'alarm'>('all');
 
+  // Reconciliation state
+  const [reconciling, setReconciling] = useState(false);
+  const [showReconcileResult, setShowReconcileResult] = useState(false);
+  const [reconcileResult, setReconcileResult] = useState<{ discrepancies: number; fixed: number; details: Array<{ productId: string; sku: string; name: string; oldQty: number; newQty: number }> } | null>(null);
+
   // ── New Supply Receipt full-screen ───────────────────────────
   const EMPTY_LINE = (): ReceiptLine => ({ productId: '', qty: '', search: '', showSuggestions: false, highlightIdx: -1 });
 
@@ -1131,6 +1136,22 @@ export default function InventoryPage() {
     finally { setSaving(false); }
   };
 
+  const handleReconcile = async () => {
+    setReconciling(true);
+    try {
+      const result = await reconcileInventoryToMovements();
+      setReconcileResult(result);
+      setShowReconcileResult(true);
+      if (result.fixed > 0) {
+        load();
+      }
+    } catch (err) {
+      alert(`Reconciliation failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+    } finally {
+      setReconciling(false);
+    }
+  };
+
   const receiptTotal = receiptLines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
 
   return (
@@ -1147,6 +1168,10 @@ export default function InventoryPage() {
           <button onClick={() => setShowAddModal(true)}
             className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors">
             <Plus size={14} /> Add Material
+          </button>
+          <button onClick={handleReconcile} disabled={reconciling}
+            className="flex items-center gap-2 px-3 py-2 border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50">
+            <RefreshCw size={14} className={reconciling ? 'animate-spin' : ''} /> Reconcile
           </button>
           <button onClick={openReceipt}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
@@ -1514,6 +1539,51 @@ export default function InventoryPage() {
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* ── Reconciliation Result Modal ────────────────────────── */}
+      {showReconcileResult && reconcileResult && (
+        <Modal title="Inventory Reconciliation Report" onClose={() => setShowReconcileResult(false)}>
+          <div className="space-y-4 max-h-[70vh] overflow-y-auto">
+            {reconcileResult.discrepancies === 0 ? (
+              <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-4 text-center">
+                <p className="text-green-700 font-semibold">✅ Inventory is consistent!</p>
+                <p className="text-sm text-green-600 mt-1">All stock levels match the movement history.</p>
+              </div>
+            ) : (
+              <>
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3">
+                  <p className="text-sm font-semibold text-yellow-800">
+                    Found {reconcileResult.discrepancies} discrepanc{reconcileResult.discrepancies === 1 ? 'y' : 'ies'} — Fixed {reconcileResult.fixed}
+                  </p>
+                </div>
+                <div className="text-sm">
+                  <p className="font-semibold text-slate-700 mb-3">Stock Level Changes:</p>
+                  <div className="space-y-2 text-xs">
+                    {reconcileResult.details.map((detail, i) => (
+                      <div key={i} className="flex items-center justify-between border-b border-slate-200 pb-2">
+                        <div>
+                          <p className="font-mono font-semibold text-slate-700">{detail.sku}</p>
+                          <p className="text-slate-500">{detail.name}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-red-600 line-through">{detail.oldQty}</p>
+                          <p className="text-green-600 font-semibold">→ {detail.newQty}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+            <div className="flex gap-2 pt-4 border-t">
+              <button onClick={() => setShowReconcileResult(false)}
+                className="flex-1 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
+                Close
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
     </div>

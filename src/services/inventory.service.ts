@@ -175,6 +175,63 @@ export const clearAllUnverifiedStock = async (): Promise<{ products: number }> =
   return { products: withUnverified.length };
 };
 
+export const reconcileInventoryToMovements = async (): Promise<{
+  discrepancies: number;
+  fixed: number;
+  details: Array<{ productId: string; sku: string; name: string; oldQty: number; newQty: number }>
+}> => {
+  // Get all products
+  const prodSnap = await getDocs(collection(db, 'products'));
+  const productMap = new Map(prodSnap.docs.map(d => [d.id, { ...d.data(), id: d.id }]));
+
+  // Get all movements
+  const movSnap = await getDocs(query(collection(db, 'inventory_movements'), orderBy('createdAt', 'asc')));
+  const movements = movSnap.docs.map(d => d.data());
+
+  // Calculate expected stock for each product
+  const expectedStockMap = new Map<string, number>();
+  for (const mov of movements) {
+    const productId = mov.productId as string;
+    const qty = (mov.quantity as number) ?? 0;
+    const current = expectedStockMap.get(productId) ?? 0;
+    expectedStockMap.set(productId, current + qty);
+  }
+
+  // Identify discrepancies
+  const discrepancies = [];
+  for (const [productId, product] of productMap) {
+    const expected = expectedStockMap.get(productId) ?? 0;
+    const current = (product.stock_level ?? 0) as number;
+    if (expected !== current) {
+      discrepancies.push({
+        productId,
+        sku: product.sku as string,
+        name: product.name as string,
+        oldQty: current,
+        newQty: expected,
+      });
+    }
+  }
+
+  // Fix discrepancies in batch
+  let fixed = 0;
+  const CHUNK = 400;
+  for (let i = 0; i < discrepancies.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    discrepancies.slice(i, i + CHUNK).forEach(d => {
+      batch.update(doc(db, 'products', d.productId), { stock_level: d.newQty });
+      fixed++;
+    });
+    await batch.commit();
+  }
+
+  return {
+    discrepancies: discrepancies.length,
+    fixed,
+    details: discrepancies,
+  };
+};
+
 export const getMovements = async (): Promise<InventoryMovement[]> => {
   const snap = await getDocs(
     query(collection(db, 'inventory_movements'), orderBy('createdAt', 'desc'), limit(2000))
