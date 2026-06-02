@@ -286,99 +286,170 @@ export const completeProductionTarget = async (
   });
 };
 
+// Helper function to reliably find PRODUCTION and ADJUSTMENT movements for a target
+interface ProductionMovementSet {
+  productionMovements: Map<string, DocumentReference>;
+  adjustmentMovements: Map<string, DocumentReference>;
+  missingComponents: string[];
+}
+
+const findProductionMovementsForTarget = async (
+  targetId: string,
+  componentProductIds: string[]
+): Promise<ProductionMovementSet> => {
+  // Query PRODUCTION movements for these products that relate to this target
+  const prodMovSnap = await getDocs(
+    query(
+      collection(db, 'inventory_movements'),
+      where('productId', 'in', componentProductIds),
+      where('reason', '==', 'PRODUCTION')
+    )
+  );
+
+  const productionMovements = new Map<string, DocumentReference>();
+  prodMovSnap.docs.forEach(d => {
+    const note = (d.data().note as string) ?? '';
+    if (note.includes(targetId)) {
+      const productId = d.data().productId as string;
+      if (!productionMovements.has(productId)) {
+        productionMovements.set(productId, d.ref);
+      }
+    }
+  });
+
+  // Query ADJUSTMENT movements (auto-added unverified stock)
+  const adjMovSnap = await getDocs(
+    query(
+      collection(db, 'inventory_movements'),
+      where('productId', 'in', componentProductIds),
+      where('reason', '==', 'ADJUSTMENT')
+    )
+  );
+
+  const adjustmentMovements = new Map<string, DocumentReference>();
+  adjMovSnap.docs.forEach(d => {
+    const note = (d.data().note as string) ?? '';
+    if (note.includes(`auto-added for Production ${targetId}`)) {
+      const productId = d.data().productId as string;
+      if (!adjustmentMovements.has(productId)) {
+        adjustmentMovements.set(productId, d.ref);
+      }
+    }
+  });
+
+  const missingComponents = componentProductIds.filter(
+    pid => !productionMovements.has(pid)
+  );
+
+  return { productionMovements, adjustmentMovements, missingComponents };
+};
+
 export const cancelProductionTarget = async (
   target: ProductionTarget,
   recipe: Recipe,
 ): Promise<void> => {
-  // Query PRODUCTION movement refs outside the transaction
-  const materialMovSnap = await getDocs(
-    query(
-      collection(db, 'inventory_movements'),
-      where('note', 'in', [
-        `Production ${target.id}`,
-        `Production ${target.id} (incl. unverified stock)`,
-      ])
-    )
-  );
+  // Phase A: Gather data before transaction
+  const componentProductIds = recipe.components.map(c => c.productId);
+  const movementSet = await findProductionMovementsForTarget(target.id, componentProductIds);
 
-  // Query auto-added ADJUSTMENT movements (created when stock was insufficient)
-  const autoAddMovSnap = await getDocs(
-    query(
-      collection(db, 'inventory_movements'),
-      where('note', '==', `Unverified: auto-added for Production ${target.id} — document pending`)
-    )
-  );
+  // Log warnings for missing movements (indicates incomplete state or data corruption)
+  if (movementSet.missingComponents.length > 0) {
+    console.warn(
+      `[cancelProductionTarget] ${target.id}: Missing PRODUCTION movements for products: ` +
+      `${movementSet.missingComponents.join(', ')}. Will attempt restoration from stored data.`
+    );
+  }
 
-  // Map of auto-added amounts by productId (to subtract from what we restore)
-  const autoAddedMap = new Map(
-    autoAddMovSnap.docs.map(d => [d.data().productId as string, { ref: d.ref, amount: d.data().quantity as number }])
-  );
+  // Read stored autoAddedUnverified from target (populated by startProductionTarget)
+  const storedAutoAdded = (target.autoAddedUnverified ?? {}) as Record<string, number>;
 
-  const movRefs = materialMovSnap.docs.map(d => d.ref);
-  const autoAddRefs = autoAddMovSnap.docs.map(d => d.ref);
+  // Collect refs to read in transaction
+  const prodMovRefs = Array.from(movementSet.productionMovements.values());
+  const adjMovRefs = Array.from(movementSet.adjustmentMovements.values());
 
+  // Phase B: Atomic transaction
   await runTransaction(db, async (tx) => {
-    // Re-read all movement docs inside transaction for fresh, consistent data (prevents TOCTOU)
-    const movSnapsInTx = await Promise.all(movRefs.map(r => tx.get(r)));
-    const autoAddSnapsInTx = await Promise.all(autoAddRefs.map(r => tx.get(r)));
+    // Re-read movement docs inside transaction for fresh data (prevents TOCTOU)
+    const prodMovSnapsInTx = await Promise.all(
+      prodMovRefs.map(r => tx.get(r))
+    );
+    const adjMovSnapsInTx = await Promise.all(
+      adjMovRefs.map(r => tx.get(r))
+    );
 
-    // Read all component product docs
+    // Read all component product docs to get current stock levels
     const prodRefs = recipe.components.map(comp => doc(db, 'products', comp.productId));
     const snaps = await Promise.all(prodRefs.map(ref => tx.get(ref)));
 
-    // Read finished product if goods were already added to warehouse
+    // Read finished product if goods were already added
     const finRef = target.finishedGoodsAdded
       ? doc(db, 'products', recipe.finishedProductId)
       : null;
     const finSnap = finRef ? await tx.get(finRef) : null;
 
-    // Restore component stock and delete original movements
+    // Restore component stock and delete movements
     for (let i = 0; i < recipe.components.length; i++) {
       const comp = recipe.components[i];
       const snap = snaps[i];
-      const data = snap.data() ?? {};
+      if (!snap.exists()) continue;
 
-      const mvSnap = movSnapsInTx.find(s => s.exists() && s.data()?.productId === comp.productId);
-      const deductedQty = mvSnap?.exists()
-        ? Math.abs(mvSnap.data()!.quantity as number)
-        : comp.quantity * target.targetQty;
-      const wasUnverified = mvSnap?.exists()
-        ? (mvSnap.data()!.note as string | undefined)?.includes('unverified') ?? false
-        : false;
-
-      // Check how much was auto-added for this component
-      // Auto-added stock was never "real" — subtract it from what we restore
-      const autoAddSnap = autoAddSnapsInTx.find(
+      const prodMovSnap = prodMovSnapsInTx.find(
         s => s.exists() && s.data()?.productId === comp.productId
       );
-      const autoAddedAmount = autoAddSnap?.exists()
-        ? (autoAddSnap.data()!.quantity as number)
-        : 0;
+      const adjMovSnap = adjMovSnapsInTx.find(
+        s => s.exists() && s.data()?.productId === comp.productId
+      );
 
-      // restoreQty = what actually came from real stock (deducted - auto-added portion)
-      const restoreQty = Math.max(0, deductedQty - autoAddedAmount);
+      // Get actual deducted quantity from movement (most reliable source)
+      // Fall back to calculated amount if movement missing
+      const deductedQty = prodMovSnap?.exists()
+        ? Math.abs(prodMovSnap.data()!.quantity as number)
+        : comp.quantity * target.targetQty;
 
-      if (restoreQty > 0) {
+      // Get auto-added amount from stored data or from the adjustment movement
+      const autoAddedQty = adjMovSnap?.exists()
+        ? Math.abs(adjMovSnap.data()!.quantity as number)
+        : (storedAutoAdded[comp.productId] ?? 0);
+
+      // Calculate what actually came from real stock
+      // Real qty = total deducted - auto-added (the auto-added wasn't real to begin with)
+      const realQty = Math.max(0, deductedQty - autoAddedQty);
+
+      // Check if the production movement included unverified stock
+      const wasUnverified = prodMovSnap?.exists()
+        ? (prodMovSnap.data()!.note as string | undefined)?.includes('unverified') ?? false
+        : false;
+
+      // Restore to appropriate bucket
+      if (realQty > 0) {
         if (wasUnverified) {
-          const current = (data.unverified_stock as number) ?? 0;
-          tx.update(prodRefs[i], { unverified_stock: current + restoreQty });
+          // Material came from unverified stock, restore there
+          const current = (snap.data()?.unverified_stock as number) ?? 0;
+          tx.update(prodRefs[i], { unverified_stock: current + realQty });
         } else {
-          const current = (data.stock_level as number) ?? 0;
-          tx.update(prodRefs[i], { stock_level: current + restoreQty });
+          // Material came from real stock, restore there
+          const current = (snap.data()?.stock_level as number) ?? 0;
+          tx.update(prodRefs[i], { stock_level: current + realQty });
         }
       }
 
       // Delete PRODUCTION movement
-      if (mvSnap?.exists()) tx.delete(mvSnap.ref);
+      if (prodMovSnap?.exists()) {
+        tx.delete(prodMovSnap.ref);
+      }
 
-      // Delete auto-add ADJUSTMENT movement (it's being reversed by cancellation)
-      if (autoAddSnap?.exists()) tx.delete(autoAddSnap.ref);
+      // Delete ADJUSTMENT movement (auto-added unverified stock)
+      if (adjMovSnap?.exists()) {
+        tx.delete(adjMovSnap.ref);
+      }
     }
 
     // Reverse finished goods addition if already completed
     if (target.finishedGoodsAdded && finSnap && finRef) {
       const current = (finSnap.data()?.stock_level as number) ?? 0;
       tx.update(finRef, { stock_level: current - target.completedQty });
+
+      // Record the reversal
       tx.set(doc(collection(db, 'inventory_movements')), {
         productId: recipe.finishedProductId,
         quantity: -target.completedQty,
@@ -388,16 +459,17 @@ export const cancelProductionTarget = async (
       });
     }
 
-    // Mark target as cancelled
+    // Mark target as cancelled and clear all transient state
     tx.update(doc(db, 'production_targets', target.id), {
       status: 'cancelled',
       completedQty: 0,
       materialsDeducted: false,
       finishedGoodsAdded: false,
+      autoAddedUnverified: {}, // Explicitly clear to prevent orphaned data
     });
   });
 
-  // Delete all production entries for this target
+  // Phase C: Post-transaction cleanup (production entries)
   const entriesSnap = await getDocs(
     query(collection(db, 'production_entries'), where('targetId', '==', target.id))
   );

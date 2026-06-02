@@ -110,6 +110,7 @@ export interface ProductionTarget {
   deadline: string; // YYYY-MM-DD
   materialsDeducted?: boolean;
   finishedGoodsAdded?: boolean;
+  autoAddedUnverified?: Record<string, number>; // maps productId → auto-added qty for cancellation
   deadlineTime?: string; // HH:MM
   line?: string;
   status: 'not_started' | 'in_progress' | 'at_risk' | 'complete' | 'cancelled';
