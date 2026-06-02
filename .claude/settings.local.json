@@ -29,7 +29,9 @@
       "Bash(node scripts/reconcile-inventory.mjs)",
       "Bash(node scripts/audit-inventory.mjs)",
       "Bash(node scripts/inventory-report.mjs)",
-      "Bash(node scripts/fix-phantom-movements.mjs)"
+      "Bash(node scripts/fix-phantom-movements.mjs)",
+      "Bash(node scripts/full-inventory-audit.mjs)",
+      "Bash(node scripts/comprehensive-audit.mjs)"
     ]
   }
 }
