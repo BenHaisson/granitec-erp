@@ -26,7 +26,10 @@
       "Bash(xargs cat)",
       "Bash(node scripts/cleanup-june1.mjs)",
       "mcp__Claude_Preview__preview_start",
-      "Bash(node scripts/reconcile-inventory.mjs)"
+      "Bash(node scripts/reconcile-inventory.mjs)",
+      "Bash(node scripts/audit-inventory.mjs)",
+      "Bash(node scripts/inventory-report.mjs)",
+      "Bash(node scripts/fix-phantom-movements.mjs)"
     ]
   }
 }
