@@ -9,7 +9,7 @@ import {
   deleteAllMovements, deleteMovementsByReasons, resetAllStockToZero, clearAllUnverifiedStock,
   resetFinishedProductStock,
   updateProduct, deleteProduct, recalculateStockFromMovements,
-  backfillPurchaseMovements, deletePhantomAdjustmentMovements,
+  backfillPurchaseMovements, deletePhantomAdjustmentMovements, reconcileInventoryToMovements,
 } from '@/services/inventory.service';
 import { deleteAllProductionTargets, deleteAllProductionEntries } from '@/services/productionTargets.service';
 import { getOrders, deleteAllOrders } from '@/services/orders.service';
@@ -77,6 +77,7 @@ export default function SettingsPage() {
   const [opClearUnv,  setOpClearUnv]  = useState<OpState>($idle);
   const [opClearWh,   setOpClearWh]   = useState<OpState>($idle);
   const [opClearMovs, setOpClearMovs] = useState<OpState>($idle);
+  const [opReconc,    setOpReconc]    = useState<OpState>($idle);
 
   const loadStats = async (fresh = false) => {
     const [products, orders, recipes, machines, libItems, prodOrders] = await Promise.all([
@@ -249,6 +250,15 @@ export default function SettingsPage() {
       const count = await deleteMovementsByReasons(reasons);
       return `${count} ${label} movement(s) deleted.`;
     });
+
+  const handleResetInventoryLevel = () => run(setOpReconc, async () => {
+    if (!confirm('Recalculate and fix inventory levels based on shipping history? This will update stock to match all PURCHASE movements.')) throw new Error('Cancelled.');
+    const result = await reconcileInventoryToMovements();
+    if (result.discrepancies === 0) {
+      return 'Inventory already consistent — no changes needed.';
+    }
+    return `Fixed ${result.fixed} product(s) with discrepancies.`;
+  });
 
   const statRows = stats ? [
     { icon: <Database size={15} className="text-blue-500" />,    label: 'Finished Products',    value: stats.finished },
@@ -534,6 +544,7 @@ export default function SettingsPage() {
         {/* Scoped resets */}
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
             {[
+            { label: 'Reset Inventory Level', sub: 'Recalculate and fix stock based on shipping history', handler: handleResetInventoryLevel, op: opReconc },
             { label: 'Clear Production Records', sub: 'Deletes all targets and batch entries', handler: handleClearProduction, op: opClearProd },
             { label: 'Clear Unverified Stock', sub: 'Resets unverified_stock to 0 (history kept)', handler: handleClearUnverified, op: opClearUnv },
             { label: 'Reset Warehouse Stock', sub: 'Sets stock to 0 on all finished products', handler: handleClearWarehouse, op: opClearWh },
