@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Download } from 'lucide-react';
+import { Download, Search, X } from 'lucide-react';
 import { getMovements, getProducts } from '@/services/inventory.service';
 import Badge from '@/components/ui/Badge';
 import type { InventoryMovement, Product } from '@/types';
@@ -47,6 +47,7 @@ export default function MovementsPage() {
   const [from, setFrom]             = useState('');
   const [to, setTo]                 = useState('');
   const [section, setSection]       = useState('ALL');
+  const [search, setSearch]         = useState('');
 
   useEffect(() => {
     Promise.all([getMovements(), getProducts()])
@@ -59,15 +60,33 @@ export default function MovementsPage() {
 
   const filtered = useMemo(() => {
     const activeSection = SECTIONS.find(s => s.key === section);
+    const searchLower = search.toLowerCase();
     return movements.filter(m => {
       if (m.quantity === 0) return false; // hide zero-quantity noise (e.g. -0 from empty stock)
       const d = tsToDate(m.createdAt);
       if (from && d < new Date(from)) return false;
       if (to   && d > new Date(to + 'T23:59:59')) return false;
       if (activeSection && activeSection.reasons.length > 0 && !activeSection.reasons.includes(m.reason)) return false;
+
+      // Search filter: match product name, SKU, note, or reason
+      if (search) {
+        const prod = productMap.get(m.productId);
+        const productName = prod?.name?.toLowerCase() ?? '';
+        const productSku = prod?.sku?.toLowerCase() ?? '';
+        const note = (m.note ?? '').toLowerCase();
+        const reason = m.reason?.toLowerCase() ?? '';
+
+        if (!productName.includes(searchLower) &&
+            !productSku.includes(searchLower) &&
+            !note.includes(searchLower) &&
+            !reason.includes(searchLower)) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [movements, from, to, section]);
+  }, [movements, from, to, section, search, productMap]);
 
   const exportCSV = () => {
     const header = ['Date', 'Product', 'SKU', 'Reason', 'Quantity', 'Note'];
@@ -111,24 +130,47 @@ export default function MovementsPage() {
         </button>
       </div>
 
-      {/* Section filter chips */}
-      <div className="flex flex-wrap gap-2">
-        {SECTIONS.map(s => {
-          const isActive = section === s.key;
-          const activeCls = s.reasons.length === 1
-            ? REASON_VARIANT_CLS[s.reasons[0]]
-            : s.reasons.length > 1
-              ? 'bg-yellow-100 text-yellow-700 border-yellow-200'
-              : 'bg-slate-800 text-white border-slate-800';
-          return (
-            <button key={s.key} onClick={() => setSection(s.key)}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-                isActive ? activeCls : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
-              }`}>
-              {s.label}
+      {/* Search and section filters */}
+      <div className="space-y-3">
+        {/* Search bar */}
+        <div className="relative">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search by product name, SKU, note, or reason…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full pl-9 pr-9 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            >
+              <X size={16} />
             </button>
-          );
-        })}
+          )}
+        </div>
+
+        {/* Section filter chips */}
+        <div className="flex flex-wrap gap-2">
+          {SECTIONS.map(s => {
+            const isActive = section === s.key;
+            const activeCls = s.reasons.length === 1
+              ? REASON_VARIANT_CLS[s.reasons[0]]
+              : s.reasons.length > 1
+                ? 'bg-yellow-100 text-yellow-700 border-yellow-200'
+                : 'bg-slate-800 text-white border-slate-800';
+            return (
+              <button key={s.key} onClick={() => setSection(s.key)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                  isActive ? activeCls : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                }`}>
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Date filter */}
@@ -139,8 +181,8 @@ export default function MovementsPage() {
         <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">To</label>
         <input type="date" value={to} onChange={e => setTo(e.target.value)}
           className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
-        {(from || to || section !== 'ALL') && (
-          <button onClick={() => { setFrom(''); setTo(''); setSection('ALL'); }}
+        {(from || to || section !== 'ALL' || search) && (
+          <button onClick={() => { setFrom(''); setTo(''); setSection('ALL'); setSearch(''); }}
             className="text-xs text-slate-400 hover:text-slate-600 underline">
             Clear all filters
           </button>
