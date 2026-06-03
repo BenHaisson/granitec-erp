@@ -891,6 +891,7 @@ export default function InventoryPage() {
   const [histFilterCat, setHistFilterCat]           = useState('');
   const [histFilterSupplier, setHistFilterSupplier] = useState('');
   const [histFilterYear, setHistFilterYear]         = useState('');
+  const [histSearch, setHistSearch]                 = useState('');
   const [showReportMenu, setShowReportMenu]         = useState(false);
   const reportMenuRef = useRef<HTMLDivElement>(null);
   const [search, setSearch]           = useState('');
@@ -1115,11 +1116,25 @@ export default function InventoryPage() {
   const histAllCats      = Array.from(new Set(shippingHistory.map(g => categoryLabel(g)))).sort();
   const histAllSuppliers = Array.from(new Set(shippingHistory.map(g => g.supplier ?? '').filter(Boolean))).sort() as string[];
   const histAllYears     = Array.from(new Set(shippingHistory.map(g => String(g.date.getFullYear())))).sort().reverse();
-  const filteredHistory  = shippingHistory.filter(g =>
-    (!histFilterCat      || categoryLabel(g) === histFilterCat) &&
-    (!histFilterSupplier || (g.supplier ?? '') === histFilterSupplier) &&
-    (!histFilterYear     || String(g.date.getFullYear()) === histFilterYear)
-  );
+  const filteredHistory  = shippingHistory.filter(g => {
+    if (histFilterCat && categoryLabel(g) !== histFilterCat) return false;
+    if (histFilterSupplier && (g.supplier ?? '') !== histFilterSupplier) return false;
+    if (histFilterYear && String(g.date.getFullYear()) !== histFilterYear) return false;
+
+    if (histSearch) {
+      const searchLower = histSearch.toLowerCase();
+      const matchRef = g.ref.toLowerCase().includes(searchLower);
+      const matchSupplier = (g.supplier ?? '').toLowerCase().includes(searchLower);
+      const matchDate = g.date.toLocaleDateString('fr-FR').includes(histSearch);
+      const matchProduct = g.items.some(item =>
+        item.sku.toLowerCase().includes(searchLower) ||
+        item.name.toLowerCase().includes(searchLower)
+      );
+      if (!matchRef && !matchSupplier && !matchDate && !matchProduct) return false;
+    }
+
+    return true;
+  });
 
   const handleAdd = async (e: FormEvent) => {
     e.preventDefault(); setFormError(''); setSaving(true);
@@ -1291,9 +1306,31 @@ export default function InventoryPage() {
                   </div>
                 </div>
                 {/* Filters */}
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* Category */}
-                  <div className="flex items-center gap-1">
+                <div className="space-y-2">
+                  {/* Search bar */}
+                  <div className="relative max-w-md">
+                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search by ref, supplier, date, or product…"
+                      value={histSearch}
+                      onChange={e => setHistSearch(e.target.value)}
+                      className="w-full pl-9 pr-9 py-2 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                    />
+                    {histSearch && (
+                      <button
+                        onClick={() => setHistSearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Filter buttons */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Category */}
+                    <div className="flex items-center gap-1">
                     <button onClick={() => setHistFilterCat('')}
                       className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${!histFilterCat ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                       Tout
@@ -1321,6 +1358,7 @@ export default function InventoryPage() {
                       {histAllYears.map(y => <option key={y} value={y}>{y}</option>)}
                     </select>
                   )}
+                  </div>
                 </div>
               </div>
               <table className="w-full">

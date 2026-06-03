@@ -1397,6 +1397,7 @@ export default function ShippingPage() {
   // Filters
   const [filterCat, setFilterCat]           = useState('');
   const [filterSupplier, setFilterSupplier] = useState('');
+  const [search, setSearch]                 = useState('');
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
@@ -1653,10 +1654,24 @@ export default function ShippingPage() {
   const allCategories = Array.from(new Set(orders.map(o => refToCategory(o.ref)))).sort();
   const allSuppliers  = Array.from(new Set(orders.map(o => o.supplier ?? '').filter(Boolean))).sort() as string[];
 
-  const displayOrders = orders.filter(o =>
-    (!filterCat || refToCategory(o.ref) === filterCat) &&
-    (!filterSupplier || (o.supplier ?? '') === filterSupplier)
-  );
+  const displayOrders = orders.filter(o => {
+    if (filterCat && refToCategory(o.ref) !== filterCat) return false;
+    if (filterSupplier && (o.supplier ?? '') !== filterSupplier) return false;
+
+    if (search) {
+      const searchLower = search.toLowerCase();
+      const matchRef = o.ref.toLowerCase().includes(searchLower);
+      const matchSupplier = (o.supplier ?? '').toLowerCase().includes(searchLower);
+      const matchDate = o.date.includes(search);
+      const matchProduct = o.lines.some(l =>
+        l.sku.toLowerCase().includes(searchLower) ||
+        l.productName.toLowerCase().includes(searchLower)
+      );
+      if (!matchRef && !matchSupplier && !matchDate && !matchProduct) return false;
+    }
+
+    return true;
+  });
 
   const planned  = displayOrders.filter(o => o.status === 'PLANNED');
   const received = displayOrders.filter(o => o.status === 'RECEIVED');
@@ -1685,9 +1700,30 @@ export default function ShippingPage() {
 
       {/* Filter bar */}
       {!loading && orders.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="space-y-3">
+          {/* Search bar */}
+          <div className="relative max-w-md">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by ref, supplier, date, or product…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-9 pr-9 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+
           {/* Category pills */}
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
             <button onClick={() => setFilterCat('')}
               className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${!filterCat ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
               Tout
@@ -1758,6 +1794,8 @@ export default function ShippingPage() {
                 ))}
               </div>
             )}
+          </div>
+            </div>
           </div>
         </div>
       )}
