@@ -1803,7 +1803,6 @@ export default function ShippingPage() {
           </div>
             </div>
           </div>
-        </div>
       )}
 
       {/* Content */}
