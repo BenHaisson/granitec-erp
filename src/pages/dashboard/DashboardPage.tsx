@@ -8,7 +8,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
-import { getProducts, getMovements } from '@/services/inventory.service';
+import { getMovements } from '@/services/inventory.service';
+import { useProducts } from '@/hooks/useProducts';
 import { getAllTargets } from '@/services/productionTargets.service';
 import { getSales } from '@/services/sales.service';
 import { getOrders } from '@/services/orders.service';
@@ -86,7 +87,7 @@ function buildRecentMonths(orders: SalesOrder[], n = 6) {
 const today = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
 export default function DashboardPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const { products } = useProducts();
   const [orders, setOrders] = useState<ProductionTarget[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
@@ -94,9 +95,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([getProducts(), getAllTargets(), getSales(), getOrders(), getMovements()])
-      .then(([p, o, s, so, m]) => {
-        setProducts(p); setOrders(o); setSales(s); setSalesOrders(so); setMovements(m);
+    Promise.all([getAllTargets(), getSales(), getOrders(), getMovements()])
+      .then(([o, s, so, m]) => {
+        setOrders(o); setSales(s); setSalesOrders(so); setMovements(m);
       })
       .finally(() => setLoading(false));
   }, []);

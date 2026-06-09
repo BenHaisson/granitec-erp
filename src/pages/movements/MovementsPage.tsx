@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Download, Search, X } from 'lucide-react';
-import { getMovements, getProducts } from '@/services/inventory.service';
+import { getMovements } from '@/services/inventory.service';
+import { useProducts } from '@/hooks/useProducts';
 import Badge from '@/components/ui/Badge';
 import type { InventoryMovement, Product } from '@/types';
 
@@ -41,20 +42,19 @@ const REASON_VARIANT_CLS: Record<string, string> = {
 };
 
 export default function MovementsPage() {
+  const { products } = useProducts();
   const [movements, setMovements]   = useState<InventoryMovement[]>([]);
-  const [productMap, setProductMap] = useState<Map<string, Product>>(new Map());
   const [loading, setLoading]       = useState(true);
   const [from, setFrom]             = useState('');
   const [to, setTo]                 = useState('');
   const [section, setSection]       = useState('ALL');
   const [search, setSearch]         = useState('');
 
+  const productMap = useMemo(() => new Map(products.map(p => [p.id, p])), [products]);
+
   useEffect(() => {
-    Promise.all([getMovements(), getProducts()])
-      .then(([m, p]) => {
-        setMovements(m.sort((a, b) => tsToDate(b.createdAt).getTime() - tsToDate(a.createdAt).getTime()));
-        setProductMap(new Map(p.map(prod => [prod.id, prod])));
-      })
+    getMovements()
+      .then((m) => setMovements(m.sort((a, b) => tsToDate(b.createdAt).getTime() - tsToDate(a.createdAt).getTime())))
       .finally(() => setLoading(false));
   }, []);
 

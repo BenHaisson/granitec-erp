@@ -98,16 +98,14 @@ export const updateReceivedShippingOrder = async (
   for (const movDoc of purchaseMoves) {
     const qty = movDoc.data().quantity as number;
     const productId = movDoc.data().productId as string;
-    try {
-      await runTransaction(db, async (tx) => {
-        const prodRef = doc(db, 'products', productId);
-        const snap = await tx.get(prodRef);
-        if (snap.exists()) {
-          tx.update(prodRef, { stock_level: (snap.data().stock_level as number) - qty });
-        }
-        tx.delete(movDoc.ref);
-      });
-    } catch (e) { console.error('[shipping] movement reversal skipped:', e); }
+    await runTransaction(db, async (tx) => {
+      const prodRef = doc(db, 'products', productId);
+      const snap = await tx.get(prodRef);
+      if (snap.exists()) {
+        tx.update(prodRef, { stock_level: (snap.data().stock_level as number) - qty });
+      }
+      tx.delete(movDoc.ref);
+    });
   }
   // Step 2: apply new quantities (re-receive with corrected amounts)
   await receiveSupplyBatch(
@@ -129,16 +127,14 @@ export const deleteReceivedShippingOrder = async (order: ShippingOrder): Promise
   for (const movDoc of purchaseMoves) {
     const qty = movDoc.data().quantity as number; // positive (e.g. +1000)
     const productId = movDoc.data().productId as string;
-    try {
-      await runTransaction(db, async (tx) => {
-        const prodRef = doc(db, 'products', productId);
-        const snap = await tx.get(prodRef);
-        if (snap.exists()) {
-          tx.update(prodRef, { stock_level: (snap.data().stock_level as number) - qty });
-        }
-        tx.delete(movDoc.ref);
-      });
-    } catch (e) { console.error('[shipping] movement reversal skipped:', e); }
+    await runTransaction(db, async (tx) => {
+      const prodRef = doc(db, 'products', productId);
+      const snap = await tx.get(prodRef);
+      if (snap.exists()) {
+        tx.update(prodRef, { stock_level: (snap.data().stock_level as number) - qty });
+      }
+      tx.delete(movDoc.ref);
+    });
   }
   await deleteDoc(doc(db, 'shipping_orders', order.id));
 };

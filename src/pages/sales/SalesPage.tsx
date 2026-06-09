@@ -943,7 +943,7 @@ function OrderDetailModal({ order, onClose }: { order: SalesOrder; onClose: () =
           </thead>
           <tbody>
             {order.lines.map((l, i) => (
-              <tr key={i} className="border-b border-slate-100">
+              <tr key={l.productId} className="border-b border-slate-100">
                 <td className="py-2 text-slate-400">{i + 1}</td>
                 <td className="py-2 text-slate-700">{l.productName}</td>
                 <td className="py-2 font-mono text-slate-500 text-xs">{l.sku}</td>

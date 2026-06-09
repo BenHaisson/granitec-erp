@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef, type FormEvent } from 'react';
 import { Plus, FlaskConical, ArrowDownToLine, ChevronDown, Search, FileText, X, Pencil, Trash2, PackagePlus, FileDown, ChevronRight, AlertTriangle, RefreshCw } from 'lucide-react';
 import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
-import { getProducts, addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch, reconcileInventoryToMovements } from '@/services/inventory.service';
+import { addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch, reconcileInventoryToMovements } from '@/services/inventory.service';
+import { useProducts } from '@/hooks/useProducts';
 import { getShippingOrders } from '@/services/shipping.service';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
@@ -881,7 +882,7 @@ function SupplyReceiptScreen({
 
 // ── Main page ─────────────────────────────────────────────────────
 export default function InventoryPage() {
-  const [products, setProducts]         = useState<Product[]>([]);
+  const { products, loading: productsLoading } = useProducts();
   const [movements, setMovements]       = useState<InventoryMovement[]>([]);
   const [shippingOrders, setShippingOrders] = useState<ShippingOrder[]>([]);
   const [loading, setLoading]           = useState(true);
@@ -1041,8 +1042,8 @@ export default function InventoryPage() {
   // ── Data load ─────────────────────────────────────────────────
   const load = () => {
     setLoading(true);
-    Promise.all([getProducts(), getMovements(), getShippingOrders()])
-      .then(([prods, movs, orders]) => { setProducts(prods); setMovements(movs); setShippingOrders(orders); })
+    Promise.all([getMovements(), getShippingOrders()])
+      .then(([movs, orders]) => { setMovements(movs); setShippingOrders(orders); })
       .finally(() => setLoading(false));
   };
 
@@ -1242,7 +1243,7 @@ export default function InventoryPage() {
       </div>
 
       {/* Content */}
-      {loading ? (
+      {(loading || productsLoading) ? (
         <div className="text-center text-slate-400 py-20 text-sm">Loading…</div>
       ) : rawMaterials.length === 0 ? (
         <div className="text-center py-20">

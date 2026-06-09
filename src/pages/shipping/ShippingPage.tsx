@@ -1591,26 +1591,32 @@ export default function ShippingPage() {
 
   const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null }) => {
     if (!receivingOrder) return;
-    setReceiving(s => new Set(s).add(receivingOrder.id));
-    let documentUrl: string | undefined;
-    let documentName: string | undefined;
-    if (data.file) {
-      const uploaded = await uploadReceiptDocument(receivingOrder.id, data.file);
-      documentUrl = uploaded.url;
-      documentName = uploaded.name;
+    const order = receivingOrder;
+    setReceiving(s => new Set(s).add(order.id));
+    try {
+      let documentUrl: string | undefined;
+      let documentName: string | undefined;
+      if (data.file) {
+        const uploaded = await uploadReceiptDocument(order.id, data.file);
+        documentUrl = uploaded.url;
+        documentName = uploaded.name;
+      }
+      const failedIds = await receiveShippingOrder(order, {
+        blNumber: data.blNumber.trim() || undefined,
+        remarks: data.remarks.trim() || undefined,
+        documentUrl,
+        documentName,
+      });
+      setReceivingOrder(null);
+      if (failedIds.length > 0) {
+        alert(`⚠ ${failedIds.length} product(s) could not be received (not found in inventory): ${failedIds.join(', ')}`);
+      }
+      await load();
+    } catch (e) {
+      alert(`Failed to receive order: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally {
+      setReceiving(s => { const n = new Set(s); n.delete(order.id); return n; });
     }
-    const failedIds = await receiveShippingOrder(receivingOrder, {
-      blNumber: data.blNumber.trim() || undefined,
-      remarks: data.remarks.trim() || undefined,
-      documentUrl,
-      documentName,
-    });
-    setReceiving(s => { const n = new Set(s); n.delete(receivingOrder.id); return n; });
-    setReceivingOrder(null);
-    if (failedIds.length > 0) {
-      alert(`⚠ ${failedIds.length} product(s) could not be received (not found in inventory): ${failedIds.join(', ')}`);
-    }
-    await load();
   };
 
   const handleDelete = async (order: ShippingOrder) => {
