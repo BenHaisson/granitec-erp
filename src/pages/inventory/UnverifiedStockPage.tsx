@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { AlertCircle, CheckCircle2, X, Plus, Trash2 } from 'lucide-react';
-import { getProducts, getMovements, clearAllUnverifiedStock, reconcileUnverifiedStock } from '@/services/inventory.service';
+import { getMovements, clearAllUnverifiedStock, reconcileUnverifiedStock } from '@/services/inventory.service';
+import { useProducts } from '@/hooks/useProducts';
 import { createShippingOrder } from '@/services/shipping.service';
 import type { Product, InventoryMovement } from '@/types';
 
@@ -25,7 +26,7 @@ interface VerifyLine {
 }
 
 export default function UnverifiedStockPage() {
-  const [products, setProducts]   = useState<Product[]>([]);
+  const { products } = useProducts();
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [loading, setLoading]     = useState(true);
   const [clearing, setClearing]   = useState(false);
@@ -42,8 +43,7 @@ export default function UnverifiedStockPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [prods, movs] = await Promise.all([getProducts(), getMovements()]);
-      setProducts(prods);
+      const movs = await getMovements();
       const relevant = movs
         .filter(m => {
           const note = (m.note ?? '') as string;

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, type FormEvent } from 'react';
 import { Plus, Search, Package, ImageOff, Pencil, Trash2, AlertTriangle } from 'lucide-react';
-import { getProducts, addProduct, updateProduct, deleteProduct } from '@/services/inventory.service';
+import { addProduct, updateProduct, deleteProduct } from '@/services/inventory.service';
+import { useProducts } from '@/hooks/useProducts';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
 import type { Product, ProductType } from '@/types';
@@ -127,8 +128,7 @@ function ProductGroupCard({ group, onEdit, onDelete }: {
 
 // ── Main page ─────────────────────────────────────────────────────
 export default function WarehousePage() {
-  const [allProducts, setAllProducts] = useState<Product[]>([]);
-  const [loading, setLoading]         = useState(true);
+  const { products: allProducts, loading } = useProducts();
   const [search, setSearch]           = useState('');
   const [category, setCategory]       = useState('All');
   const [stockFilter, setStockFilter] = useState<'all' | 'hide-zero' | 'zero-only' | 'alarm'>('all');
@@ -171,12 +171,7 @@ export default function WarehousePage() {
     load();
   };
 
-  const load = () => {
-    setLoading(true);
-    getProducts().then(setAllProducts).finally(() => setLoading(false));
-  };
-
-  useEffect(() => { load(); }, []);
+  const load = () => { /* products update via real-time listener */ };
 
   const finishedProducts = allProducts.filter(p => p.type === 'FINISHED');
 

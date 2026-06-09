@@ -1,5 +1,5 @@
 import {
-  collection, addDoc, getDocs, getDocsFromServer, doc, setDoc, deleteDoc, updateDoc, runTransaction, Timestamp, writeBatch,
+  collection, addDoc, getDocs, getDocsFromServer, onSnapshot, doc, setDoc, deleteDoc, updateDoc, runTransaction, Timestamp, writeBatch,
   query, where, orderBy, limit,
 } from 'firebase/firestore';
 import { db, auth } from '@/firebase/config';
@@ -23,6 +23,17 @@ export const getProducts = async (): Promise<Product[]> => {
 export const getProductsFresh = async (): Promise<Product[]> => {
   const snap = await getDocsFromServer(collection(db, 'products'));
   return snap.docs.map(d => toProduct(d.id, d.data() as Record<string, unknown>));
+};
+
+export const subscribeToProducts = (
+  onData: (products: Product[]) => void,
+  onError?: (err: Error) => void
+): (() => void) => {
+  return onSnapshot(
+    collection(db, 'products'),
+    (snap) => onData(snap.docs.map(d => toProduct(d.id, d.data() as Record<string, unknown>))),
+    onError
+  );
 };
 
 export const addProduct = (product: Omit<Product, 'id'>) =>
