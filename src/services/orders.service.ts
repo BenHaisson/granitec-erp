@@ -42,23 +42,29 @@ export const generateOrderRef = async (year?: number): Promise<string> => {
 export const createOrder = async (order: Omit<SalesOrder, 'id'>): Promise<string> => {
   const orderRef = doc(collection(db, 'sales_orders'));
   const validLines = order.lines.filter(l => l.totalQty > 0);
+  const shouldReduceStock = order.reduceStock !== false;
+
   await runTransaction(db, async (tx) => {
-    const prodSnaps = await Promise.all(validLines.map(l => tx.get(doc(db, 'products', l.productId))));
+    const prodSnaps = shouldReduceStock
+      ? await Promise.all(validLines.map(l => tx.get(doc(db, 'products', l.productId))))
+      : [];
     tx.set(orderRef, {
       ...order,
       date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
     });
-    for (let i = 0; i < validLines.length; i++) {
-      const line = validLines[i];
-      const snap = prodSnaps[i];
-      if (!snap.exists()) throw new Error(`Product ${line.productName ?? line.productId} not found`);
-      const current = snap.data().stock_level as number;
-      if (current < line.totalQty) throw new Error(`Insufficient stock for ${snap.data().name as string}: need ${line.totalQty}, have ${current}`);
-      tx.update(snap.ref, { stock_level: current - line.totalQty });
-      tx.set(doc(collection(db, 'inventory_movements')), {
-        productId: line.productId, quantity: -line.totalQty, reason: 'SALE',
-        note: order.ref ?? orderRef.id, createdAt: Timestamp.now(),
-      });
+    if (shouldReduceStock) {
+      for (let i = 0; i < validLines.length; i++) {
+        const line = validLines[i];
+        const snap = prodSnaps[i];
+        if (!snap.exists()) throw new Error(`Product ${line.productName ?? line.productId} not found`);
+        const current = snap.data().stock_level as number;
+        if (current < line.totalQty) throw new Error(`Insufficient stock for ${snap.data().name as string}: need ${line.totalQty}, have ${current}`);
+        tx.update(snap.ref, { stock_level: current - line.totalQty });
+        tx.set(doc(collection(db, 'inventory_movements')), {
+          productId: line.productId, quantity: -line.totalQty, reason: 'SALE',
+          note: order.ref ?? orderRef.id, createdAt: Timestamp.now(),
+        });
+      }
     }
   });
   return orderRef.id;
@@ -140,17 +146,19 @@ export const updateOrder = async (order: SalesOrder): Promise<void> => {
       tx.delete(movSnap.ref);
     }
 
-    // Step 2: apply new lines (check stock, deduct, create movements)
-    for (const line of validLines) {
-      const current = stockMap.get(line.productId) ?? 0;
-      if (current < line.totalQty) {
-        throw new Error(`Insufficient stock for ${line.productName ?? line.productId}: need ${line.totalQty}, have ${current}`);
+    // Step 2: apply new lines (check stock, deduct, create movements) — only if reduceStock
+    if (order.reduceStock !== false) {
+      for (const line of validLines) {
+        const current = stockMap.get(line.productId) ?? 0;
+        if (current < line.totalQty) {
+          throw new Error(`Insufficient stock for ${line.productName ?? line.productId}: need ${line.totalQty}, have ${current}`);
+        }
+        stockMap.set(line.productId, current - line.totalQty);
+        tx.set(doc(collection(db, 'inventory_movements')), {
+          productId: line.productId, quantity: -line.totalQty, reason: 'SALE',
+          note: order.ref, createdAt: Timestamp.now(),
+        });
       }
-      stockMap.set(line.productId, current - line.totalQty);
-      tx.set(doc(collection(db, 'inventory_movements')), {
-        productId: line.productId, quantity: -line.totalQty, reason: 'SALE',
-        note: order.ref, createdAt: Timestamp.now(),
-      });
     }
 
     // Step 3: write all updated stock levels

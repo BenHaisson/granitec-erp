@@ -28,6 +28,8 @@ service cloud.firestore {
     match /production_targets/{id} { allow read, write: if auth(); }
     match /production_entries/{id} { allow read, write: if auth(); }
     match /library_items/{id}      { allow read, write: if auth(); }
+    match /suppliers/{id}          { allow read, write: if auth(); }
+    match /clients/{id}            { allow read, write: if auth(); }
 
     match /{document=**} { allow read, write: if auth(); }
   }

@@ -13,9 +13,12 @@ import {
   deleteShippingOrder, updateShippingOrder, deleteReceivedShippingOrder, updateReceivedShippingOrder,
   uploadReceiptDocument,
 } from '@/services/shipping.service';
+import { getSuppliers, createSupplier } from '@/services/supplier.service';
 import { getRecipes } from '@/services/production.service';
-import type { Product, ShippingOrder, ShippingOrderLine, Recipe } from '@/types';
+import type { Product, ShippingOrder, ShippingOrderLine, Recipe, Supplier } from '@/types';
 import { todayISO } from '@/utils/dates';
+import EntityPicker from '@/components/ui/EntityPicker';
+import { SupplierModal } from '@/pages/suppliers/SuppliersPage';
 
 const PREFIX_LABEL: Record<string, string> = {
   DISC: 'Aluminium Disc', PKG: 'Packaging', ACC: 'Accessories', SH: 'General',
@@ -337,6 +340,8 @@ interface CreateOverlayProps {
   ref_: string; setRef: (v: string) => void;
   refPrefix: RefPrefix; onPrefixChange: (p: RefPrefix) => void;
   supplier: string; setSupplier: (v: string) => void;
+  suppliers: Supplier[];
+  onAddSupplier: () => void;
   date: string; onDateChange: (v: string) => void;
   lines: DraftLine[];
   saving: boolean;
@@ -356,7 +361,7 @@ interface CreateOverlayProps {
   isEditing?: boolean;
 }
 function CreateOrderOverlay({
-  rawMaterials, ref_, setRef, refPrefix, onPrefixChange, supplier, setSupplier, date, onDateChange,
+  rawMaterials, ref_, setRef, refPrefix, onPrefixChange, supplier, setSupplier, suppliers, onAddSupplier, date, onDateChange,
   lines, saving, error, refInputRef, showImport, setShowImport,
   importText, setImportText, importWarnings,
   onAddLine, onRemoveLine, onUpdateLine, onSelectProduct, onConfirm, onClose, onParseImport, onImportLines,
@@ -486,9 +491,16 @@ function CreateOrderOverlay({
           </div>
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Supplier</label>
-            <input type="text" value={supplier} onChange={e => setSupplier(e.target.value)}
+            <EntityPicker
+              value={supplier}
+              onChange={setSupplier}
+              entities={suppliers.map(s => ({ id: s.id, name: s.name, subtitle: s.mainPhone }))}
+              onAddNew={onAddSupplier}
               placeholder="Supplier name"
-              className="w-40 px-3 py-2 border-2 border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400" />
+              addLabel="Add new supplier"
+              className="w-48"
+              inputClassName="px-3 py-2 border-2 border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400"
+            />
           </div>
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Date</label>
@@ -718,13 +730,14 @@ function CreateOrderOverlay({
 // ── Receive Modal ─────────────────────────────────────────────────
 interface ReceiveModalProps {
   order: ShippingOrder;
-  onConfirm: (data: { blNumber: string; remarks: string; file: File | null }) => Promise<void>;
+  onConfirm: (data: { blNumber: string; remarks: string; file: File | null; addToInventory: boolean }) => Promise<void>;
   onClose: () => void;
 }
 function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
   const [blNumber, setBlNumber] = useState('');
   const [remarks, setRemarks] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [addToInventory, setAddToInventory] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -742,7 +755,7 @@ function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
     setSaving(true);
     setError('');
     try {
-      await onConfirm({ blNumber, remarks, file });
+      await onConfirm({ blNumber, remarks, file, addToInventory });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to mark as received.');
       setSaving(false);
@@ -843,6 +856,32 @@ function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
             </div>
             <input ref={fileInputRef} type="file" className="hidden" onChange={e => setFile(e.target.files?.[0] ?? null)} />
           </div>
+
+          {/* Add to inventory toggle */}
+          {!order.verification && (
+            <div
+              className={`rounded-xl border-2 p-4 transition-all cursor-pointer select-none ${
+                addToInventory
+                  ? 'border-emerald-400 bg-emerald-50/60'
+                  : 'border-slate-200 bg-slate-50/60'
+              }`}
+              onClick={() => setAddToInventory(v => !v)}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-slate-800">Add to Live Inventory</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {addToInventory
+                      ? 'Stock levels will be updated immediately for all items in this order.'
+                      : 'Receipt will be recorded in history without updating stock levels.'}
+                  </p>
+                </div>
+                <div className={`w-11 h-6 rounded-full flex items-center transition-colors shrink-0 ${addToInventory ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                  <div className={`w-5 h-5 bg-white rounded-full shadow-sm transition-transform mx-0.5 ${addToInventory ? 'translate-x-5' : 'translate-x-0'}`} />
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="flex items-center gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
@@ -1386,8 +1425,10 @@ export default function ShippingPage() {
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [rawMaterials, setRawMaterials] = useState<Product[]>([]);
   const [recipes, setRecipes]         = useState<Recipe[]>([]);
+  const [suppliers, setSuppliers]     = useState<Supplier[]>([]);
   const [loading, setLoading]         = useState(true);
   const [showSmartOrder, setShowSmartOrder] = useState(false);
+  const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
   const [expanded, setExpanded]       = useState<Set<string>>(new Set());
   const [receiving, setReceiving]     = useState<Set<string>>(new Set());
   const [deleting, setDeleting]       = useState<Set<string>>(new Set());
@@ -1451,6 +1492,10 @@ export default function ShippingPage() {
     }
   };
 
+  const loadSuppliers = async () => {
+    try { setSuppliers(await getSuppliers()); } catch { /* ignore */ }
+  };
+
   const load = async () => {
     setLoading(true);
     const [ords, prods, recs] = await Promise.all([getShippingOrders(), getProducts(), getRecipes()]);
@@ -1459,6 +1504,7 @@ export default function ShippingPage() {
     setRawMaterials(prods.filter(p => p.type === 'RAW'));
     setRecipes(recs);
     setLoading(false);
+    loadSuppliers();
   };
 
   useEffect(() => { load(); }, []);
@@ -1589,7 +1635,7 @@ export default function ShippingPage() {
     setReceivingOrder(order);
   };
 
-  const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null }) => {
+  const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null; addToInventory: boolean }) => {
     if (!receivingOrder) return;
     const order = receivingOrder;
     setReceiving(s => new Set(s).add(order.id));
@@ -1606,7 +1652,7 @@ export default function ShippingPage() {
         remarks: data.remarks.trim() || undefined,
         documentUrl,
         documentName,
-      });
+      }, data.addToInventory);
       setReceivingOrder(null);
       if (failedIds.length > 0) {
         alert(`⚠ ${failedIds.length} product(s) could not be received (not found in inventory): ${failedIds.join(', ')}`);
@@ -1902,6 +1948,7 @@ export default function ShippingPage() {
           ref_={ref_} setRef={setRef}
           refPrefix={refPrefix} onPrefixChange={handlePrefixChange}
           supplier={supplier} setSupplier={setSupplier}
+          suppliers={suppliers} onAddSupplier={() => setShowAddSupplierModal(true)}
           date={date} onDateChange={handleDateChange}
           lines={lines}
           saving={saving}
@@ -1925,6 +1972,20 @@ export default function ShippingPage() {
             });
           }}
           isEditing={!!editingOrder}
+        />
+      )}
+
+      {/* Add Supplier Modal (from within create overlay) */}
+      {showAddSupplierModal && (
+        <SupplierModal
+          onSave={async (data) => {
+            const id = await createSupplier(data);
+            await loadSuppliers();
+            // Auto-select the newly created supplier
+            setSupplier(data.name);
+            return id as unknown as void;
+          }}
+          onClose={() => setShowAddSupplierModal(false)}
         />
       )}
     </div>

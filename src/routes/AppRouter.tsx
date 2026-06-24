@@ -13,6 +13,8 @@ import AnalyticsPage from '@/pages/analytics/AnalyticsPage';
 import LibraryPage from '@/pages/library/LibraryPage';
 import ShippingPage from '@/pages/shipping/ShippingPage';
 import UnverifiedStockPage from '@/pages/inventory/UnverifiedStockPage';
+import SuppliersPage from '@/pages/suppliers/SuppliersPage';
+import ClientsPage from '@/pages/clients/ClientsPage';
 
 export default function AppRouter() {
   return (
@@ -25,6 +27,8 @@ export default function AppRouter() {
         <Route path="/unverified-stock" element={<UnverifiedStockPage />} />
         <Route path="/warehouse" element={<WarehousePage />} />
         <Route path="/sales" element={<SalesPage />} />
+        <Route path="/suppliers" element={<SuppliersPage />} />
+        <Route path="/clients" element={<ClientsPage />} />
         <Route path="/production" element={<ProductionPage />} />
         <Route path="/bom" element={<BOMPage />} />
         <Route path="/movements" element={<MovementsPage />} />

@@ -4,9 +4,12 @@ import { useNavigate } from 'react-router-dom';
 import { getOrders, createOrder, updateOrder, deleteOrder, generateOrderRef } from '@/services/orders.service';
 import { getProducts } from '@/services/inventory.service';
 import { getRecipes } from '@/services/production.service';
+import { getClients, createClient } from '@/services/client.service';
 import { createTarget } from '@/services/productionTargets.service';
 import Modal from '@/components/ui/Modal';
-import type { SalesOrder, SalesOrderLine, Product, Recipe } from '@/types';
+import EntityPicker from '@/components/ui/EntityPicker';
+import { ClientModal } from '@/pages/clients/ClientsPage';
+import type { SalesOrder, SalesOrderLine, Product, Recipe, Client } from '@/types';
 import { todayISO } from '@/utils/dates';
 import { useDraft, getLastEntryDate, saveLastEntryDate } from '@/hooks/useDraft';
 import DraftBanner from '@/components/ui/DraftBanner';
@@ -519,6 +522,9 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
     }, 400);
     return () => clearTimeout(draftSyncTimer.current);
   }, [lines]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [showAddClientModal, setShowAddClientModal] = useState(false);
+  const [reduceFromStock, setReduceFromStock] = useState(true);
   const [quickSearch, setQuickSearch] = useState('');
   const [hideZero, setHideZero]       = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
@@ -528,6 +534,8 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
   const clientRef = useRef<HTMLInputElement>(null);
   const boxesRefs = useRef<HTMLInputElement[]>([]);
   const pendingQuickAdd = useRef<{ idx: number; data: Partial<DraftLine> } | null>(null);
+
+  useEffect(() => { getClients().then(setClients).catch(() => {}); }, []);
 
   const dateYear = date ? new Date(date + 'T12:00:00').getFullYear() : new Date().getFullYear();
   useEffect(() => { generateOrderRef(dateYear).then(setOrderRef); }, [dateYear]);
@@ -606,36 +614,36 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
     const dup = validLines.find(l => seenIds.size === seenIds.add(l.productId).size);
     if (dup) { setError(`Duplicate product: "${dup.productName}" appears more than once. Merge the quantities into one line.`); return; }
 
-    // ── Stock shortfall check ──────────────────────────────────────────────
-    // Before saving, detect lines where warehouse stock < ordered qty
-    // and a matching recipe exists → offer to auto-create production targets
-    const detected: ShortfallTarget[] = [];
-    for (const line of validLines) {
-      const product = products.find(p => p.id === line.productId);
-      if (!product) continue;
-      const available = product.stock_level;
-      if (available < line.totalQty) {
-        const recipe = recipes.find(r => r.finishedProductId === line.productId);
-        if (recipe) {
-          detected.push({
-            productId: line.productId,
-            productName: line.productName,
-            recipeId: recipe.id,
-            recipeName: line.productName,
-            need: line.totalQty,
-            have: available,
-          });
+    // ── Stock shortfall check (only when reducing stock) ──────────────────
+    if (reduceFromStock) {
+      const detected: ShortfallTarget[] = [];
+      for (const line of validLines) {
+        const product = products.find(p => p.id === line.productId);
+        if (!product) continue;
+        const available = product.stock_level;
+        if (available < line.totalQty) {
+          const recipe = recipes.find(r => r.finishedProductId === line.productId);
+          if (recipe) {
+            detected.push({
+              productId: line.productId,
+              productName: line.productName,
+              recipeId: recipe.id,
+              recipeName: line.productName,
+              need: line.totalQty,
+              have: available,
+            });
+          }
         }
       }
-    }
-    if (detected.length > 0) {
-      setShortfalls(detected);
-      return; // show the shortfall dialog instead of saving
+      if (detected.length > 0) {
+        setShortfalls(detected);
+        return; // show the shortfall dialog instead of saving
+      }
     }
 
     setError(''); setSaving(true);
     try {
-      await createOrder({ ref: orderRef, client, date: new Date(date), lines: validLines as SalesOrderLine[] });
+      await createOrder({ ref: orderRef, client, date: new Date(date), lines: validLines as SalesOrderLine[], reduceStock: reduceFromStock });
       clearSalesDraft();
       onSaved(); onClose();
     } catch { setError('Failed to save order.'); }
@@ -693,12 +701,15 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
           </button>
           <h1 className="text-lg font-bold text-slate-800 shrink-0">New Sales Order</h1>
           <span className="text-sm font-mono text-slate-400 shrink-0 bg-white border border-slate-200 px-3 py-2 rounded-xl">{orderRef}</span>
-          <input
-            ref={clientRef}
-            type="text" value={client}
-            onChange={e => setClient(e.target.value)}
+          <EntityPicker
+            value={client}
+            onChange={setClient}
+            entities={clients.map(c => ({ id: c.id, name: c.name, subtitle: c.mainPhone }))}
+            onAddNew={() => setShowAddClientModal(true)}
             placeholder="Client name *"
-            className="flex-1 min-w-[140px] max-w-xs px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
+            addLabel="Add new client"
+            className="flex-1 min-w-[140px] max-w-xs"
+            inputClassName="w-full px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
           />
           <div className="flex items-center gap-1 shrink-0">
             <input type="date" value={date} onChange={e => setDate(e.target.value)}
@@ -710,6 +721,22 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
               </button>
             )}
           </div>
+          {/* Reduce from stock toggle */}
+          <div
+            className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer select-none transition-all shrink-0 ${
+              reduceFromStock
+                ? 'border-blue-400 bg-blue-50 text-blue-700'
+                : 'border-slate-200 bg-white text-slate-500'
+            }`}
+            onClick={() => setReduceFromStock(v => !v)}
+            title={reduceFromStock ? 'Stock will be deducted from inventory' : 'Order will be recorded without deducting stock'}
+          >
+            <div className={`w-8 h-4 rounded-full flex items-center transition-colors ${reduceFromStock ? 'bg-blue-500' : 'bg-slate-300'}`}>
+              <div className={`w-3.5 h-3.5 bg-white rounded-full shadow-sm transition-transform mx-0.5 ${reduceFromStock ? 'translate-x-3.5' : 'translate-x-0'}`} />
+            </div>
+            <span className="text-xs font-semibold whitespace-nowrap">Reduce Stock</span>
+          </div>
+
           {validCount > 0 && (
             <span className="text-sm font-bold text-blue-600 bg-blue-50 border border-blue-100 px-4 py-1.5 rounded-full shrink-0">
               {validCount} SKU{validCount !== 1 ? 's' : ''} · {totalPcs.toLocaleString('fr-FR')} pcs
@@ -863,6 +890,19 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Add Client Modal */}
+      {showAddClientModal && (
+        <ClientModal
+          onSave={async (data) => {
+            await createClient(data);
+            const updated = await getClients();
+            setClients(updated);
+            setClient(data.name);
+          }}
+          onClose={() => setShowAddClientModal(false)}
+        />
       )}
 
       {/* Shortfall dialog — shown when warehouse stock < ordered qty */}

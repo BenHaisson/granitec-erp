@@ -42,13 +42,14 @@ export const createShippingOrder = async (
 
 export const receiveShippingOrder = async (
   order: ShippingOrder,
-  receipt?: { blNumber?: string; remarks?: string; documentUrl?: string; documentName?: string }
+  receipt?: { blNumber?: string; remarks?: string; documentUrl?: string; documentName?: string },
+  addToInventory: boolean = true
 ): Promise<string[]> => {
   if (order.verification) {
     // Verification orders exist purely for document history.
     // unverified_stock was already reduced when the user clicked Verify in the
     // Unverified Stock page. No stock change happens here — just mark as RECEIVED.
-  } else {
+  } else if (addToInventory) {
     // Regular supply order — add to stock_level + create PURCHASE movements.
     // Never touch unverified_stock here.
     await receiveSupplyBatch(
@@ -58,7 +59,11 @@ export const receiveShippingOrder = async (
     );
   }
 
-  const update: Record<string, unknown> = { status: 'RECEIVED', receivedAt: Timestamp.now() };
+  const update: Record<string, unknown> = {
+    status: 'RECEIVED',
+    receivedAt: Timestamp.now(),
+    addedToInventory: order.verification ? true : addToInventory,
+  };
   if (receipt?.blNumber) update.blNumber = receipt.blNumber;
   if (receipt?.remarks) update.remarks = receipt.remarks;
   if (receipt?.documentUrl) update.documentUrl = receipt.documentUrl;
