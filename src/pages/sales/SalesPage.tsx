@@ -519,6 +519,7 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
     }, 400);
     return () => clearTimeout(draftSyncTimer.current);
   }, [lines]);
+  const [reduceFromStock, setReduceFromStock] = useState(true);
   const [quickSearch, setQuickSearch] = useState('');
   const [hideZero, setHideZero]       = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
@@ -606,36 +607,36 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
     const dup = validLines.find(l => seenIds.size === seenIds.add(l.productId).size);
     if (dup) { setError(`Duplicate product: "${dup.productName}" appears more than once. Merge the quantities into one line.`); return; }
 
-    // ── Stock shortfall check ──────────────────────────────────────────────
-    // Before saving, detect lines where warehouse stock < ordered qty
-    // and a matching recipe exists → offer to auto-create production targets
-    const detected: ShortfallTarget[] = [];
-    for (const line of validLines) {
-      const product = products.find(p => p.id === line.productId);
-      if (!product) continue;
-      const available = product.stock_level;
-      if (available < line.totalQty) {
-        const recipe = recipes.find(r => r.finishedProductId === line.productId);
-        if (recipe) {
-          detected.push({
-            productId: line.productId,
-            productName: line.productName,
-            recipeId: recipe.id,
-            recipeName: line.productName,
-            need: line.totalQty,
-            have: available,
-          });
+    // ── Stock shortfall check (only when reducing stock) ──────────────────
+    if (reduceFromStock) {
+      const detected: ShortfallTarget[] = [];
+      for (const line of validLines) {
+        const product = products.find(p => p.id === line.productId);
+        if (!product) continue;
+        const available = product.stock_level;
+        if (available < line.totalQty) {
+          const recipe = recipes.find(r => r.finishedProductId === line.productId);
+          if (recipe) {
+            detected.push({
+              productId: line.productId,
+              productName: line.productName,
+              recipeId: recipe.id,
+              recipeName: line.productName,
+              need: line.totalQty,
+              have: available,
+            });
+          }
         }
       }
-    }
-    if (detected.length > 0) {
-      setShortfalls(detected);
-      return; // show the shortfall dialog instead of saving
+      if (detected.length > 0) {
+        setShortfalls(detected);
+        return; // show the shortfall dialog instead of saving
+      }
     }
 
     setError(''); setSaving(true);
     try {
-      await createOrder({ ref: orderRef, client, date: new Date(date), lines: validLines as SalesOrderLine[] });
+      await createOrder({ ref: orderRef, client, date: new Date(date), lines: validLines as SalesOrderLine[], reduceStock: reduceFromStock });
       clearSalesDraft();
       onSaved(); onClose();
     } catch { setError('Failed to save order.'); }
@@ -710,6 +711,22 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
               </button>
             )}
           </div>
+          {/* Reduce from stock toggle */}
+          <div
+            className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer select-none transition-all shrink-0 ${
+              reduceFromStock
+                ? 'border-blue-400 bg-blue-50 text-blue-700'
+                : 'border-slate-200 bg-white text-slate-500'
+            }`}
+            onClick={() => setReduceFromStock(v => !v)}
+            title={reduceFromStock ? 'Stock will be deducted from inventory' : 'Order will be recorded without deducting stock'}
+          >
+            <div className={`w-8 h-4 rounded-full flex items-center transition-colors ${reduceFromStock ? 'bg-blue-500' : 'bg-slate-300'}`}>
+              <div className={`w-3.5 h-3.5 bg-white rounded-full shadow-sm transition-transform mx-0.5 ${reduceFromStock ? 'translate-x-3.5' : 'translate-x-0'}`} />
+            </div>
+            <span className="text-xs font-semibold whitespace-nowrap">Reduce Stock</span>
+          </div>
+
           {validCount > 0 && (
             <span className="text-sm font-bold text-blue-600 bg-blue-50 border border-blue-100 px-4 py-1.5 rounded-full shrink-0">
               {validCount} SKU{validCount !== 1 ? 's' : ''} · {totalPcs.toLocaleString('fr-FR')} pcs

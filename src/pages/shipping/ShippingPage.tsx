@@ -718,13 +718,14 @@ function CreateOrderOverlay({
 // ── Receive Modal ─────────────────────────────────────────────────
 interface ReceiveModalProps {
   order: ShippingOrder;
-  onConfirm: (data: { blNumber: string; remarks: string; file: File | null }) => Promise<void>;
+  onConfirm: (data: { blNumber: string; remarks: string; file: File | null; addToInventory: boolean }) => Promise<void>;
   onClose: () => void;
 }
 function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
   const [blNumber, setBlNumber] = useState('');
   const [remarks, setRemarks] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [addToInventory, setAddToInventory] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -742,7 +743,7 @@ function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
     setSaving(true);
     setError('');
     try {
-      await onConfirm({ blNumber, remarks, file });
+      await onConfirm({ blNumber, remarks, file, addToInventory });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to mark as received.');
       setSaving(false);
@@ -843,6 +844,32 @@ function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
             </div>
             <input ref={fileInputRef} type="file" className="hidden" onChange={e => setFile(e.target.files?.[0] ?? null)} />
           </div>
+
+          {/* Add to inventory toggle */}
+          {!order.verification && (
+            <div
+              className={`rounded-xl border-2 p-4 transition-all cursor-pointer select-none ${
+                addToInventory
+                  ? 'border-emerald-400 bg-emerald-50/60'
+                  : 'border-slate-200 bg-slate-50/60'
+              }`}
+              onClick={() => setAddToInventory(v => !v)}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-slate-800">Add to Live Inventory</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {addToInventory
+                      ? 'Stock levels will be updated immediately for all items in this order.'
+                      : 'Receipt will be recorded in history without updating stock levels.'}
+                  </p>
+                </div>
+                <div className={`w-11 h-6 rounded-full flex items-center transition-colors shrink-0 ${addToInventory ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                  <div className={`w-5 h-5 bg-white rounded-full shadow-sm transition-transform mx-0.5 ${addToInventory ? 'translate-x-5' : 'translate-x-0'}`} />
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="flex items-center gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
@@ -1589,7 +1616,7 @@ export default function ShippingPage() {
     setReceivingOrder(order);
   };
 
-  const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null }) => {
+  const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null; addToInventory: boolean }) => {
     if (!receivingOrder) return;
     const order = receivingOrder;
     setReceiving(s => new Set(s).add(order.id));
@@ -1606,7 +1633,7 @@ export default function ShippingPage() {
         remarks: data.remarks.trim() || undefined,
         documentUrl,
         documentName,
-      });
+      }, data.addToInventory);
       setReceivingOrder(null);
       if (failedIds.length > 0) {
         alert(`⚠ ${failedIds.length} product(s) could not be received (not found in inventory): ${failedIds.join(', ')}`);

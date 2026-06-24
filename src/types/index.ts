@@ -78,6 +78,7 @@ export interface SalesOrder {
   lines: SalesOrderLine[];
   paymentStatus?: PaymentStatus;
   deliveryStatus?: DeliveryStatus;
+  reduceStock?: boolean; // whether this order deducts from live inventory (default true)
 }
 
 export type MachineType = 'machine' | 'tool';
@@ -169,4 +170,19 @@ export interface ShippingOrder {
   documentUrl?: string;
   documentName?: string;
   verification?: boolean;
+  addedToInventory?: boolean; // whether receipt was added to live inventory stock
+}
+
+export type SupplyType = 'raw_material' | 'accessory' | 'packaging';
+
+export interface Supplier {
+  id: string;
+  name: string;
+  address?: string;
+  phone?: string;
+  supplyType: SupplyType;
+  description?: string;
+  ice?: string;
+  rc?: string;
+  createdAt?: string;
 }

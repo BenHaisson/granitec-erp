@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Package, Factory,
   ShoppingCart, Warehouse, ArrowLeftRight,
-  BarChart3, Settings, LogOut, TrendingUp, BookOpen, Truck, AlertCircle,
+  BarChart3, Settings, LogOut, TrendingUp, BookOpen, Truck, AlertCircle, Building2,
 } from 'lucide-react';
 import { signOut } from '@/firebase/auth';
 
@@ -23,6 +23,7 @@ const NAV_SECTIONS = [
       { to: '/production', icon: Factory,        label: 'Production'  },
       { to: '/warehouse',  icon: Warehouse,      label: 'Warehouse'   },
       { to: '/sales',      icon: ShoppingCart,   label: 'Sales'       },
+      { to: '/suppliers',  icon: Building2,      label: 'Suppliers'   },
       { to: '/movements',  icon: ArrowLeftRight, label: 'Movements'   },
     ],
   },
