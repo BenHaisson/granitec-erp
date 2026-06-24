@@ -81,8 +81,8 @@ export function SupplierModal({ initial, onSave, onClose }: SupplierModalProps) 
         rc: form.rc?.trim() || undefined,
       });
       onClose();
-    } catch {
-      setError('Failed to save supplier.');
+    } catch (err) {
+      setError(`Failed to save supplier: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setSaving(false);
     }
@@ -321,6 +321,7 @@ export default function SuppliersPage() {
   const load = async () => {
     setLoading(true);
     try { setSuppliers(await getSuppliers()); }
+    catch (e) { console.error('Failed to load suppliers:', e); }
     finally { setLoading(false); }
   };
 

@@ -24,6 +24,7 @@ import {
 import {
   getShippingOrders, deleteShippingOrder, updateShippingOrderRef,
   findAndDeleteDuplicateReceipts, deleteReceivedShippingOrder,
+  deleteAllShippingOrders,
 } from '@/services/shipping.service';
 import { SEED_PRODUCTS } from '@/data/seedProducts';
 import { DISC_PRODUCTS } from '@/data/seedDiscs';
@@ -211,6 +212,8 @@ export default function SettingsPage() {
     setOpReset({ running: true, status: 'idle', msg: 'Deleting sales orders…' });
     try {
       await deleteAllOrders();
+      setOpReset(s => ({ ...s, msg: 'Deleting shipping orders…' }));
+      await deleteAllShippingOrders();
       setOpReset(s => ({ ...s, msg: 'Deleting inventory movements…' }));
       await deleteAllMovements();
       setOpReset(s => ({ ...s, msg: 'Deleting production orders…' }));
@@ -219,7 +222,7 @@ export default function SettingsPage() {
       await resetAllStockToZero();
       await loadStats();
       setResetText('');
-      setOpReset({ running: false, status: 'done', msg: 'Reset complete — transaction data cleared, product catalog preserved.' });
+      setOpReset({ running: false, status: 'done', msg: 'Reset complete — all transaction data cleared, product catalog preserved.' });
     } catch (e) {
       setOpReset({ running: false, status: 'error', msg: e instanceof Error ? e.message : 'Reset failed.' });
     }
@@ -520,7 +523,7 @@ export default function SettingsPage() {
             <div>
               <p className="text-sm font-semibold text-red-800">Reset All Transaction Data</p>
               <p className="text-xs text-red-500 mt-1 max-w-md">
-                Permanently deletes all sales orders, inventory movements, and production orders.
+                Permanently deletes all sales orders, shipping orders, inventory movements, and production orders.
                 Resets every product's stock to 0.{' '}
                 <strong>Product catalog, names, and SKUs are preserved.</strong> This cannot be undone.
               </p>

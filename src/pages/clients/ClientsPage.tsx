@@ -61,8 +61,8 @@ export function ClientModal({ initial, onSave, onClose }: ClientModalProps) {
         description: form.description?.trim() || undefined,
       });
       onClose();
-    } catch {
-      setError('Failed to save client.');
+    } catch (err) {
+      setError(`Failed to save client: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setSaving(false);
     }
@@ -247,6 +247,7 @@ export default function ClientsPage() {
   const load = async () => {
     setLoading(true);
     try { setClients(await getClients()); }
+    catch (e) { console.error('Failed to load clients:', e); }
     finally { setLoading(false); }
   };
 
