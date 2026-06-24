@@ -5,6 +5,10 @@ import {
 import { db } from '@/firebase/config';
 import type { Supplier } from '@/types';
 
+/** Strip undefined values — Firestore rejects them */
+const clean = (obj: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
+
 const toSupplier = (id: string, data: Record<string, unknown>): Supplier => ({
   id,
   name: (data.name as string) ?? '',
@@ -27,15 +31,15 @@ export const getSuppliers = async (): Promise<Supplier[]> => {
 };
 
 export const createSupplier = async (supplier: Omit<Supplier, 'id'>): Promise<string> => {
-  const ref = await addDoc(collection(db, 'suppliers'), {
+  const ref = await addDoc(collection(db, 'suppliers'), clean({
     ...supplier,
     createdAt: Timestamp.now().toDate().toISOString(),
-  });
+  }));
   return ref.id;
 };
 
 export const updateSupplier = async (id: string, patch: Partial<Omit<Supplier, 'id'>>): Promise<void> => {
-  await updateDoc(doc(db, 'suppliers', id), patch as Record<string, unknown>);
+  await updateDoc(doc(db, 'suppliers', id), clean(patch as Record<string, unknown>));
 };
 
 export const deleteSupplier = async (id: string): Promise<void> => {
