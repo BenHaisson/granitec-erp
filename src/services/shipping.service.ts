@@ -76,6 +76,24 @@ export const deleteShippingOrder = async (id: string): Promise<void> => {
   await deleteDoc(doc(db, 'shipping_orders', id));
 };
 
+export const deleteAllShippingOrders = async (): Promise<number> => {
+  const snap = await getDocs(collection(db, 'shipping_orders'));
+  const batches: Promise<void>[] = [];
+  let batch = writeBatch(db);
+  let count = 0;
+  snap.docs.forEach((d, i) => {
+    batch.delete(d.ref);
+    count++;
+    if ((i + 1) % 500 === 0) {
+      batches.push(batch.commit());
+      batch = writeBatch(db);
+    }
+  });
+  if (count % 500 !== 0) batches.push(batch.commit());
+  await Promise.all(batches);
+  return count;
+};
+
 export const updateShippingOrderRef = async (id: string, oldRef: string, newRef: string): Promise<void> => {
   const movSnap = await getDocs(
     query(collection(db, 'inventory_movements'), where('note', '==', oldRef), where('reason', '==', 'PURCHASE'))
