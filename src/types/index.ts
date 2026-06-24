@@ -175,14 +175,32 @@ export interface ShippingOrder {
 
 export type SupplyType = 'raw_material' | 'accessory' | 'packaging';
 
+export interface PhoneContact {
+  name: string;
+  phone: string;
+}
+
 export interface Supplier {
   id: string;
   name: string;
+  email?: string;
+  mainPhone?: string;
+  phones?: PhoneContact[];
   address?: string;
-  phone?: string;
   supplyType: SupplyType;
   description?: string;
   ice?: string;
   rc?: string;
+  createdAt?: string;
+}
+
+export interface Client {
+  id: string;
+  name: string;
+  email?: string;
+  mainPhone?: string;
+  phones?: PhoneContact[];
+  address?: string;
+  description?: string;
   createdAt?: string;
 }

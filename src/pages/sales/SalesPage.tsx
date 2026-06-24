@@ -4,9 +4,12 @@ import { useNavigate } from 'react-router-dom';
 import { getOrders, createOrder, updateOrder, deleteOrder, generateOrderRef } from '@/services/orders.service';
 import { getProducts } from '@/services/inventory.service';
 import { getRecipes } from '@/services/production.service';
+import { getClients, createClient } from '@/services/client.service';
 import { createTarget } from '@/services/productionTargets.service';
 import Modal from '@/components/ui/Modal';
-import type { SalesOrder, SalesOrderLine, Product, Recipe } from '@/types';
+import EntityPicker from '@/components/ui/EntityPicker';
+import { ClientModal } from '@/pages/clients/ClientsPage';
+import type { SalesOrder, SalesOrderLine, Product, Recipe, Client } from '@/types';
 import { todayISO } from '@/utils/dates';
 import { useDraft, getLastEntryDate, saveLastEntryDate } from '@/hooks/useDraft';
 import DraftBanner from '@/components/ui/DraftBanner';
@@ -519,6 +522,8 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
     }, 400);
     return () => clearTimeout(draftSyncTimer.current);
   }, [lines]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [showAddClientModal, setShowAddClientModal] = useState(false);
   const [reduceFromStock, setReduceFromStock] = useState(true);
   const [quickSearch, setQuickSearch] = useState('');
   const [hideZero, setHideZero]       = useState(false);
@@ -529,6 +534,8 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
   const clientRef = useRef<HTMLInputElement>(null);
   const boxesRefs = useRef<HTMLInputElement[]>([]);
   const pendingQuickAdd = useRef<{ idx: number; data: Partial<DraftLine> } | null>(null);
+
+  useEffect(() => { getClients().then(setClients).catch(() => {}); }, []);
 
   const dateYear = date ? new Date(date + 'T12:00:00').getFullYear() : new Date().getFullYear();
   useEffect(() => { generateOrderRef(dateYear).then(setOrderRef); }, [dateYear]);
@@ -694,12 +701,15 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
           </button>
           <h1 className="text-lg font-bold text-slate-800 shrink-0">New Sales Order</h1>
           <span className="text-sm font-mono text-slate-400 shrink-0 bg-white border border-slate-200 px-3 py-2 rounded-xl">{orderRef}</span>
-          <input
-            ref={clientRef}
-            type="text" value={client}
-            onChange={e => setClient(e.target.value)}
+          <EntityPicker
+            value={client}
+            onChange={setClient}
+            entities={clients.map(c => ({ id: c.id, name: c.name, subtitle: c.mainPhone }))}
+            onAddNew={() => setShowAddClientModal(true)}
             placeholder="Client name *"
-            className="flex-1 min-w-[140px] max-w-xs px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
+            addLabel="Add new client"
+            className="flex-1 min-w-[140px] max-w-xs"
+            inputClassName="w-full px-4 py-2.5 border-2 border-slate-300 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
           />
           <div className="flex items-center gap-1 shrink-0">
             <input type="date" value={date} onChange={e => setDate(e.target.value)}
@@ -880,6 +890,19 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Add Client Modal */}
+      {showAddClientModal && (
+        <ClientModal
+          onSave={async (data) => {
+            await createClient(data);
+            const updated = await getClients();
+            setClients(updated);
+            setClient(data.name);
+          }}
+          onClose={() => setShowAddClientModal(false)}
+        />
       )}
 
       {/* Shortfall dialog — shown when warehouse stock < ordered qty */}

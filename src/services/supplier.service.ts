@@ -9,8 +9,10 @@ const toSupplier = (id: string, data: Record<string, unknown>): Supplier => ({
   id,
   name: (data.name as string) ?? '',
   supplyType: (data.supplyType as Supplier['supplyType']) ?? 'raw_material',
+  email: data.email as string | undefined,
+  mainPhone: (data.mainPhone ?? data.phone) as string | undefined, // backward compat
+  phones: data.phones as Supplier['phones'] | undefined,
   address: data.address as string | undefined,
-  phone: data.phone as string | undefined,
   description: data.description as string | undefined,
   ice: data.ice as string | undefined,
   rc: data.rc as string | undefined,
