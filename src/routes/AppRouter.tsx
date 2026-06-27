@@ -12,6 +12,8 @@ import SettingsPage from '@/pages/settings/SettingsPage';
 import AnalyticsPage from '@/pages/analytics/AnalyticsPage';
 import LibraryPage from '@/pages/library/LibraryPage';
 import ShippingPage from '@/pages/shipping/ShippingPage';
+import NotebookPage from '@/pages/notebook/NotebookPage';
+import DocumentsPage from '@/pages/documents/DocumentsPage';
 import UnverifiedStockPage from '@/pages/inventory/UnverifiedStockPage';
 import SuppliersPage from '@/pages/suppliers/SuppliersPage';
 import ClientsPage from '@/pages/clients/ClientsPage';
@@ -36,6 +38,8 @@ export default function AppRouter() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/library" element={<LibraryPage />} />
+        <Route path="/notebook" element={<NotebookPage />} />
+        <Route path="/documents" element={<DocumentsPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </MainLayout>
