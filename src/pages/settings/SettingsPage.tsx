@@ -251,7 +251,8 @@ export default function SettingsPage() {
     run(setOpClearMovs, async () => {
       if (!confirm(`Delete all ${label} movements? This cannot be undone.`)) throw new Error('Cancelled.');
       const count = await deleteMovementsByReasons(reasons);
-      return `${count} ${label} movement(s) deleted.`;
+      await recalculateStockFromMovements();
+      return `${count} ${label} movement(s) deleted · stock recalculated.`;
     });
 
   const handleResetInventoryLevel = () => run(setOpReconc, async () => {
