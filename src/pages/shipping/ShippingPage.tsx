@@ -3,7 +3,7 @@ import {
   Truck, Plus, ChevronDown, CheckCircle2, Clock, Trash2,
   Search, X, FileText, PackagePlus, AlertCircle, Sparkles,
   ArrowLeft, ToggleLeft, ToggleRight, Pencil, Upload, ExternalLink,
-  Download, FileDown, CalendarCheck,
+  Download, FileDown, CalendarCheck, History, PackageCheck, Ban,
 } from 'lucide-react';
 import { useDraft, getLastEntryDate, saveLastEntryDate } from '@/hooks/useDraft';
 import DraftBanner from '@/components/ui/DraftBanner';
@@ -11,11 +11,12 @@ import { getProducts } from '@/services/inventory.service';
 import {
   getShippingOrders, createShippingOrder, receiveShippingOrder,
   deleteShippingOrder, updateShippingOrder, deleteReceivedShippingOrder, updateReceivedShippingOrder,
-  uploadReceiptDocument,
+  uploadReceiptDocument, addShipmentReceipt, updateShipmentReceipt, deleteShipmentReceipt,
+  cancelRemainingAndClose, computeOrderReceiptPercent,
 } from '@/services/shipping.service';
 import { getSuppliers, createSupplier } from '@/services/supplier.service';
 import { getRecipes } from '@/services/production.service';
-import type { Product, ShippingOrder, ShippingOrderLine, Recipe, Supplier } from '@/types';
+import type { Product, ShippingOrder, ShippingOrderLine, ShipmentReceipt, ShipmentReceiptLine, Recipe, Supplier } from '@/types';
 import { todayISO } from '@/utils/dates';
 import EntityPicker from '@/components/ui/EntityPicker';
 import { SupplierModal } from '@/pages/suppliers/SuppliersPage';
@@ -727,6 +728,419 @@ function CreateOrderOverlay({
   );
 }
 
+// ── Partial Receive Modal ─────────────────────────────────────────
+interface PartialReceiveModalProps {
+  order: ShippingOrder;
+  editingReceipt?: ShipmentReceipt | null;
+  onConfirm: (data: {
+    date: string;
+    blNumber?: string;
+    remarks?: string;
+    file: File | null;
+    lines: ShipmentReceiptLine[];
+    addedToInventory: boolean;
+  }) => Promise<void>;
+  onClose: () => void;
+}
+function PartialReceiveModal({ order, editingReceipt, onConfirm, onClose }: PartialReceiveModalProps) {
+  const [date, setDate] = useState(editingReceipt?.date ?? new Date().toISOString().split('T')[0]);
+  const [blNumber, setBlNumber] = useState(editingReceipt?.blNumber ?? '');
+  const [remarks, setRemarks] = useState(editingReceipt?.remarks ?? '');
+  const [file, setFile] = useState<File | null>(null);
+  const [addToInventory, setAddToInventory] = useState(editingReceipt?.addedToInventory ?? true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Compute already-received per product (excluding this receipt if editing)
+  const alreadyReceived = new Map<string, number>();
+  for (const r of (order.receipts ?? [])) {
+    if (editingReceipt && r.id === editingReceipt.id) continue;
+    for (const l of r.lines) {
+      alreadyReceived.set(l.productId, (alreadyReceived.get(l.productId) ?? 0) + l.receivedQty);
+    }
+  }
+
+  const [lineQtys, setLineQtys] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const l of order.lines) {
+      if (editingReceipt) {
+        const prev = editingReceipt.lines.find(el => el.productId === l.productId);
+        init[l.productId] = prev ? String(prev.receivedQty) : '0';
+      } else {
+        const already = alreadyReceived.get(l.productId) ?? 0;
+        init[l.productId] = String(Math.max(0, l.qty - already));
+      }
+    }
+    return init;
+  });
+
+  const handleConfirm = async () => {
+    const receiptLines: ShipmentReceiptLine[] = order.lines
+      .map(l => ({
+        productId: l.productId,
+        productName: l.productName,
+        sku: l.sku,
+        receivedQty: Math.max(0, Number(lineQtys[l.productId] ?? 0)),
+      }))
+      .filter(l => l.receivedQty > 0);
+
+    if (receiptLines.length === 0) {
+      setError('Enter a received quantity for at least one item.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await onConfirm({ date, blNumber: blNumber.trim() || undefined, remarks: remarks.trim() || undefined, file, lines: receiptLines, addedToInventory: addToInventory });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save receipt.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+          <div>
+            <h2 className="font-bold text-slate-800">{editingReceipt ? 'Edit Shipment Receipt' : 'Record Partial Shipment'}</h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              <span className="font-mono font-semibold text-slate-600">{order.ref}</span>
+              {order.supplier && <span> · {order.supplier}</span>}
+            </p>
+          </div>
+          <button onClick={onClose} disabled={saving} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors disabled:opacity-50">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          {/* Date & BL row */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Receipt Date</label>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">BL Number</label>
+              <input type="text" value={blNumber} onChange={e => setBlNumber(e.target.value)}
+                placeholder="e.g. BL-2024-001"
+                className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400" />
+            </div>
+          </div>
+
+          {/* Per-line quantities */}
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Items Received in This Shipment</label>
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-100">
+                    <th className="text-left px-4 py-2.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Product</th>
+                    <th className="text-right px-4 py-2.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Ordered</th>
+                    <th className="text-right px-4 py-2.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Prev. Rcvd</th>
+                    <th className="text-right px-4 py-2.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Remaining</th>
+                    <th className="text-right px-4 py-2.5 text-xs font-bold text-slate-400 uppercase tracking-widest w-32">This Receipt</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {order.lines.map(l => {
+                    const prevRcvd = alreadyReceived.get(l.productId) ?? 0;
+                    const remaining = Math.max(0, l.qty - prevRcvd);
+                    const thisQty = Number(lineQtys[l.productId] ?? 0);
+                    const over = thisQty > remaining;
+                    return (
+                      <tr key={l.productId} className="hover:bg-slate-50/50">
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-slate-800 text-sm">{l.productName}</p>
+                          <p className="font-mono text-[10px] text-slate-400">{l.sku}</p>
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-500">{l.qty.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-500">{prevRcvd > 0 ? prevRcvd.toLocaleString() : '—'}</td>
+                        <td className={`px-4 py-3 text-right tabular-nums font-semibold ${remaining === 0 ? 'text-emerald-600' : 'text-slate-700'}`}>
+                          {remaining === 0 ? '✓ Done' : remaining.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <input
+                            type="number" min="0" max={remaining + (editingReceipt ? (editingReceipt.lines.find(el => el.productId === l.productId)?.receivedQty ?? 0) : 0)}
+                            value={lineQtys[l.productId] ?? '0'}
+                            onChange={e => setLineQtys(q => ({ ...q, [l.productId]: e.target.value }))}
+                            disabled={remaining === 0 && !editingReceipt}
+                            className={`w-28 px-2 py-1.5 border-2 rounded-lg text-sm text-right font-semibold tabular-nums focus:outline-none focus:ring-2 transition-colors
+                              ${over ? 'border-red-400 bg-red-50 focus:ring-red-400' : 'border-slate-200 focus:ring-emerald-400 focus:border-emerald-400'}
+                              ${remaining === 0 && !editingReceipt ? 'opacity-40 cursor-not-allowed bg-slate-50' : 'bg-white'}`}
+                          />
+                          {over && <p className="text-[10px] text-red-500 mt-0.5 text-right">Exceeds remaining</p>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Remarks */}
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Remarks</label>
+            <textarea value={remarks} onChange={e => setRemarks(e.target.value)} rows={2}
+              placeholder="Notes about this shipment…"
+              className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400" />
+          </div>
+
+          {/* Document */}
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">
+              BL Document {editingReceipt?.documentUrl && <span className="text-emerald-600 font-normal normal-case">(existing attached)</span>}
+            </label>
+            <div onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); setFile(e.dataTransfer.files[0] ?? null); }}
+              onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed border-slate-200 rounded-xl px-4 py-4 text-center hover:border-emerald-300 hover:bg-emerald-50/40 transition-colors cursor-pointer">
+              {file ? (
+                <div className="flex items-center justify-center gap-2 text-sm text-emerald-700">
+                  <FileText size={16} /><span className="font-medium truncate max-w-[260px]">{file.name}</span>
+                  <button type="button" onClick={e => { e.stopPropagation(); setFile(null); }} className="p-0.5 rounded text-slate-400 hover:text-red-500"><X size={13} /></button>
+                </div>
+              ) : editingReceipt?.documentUrl ? (
+                <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
+                  <FileText size={14} className="text-emerald-600" />
+                  <a href={editingReceipt.documentUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-emerald-700 font-medium hover:underline">
+                    {editingReceipt.documentName ?? 'View Document'}
+                  </a>
+                  <span className="text-slate-400 text-xs">· click here to replace</span>
+                </div>
+              ) : (
+                <div className="text-slate-400">
+                  <Upload size={20} className="mx-auto mb-1 text-slate-300" />
+                  <p className="text-sm">Drop file or <span className="text-indigo-600 font-semibold">click to browse</span></p>
+                  <p className="text-xs mt-0.5 text-slate-300">PDF, image, or any document</p>
+                </div>
+              )}
+            </div>
+            <input ref={fileInputRef} type="file" className="hidden" onChange={e => setFile(e.target.files?.[0] ?? null)} />
+          </div>
+
+          {/* Add to inventory toggle */}
+          {!order.verification && (
+            <div className={`rounded-xl border-2 p-4 transition-all cursor-pointer select-none ${addToInventory ? 'border-emerald-400 bg-emerald-50/60' : 'border-slate-200 bg-slate-50/60'}`}
+              onClick={() => setAddToInventory(v => !v)}>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-slate-800">Add to Live Inventory</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {addToInventory ? 'Stock levels updated immediately for received items.' : 'Receipt recorded without updating stock levels.'}
+                  </p>
+                </div>
+                <div className={`w-11 h-6 rounded-full flex items-center transition-colors shrink-0 ${addToInventory ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                  <div className={`w-5 h-5 bg-white rounded-full shadow-sm transition-transform mx-0.5 ${addToInventory ? 'translate-x-5' : 'translate-x-0'}`} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="flex items-center gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+              <AlertCircle size={14} className="shrink-0" /> {error}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-100 bg-slate-50 shrink-0">
+          <button onClick={onClose} disabled={saving} className="px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
+            Cancel
+          </button>
+          <button onClick={handleConfirm} disabled={saving}
+            className="flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50 shadow-sm shadow-emerald-200">
+            {saving
+              ? <><span className="animate-spin inline-block">↻</span> Saving…</>
+              : <><PackageCheck size={14} /> {editingReceipt ? 'Update Receipt' : 'Save Shipment'}</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Shipment History Modal ────────────────────────────────────────
+interface ShipmentHistoryModalProps {
+  order: ShippingOrder;
+  onAddReceipt: () => void;
+  onEditReceipt: (receipt: ShipmentReceipt) => void;
+  onDeleteReceipt: (receipt: ShipmentReceipt) => void;
+  onCancelRemaining: () => void;
+  onClose: () => void;
+}
+function ShipmentHistoryModal({ order, onAddReceipt, onEditReceipt, onDeleteReceipt, onCancelRemaining, onClose }: ShipmentHistoryModalProps) {
+  const receipts = order.receipts ?? [];
+  const percent = computeOrderReceiptPercent(order);
+
+  // Per-product stats
+  const receivedMap = new Map<string, number>();
+  for (const r of receipts) {
+    for (const l of r.lines) {
+      receivedMap.set(l.productId, (receivedMap.get(l.productId) ?? 0) + l.receivedQty);
+    }
+  }
+
+  const totalOrdered = order.lines.reduce((s, l) => s + l.qty, 0);
+  const totalReceived = order.lines.reduce((s, l) => s + Math.min(l.qty, receivedMap.get(l.productId) ?? 0), 0);
+  const totalRemaining = totalOrdered - totalReceived;
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+          <div>
+            <div className="flex items-center gap-2">
+              <History size={16} className="text-indigo-500" />
+              <h2 className="font-bold text-slate-800">Shipment History</h2>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              <span className="font-mono font-semibold text-slate-600">{order.ref}</span>
+              {order.supplier && <span> · {order.supplier}</span>}
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"><X size={18} /></button>
+        </div>
+
+        {/* Progress summary */}
+        <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 shrink-0">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-4 text-sm">
+              <span className="text-slate-500">Ordered: <strong className="text-slate-800">{totalOrdered.toLocaleString()}</strong></span>
+              <span className="text-emerald-600">Received: <strong>{totalReceived.toLocaleString()}</strong></span>
+              {totalRemaining > 0 && !order.cancelledRemaining && (
+                <span className="text-amber-600">Remaining: <strong>{totalRemaining.toLocaleString()}</strong></span>
+              )}
+              {order.cancelledRemaining && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-500">
+                  <Ban size={10} /> Remainder cancelled
+                </span>
+              )}
+            </div>
+            <span className={`text-sm font-bold ${percent >= 100 ? 'text-emerald-600' : 'text-amber-600'}`}>{percent}%</span>
+          </div>
+          <div className="w-full bg-slate-200 rounded-full h-2.5">
+            <div className={`h-2.5 rounded-full transition-all ${percent >= 100 ? 'bg-emerald-500' : 'bg-amber-400'}`} style={{ width: `${percent}%` }} />
+          </div>
+        </div>
+
+        {/* Per-product breakdown */}
+        <div className="px-6 py-3 border-b border-slate-100 shrink-0">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Order Lines</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+            {order.lines.map(l => {
+              const rcvd = Math.min(l.qty, receivedMap.get(l.productId) ?? 0);
+              const pct = l.qty > 0 ? Math.round((rcvd / l.qty) * 100) : 100;
+              return (
+                <div key={l.productId} className="flex items-center gap-3 bg-white rounded-lg px-3 py-2 border border-slate-100">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-slate-700 truncate">{l.productName}</p>
+                    <p className="font-mono text-[10px] text-slate-400">{l.sku}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className={`text-xs font-bold tabular-nums ${pct >= 100 ? 'text-emerald-600' : 'text-slate-700'}`}>
+                      {rcvd.toLocaleString()} / {l.qty.toLocaleString()}
+                    </p>
+                    <p className={`text-[10px] ${pct >= 100 ? 'text-emerald-500' : 'text-amber-500'}`}>{pct}%</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Receipt list */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+            Shipments ({receipts.length})
+          </p>
+          {receipts.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-4">No shipments recorded yet.</p>
+          ) : receipts.map((r, idx) => {
+            const rTotal = r.lines.reduce((s, l) => s + l.receivedQty, 0);
+            const rDate = new Date(r.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+            return (
+              <div key={r.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center shrink-0">{idx + 1}</span>
+                    <div>
+                      <p className="text-sm font-bold text-slate-800">{rDate}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {r.blNumber && <span className="font-mono text-xs text-indigo-600 font-semibold">BL: {r.blNumber}</span>}
+                        <span className="text-xs text-slate-400">{rTotal.toLocaleString()} pcs · {r.lines.length} item{r.lines.length !== 1 ? 's' : ''}</span>
+                        {r.addedToInventory && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded font-bold">+Stock</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {r.documentUrl && (
+                      <a href={r.documentUrl} target="_blank" rel="noopener noreferrer"
+                        className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors" title="View document">
+                        <FileText size={14} />
+                      </a>
+                    )}
+                    <button onClick={() => onEditReceipt(r)} className="p-1.5 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors" title="Edit receipt">
+                      <Pencil size={14} />
+                    </button>
+                    <button onClick={() => onDeleteReceipt(r)} className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 transition-colors" title="Delete receipt">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+                {/* Receipt lines */}
+                <div className="px-4 py-2 grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                  {r.lines.map(l => (
+                    <div key={l.productId} className="flex items-center justify-between text-xs bg-slate-50 rounded-lg px-2.5 py-1.5">
+                      <span className="truncate text-slate-600 mr-2">{l.productName}</span>
+                      <span className="font-bold text-slate-700 tabular-nums shrink-0">{l.receivedQty.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+                {r.remarks && (
+                  <div className="px-4 pb-2">
+                    <p className="text-xs text-slate-500 italic">{r.remarks}</p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-slate-100 bg-slate-50 shrink-0">
+          <div>
+            {order.status !== 'RECEIVED' && !order.cancelledRemaining && totalRemaining > 0 && (
+              <button onClick={onCancelRemaining}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-red-200 text-red-600 text-sm font-semibold hover:bg-red-50 transition-colors">
+                <Ban size={14} /> Cancel Remaining & Close
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-100 transition-colors">
+              Close
+            </button>
+            {order.status !== 'RECEIVED' && (
+              <button onClick={onAddReceipt}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-200">
+                <Plus size={14} /> Add Shipment
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Receive Modal ─────────────────────────────────────────────────
 interface ReceiveModalProps {
   order: ShippingOrder;
@@ -910,20 +1324,48 @@ function ReceiveModal({ order, onConfirm, onClose }: ReceiveModalProps) {
 
 // ── Expanded order detail row ─────────────────────────────────────
 function OrderDetail({ order }: { order: ShippingOrder }) {
+  const receipts = order.receipts ?? [];
+  const receivedMap = new Map<string, number>();
+  for (const r of receipts) {
+    for (const l of r.lines) {
+      receivedMap.set(l.productId, (receivedMap.get(l.productId) ?? 0) + l.receivedQty);
+    }
+  }
+  const hasPartialData = order.status === 'PARTIAL' || (receipts.length > 0);
+
   return (
     <div className="px-4 py-3 bg-slate-50 border-b border-slate-100">
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1.5">
-        {order.lines.map(l => (
-          <div key={l.sku} className="flex items-center justify-between text-xs bg-white rounded-lg px-3 py-2 border border-slate-100">
-            <div className="min-w-0">
-              <p className="text-slate-600 font-medium truncate">{l.productName}</p>
-              <p className="font-mono text-slate-400 text-[10px]">{l.sku}</p>
+        {order.lines.map(l => {
+          const rcvd = receivedMap.get(l.productId) ?? 0;
+          const pct = l.qty > 0 ? Math.min(100, Math.round((rcvd / l.qty) * 100)) : 100;
+          return (
+            <div key={l.sku} className="flex items-center justify-between text-xs bg-white rounded-lg px-3 py-2 border border-slate-100">
+              <div className="min-w-0 flex-1">
+                <p className="text-slate-600 font-medium truncate">{l.productName}</p>
+                <p className="font-mono text-slate-400 text-[10px]">{l.sku}</p>
+                {hasPartialData && (
+                  <div className="mt-1 w-full bg-slate-100 rounded-full h-1">
+                    <div className={`h-1 rounded-full ${pct >= 100 ? 'bg-emerald-500' : 'bg-amber-400'}`} style={{ width: `${pct}%` }} />
+                  </div>
+                )}
+              </div>
+              <div className="ml-2 shrink-0 text-right">
+                {hasPartialData ? (
+                  <>
+                    <span className={`font-bold tabular-nums ${pct >= 100 ? 'text-emerald-600' : 'text-slate-700'}`}>{rcvd.toLocaleString()}</span>
+                    <span className="text-slate-300"> / {l.qty.toLocaleString()}</span>
+                  </>
+                ) : (
+                  <span className="font-bold text-slate-700 tabular-nums">{l.qty.toLocaleString()}</span>
+                )}
+              </div>
             </div>
-            <span className="font-bold text-slate-700 tabular-nums ml-2 shrink-0">{l.qty.toLocaleString()}</span>
-          </div>
-        ))}
+          );
+        })}
       </div>
-      {order.status === 'RECEIVED' && (order.blNumber || order.remarks || order.documentUrl) && (
+      {/* Legacy receipt info (old orders without receipts array) */}
+      {order.status === 'RECEIVED' && receipts.length === 0 && (order.blNumber || order.remarks || order.documentUrl) && (
         <div className="mt-3 flex flex-wrap items-start gap-2">
           {order.blNumber && (
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 text-xs rounded-lg border border-indigo-100">
@@ -959,10 +1401,11 @@ interface OrderTableProps {
   deleting: Set<string>;
   onToggleExpand: (id: string) => void;
   onReceive: (order: ShippingOrder) => void;
+  onViewHistory: (order: ShippingOrder) => void;
   onEdit: (order: ShippingOrder) => void;
   onDelete: (order: ShippingOrder) => void;
 }
-function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onReceive, onEdit, onDelete }: OrderTableProps) {
+function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onReceive, onViewHistory, onEdit, onDelete }: OrderTableProps) {
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
@@ -985,6 +1428,9 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
             const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
             const isReceiving = receiving.has(order.id);
             const isDeleting = deleting.has(order.id);
+            const percent = order.receipts && order.receipts.length > 0 ? computeOrderReceiptPercent(order) : (order.status === 'RECEIVED' ? 100 : 0);
+            const isPartial = order.status === 'PARTIAL';
+            const hasReceipts = (order.receipts?.length ?? 0) > 0;
             return (
               <>
                 <tr key={order.id}
@@ -1000,9 +1446,19 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
                         Verification
                       </span>
                     )}
-                    {order.status === 'RECEIVED' && (order.blNumber || order.documentUrl) && (
+                    {isPartial && (
+                      <span className="ml-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700">
+                        {percent}%
+                      </span>
+                    )}
+                    {order.status === 'RECEIVED' && (order.blNumber || order.documentUrl || hasReceipts) && (
                       <span className="ml-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">
-                        <CheckCircle2 size={8} /> BL
+                        <CheckCircle2 size={8} /> {hasReceipts ? '100%' : 'BL'}
+                      </span>
+                    )}
+                    {order.cancelledRemaining && (
+                      <span className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">
+                        <Ban size={8} /> Closed
                       </span>
                     )}
                   </td>
@@ -1014,35 +1470,70 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
                   <td className="px-4 py-3 text-slate-500">{order.supplier || <span className="text-slate-300">—</span>}</td>
                   <td className="px-4 py-3 text-slate-500">{fmtDate(order.date)}</td>
                   <td className="px-4 py-3 text-center font-semibold text-slate-600">{order.lines.length}</td>
-                  <td className="px-4 py-3 text-center font-bold text-slate-700 tabular-nums">{totalQty.toLocaleString('fr-FR')}</td>
+                  <td className="px-4 py-3 text-center">
+                    <span className="font-bold text-slate-700 tabular-nums">{totalQty.toLocaleString('fr-FR')}</span>
+                    {isPartial && (
+                      <div className="mt-1 mx-auto w-16 bg-slate-200 rounded-full h-1.5">
+                        <div className="h-1.5 rounded-full bg-amber-400 transition-all" style={{ width: `${percent}%` }} />
+                      </div>
+                    )}
+                  </td>
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-2">
                       {order.status === 'PLANNED' && (
                         <button
                           onClick={() => onReceive(order)}
                           disabled={isReceiving}
-                          title="Marquer comme reçu"
+                          title="Record shipment receipt"
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50">
                           {isReceiving
                             ? <span className="flex items-center gap-1"><span className="animate-spin">↻</span> En cours…</span>
-                            : <><CheckCircle2 size={12} /> Recevoir</>}
+                            : <><PackageCheck size={12} /> Receive</>}
                         </button>
+                      )}
+                      {isPartial && (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => onReceive(order)}
+                            disabled={isReceiving}
+                            title="Add another shipment"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50">
+                            <Plus size={11} /> Shipment
+                          </button>
+                          <button
+                            onClick={() => onViewHistory(order)}
+                            title="View shipment history"
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
+                            <History size={11} /> History
+                          </button>
+                        </div>
                       )}
                       {order.status === 'RECEIVED' && (
                         <div className="flex items-center rounded-lg overflow-hidden border border-indigo-200">
-                          <button
-                            onClick={() => openBonDeReception(order, 'web')}
-                            title="Bon de réception (web)"
-                            className="flex items-center gap-1 px-2 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
-                            <FileText size={12} /> Bon de réception
-                          </button>
-                          <span className="w-px self-stretch bg-indigo-200 shrink-0" />
-                          <button
-                            onClick={() => openBonDeReception(order, 'pdf')}
-                            title="Imprimer PDF"
-                            className="px-2 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
-                            PDF
-                          </button>
+                          {hasReceipts ? (
+                            <button
+                              onClick={() => onViewHistory(order)}
+                              title="View shipment history"
+                              className="flex items-center gap-1 px-2 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
+                              <History size={12} /> View Shipments
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => openBonDeReception(order, 'web')}
+                                title="Bon de réception (web)"
+                                className="flex items-center gap-1 px-2 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
+                                <FileText size={12} /> Bon de réception
+                              </button>
+                              <span className="w-px self-stretch bg-indigo-200 shrink-0" />
+                              <button
+                                onClick={() => openBonDeReception(order, 'pdf')}
+                                title="Imprimer PDF"
+                                className="px-2 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
+                                PDF
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                       <button
@@ -1434,6 +1925,8 @@ export default function ShippingPage() {
   const [deleting, setDeleting]       = useState<Set<string>>(new Set());
   const [editingOrder, setEditingOrder] = useState<ShippingOrder | null>(null);
   const [receivingOrder, setReceivingOrder] = useState<ShippingOrder | null>(null);
+  const [historyOrder, setHistoryOrder] = useState<ShippingOrder | null>(null);
+  const [editingReceiptData, setEditingReceiptData] = useState<{ order: ShippingOrder; receipt: ShipmentReceipt } | null>(null);
 
   // Filters
   const [filterCat, setFilterCat]           = useState('');
@@ -1635,6 +2128,43 @@ export default function ShippingPage() {
     setReceivingOrder(order);
   };
 
+  const handlePartialReceiveConfirm = async (data: {
+    date: string;
+    blNumber?: string;
+    remarks?: string;
+    file: File | null;
+    lines: ShipmentReceiptLine[];
+    addedToInventory: boolean;
+  }) => {
+    const order = receivingOrder ?? editingReceiptData?.order;
+    const editingReceipt = editingReceiptData?.receipt ?? null;
+    if (!order) return;
+    setReceiving(s => new Set(s).add(order.id));
+    try {
+      let documentUrl = editingReceipt?.documentUrl;
+      let documentName = editingReceipt?.documentName;
+      if (data.file) {
+        const uploaded = await uploadReceiptDocument(order.id, data.file);
+        documentUrl = uploaded.url;
+        documentName = uploaded.name;
+      }
+      const receiptData = { date: data.date, blNumber: data.blNumber, remarks: data.remarks, documentUrl, documentName, lines: data.lines, addedToInventory: data.addedToInventory };
+      if (editingReceipt) {
+        await updateShipmentReceipt(order, editingReceipt.id, receiptData);
+      } else {
+        await addShipmentReceipt(order, receiptData);
+      }
+      setReceivingOrder(null);
+      setEditingReceiptData(null);
+      setHistoryOrder(null);
+      await load();
+    } catch (e) {
+      throw e;
+    } finally {
+      setReceiving(s => { const n = new Set(s); n.delete(order.id); return n; });
+    }
+  };
+
   const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null; addToInventory: boolean }) => {
     if (!receivingOrder) return;
     const order = receivingOrder;
@@ -1665,14 +2195,52 @@ export default function ShippingPage() {
     }
   };
 
+  const handleViewHistory = (order: ShippingOrder) => {
+    setHistoryOrder(order);
+  };
+
+  const handleHistoryEditReceipt = (receipt: ShipmentReceipt) => {
+    if (!historyOrder) return;
+    setEditingReceiptData({ order: historyOrder, receipt });
+    setHistoryOrder(null);
+  };
+
+  const handleHistoryDeleteReceipt = async (receipt: ShipmentReceipt) => {
+    if (!historyOrder) return;
+    if (!confirm(`Delete this shipment receipt (${receipt.lines.reduce((s, l) => s + l.receivedQty, 0).toLocaleString()} pcs)? Stock will be reversed.`)) return;
+    const order = historyOrder;
+    try {
+      await deleteShipmentReceipt(order, receipt.id);
+      await load();
+      // Refresh historyOrder from reloaded data
+      setHistoryOrder(null);
+    } catch (e) {
+      alert(`Failed to delete receipt: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleCancelRemaining = async () => {
+    if (!historyOrder) return;
+    const percent = computeOrderReceiptPercent(historyOrder);
+    if (!confirm(`Cancel remaining ${(historyOrder.lines.reduce((s,l)=>s+l.qty,0) - historyOrder.lines.reduce((s,l)=>s+Math.min(l.qty, (historyOrder.receipts??[]).reduce((t,r)=>t+(r.lines.find(rl=>rl.productId===l.productId)?.receivedQty??0),0)),0)).toLocaleString()} pcs and close this order at ${percent}%?`)) return;
+    try {
+      await cancelRemainingAndClose(historyOrder);
+      setHistoryOrder(null);
+      await load();
+    } catch (e) {
+      alert(`Failed to close order: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
+  };
+
   const handleDelete = async (order: ShippingOrder) => {
-    const warning = order.status === 'RECEIVED'
-      ? `Delete received order ${order.ref}? This will reverse stock for ${order.lines.length} item(s).`
+    const hasMovements = order.status === 'RECEIVED' || order.status === 'PARTIAL';
+    const warning = hasMovements
+      ? `Delete ${order.status === 'PARTIAL' ? 'partial' : 'received'} order ${order.ref}? This will reverse stock for all recorded receipts.`
       : `Delete order ${order.ref}?`;
     if (!confirm(warning)) return;
     setDeleting(s => new Set(s).add(order.id));
     try {
-      if (order.status === 'RECEIVED') {
+      if (hasMovements) {
         await deleteReceivedShippingOrder(order);
       } else {
         await deleteShippingOrder(order.id);
@@ -1725,7 +2293,7 @@ export default function ShippingPage() {
     return true;
   });
 
-  const planned  = displayOrders.filter(o => o.status === 'PLANNED');
+  const planned  = displayOrders.filter(o => o.status === 'PLANNED' || o.status === 'PARTIAL');
   const received = displayOrders.filter(o => o.status === 'RECEIVED');
 
   return (
@@ -1735,7 +2303,7 @@ export default function ShippingPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Shipping</h1>
           <p className="text-sm text-slate-400 mt-0.5">
-            {loading ? 'Loading…' : `${planned.length} planned · ${received.length} received`}
+            {loading ? 'Loading…' : `${planned.filter(o=>o.status==='PLANNED').length} planned · ${planned.filter(o=>o.status==='PARTIAL').length} in progress · ${received.length} received`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1877,6 +2445,7 @@ export default function ShippingPage() {
                 deleting={deleting}
                 onToggleExpand={toggleExpand}
                 onReceive={handleReceive}
+                onViewHistory={handleViewHistory}
                 onEdit={openEdit}
                 onDelete={handleDelete}
               />
@@ -1896,6 +2465,7 @@ export default function ShippingPage() {
                 deleting={deleting}
                 onToggleExpand={toggleExpand}
                 onReceive={handleReceive}
+                onViewHistory={handleViewHistory}
                 onEdit={openEdit}
                 onDelete={handleDelete}
               />
@@ -1910,12 +2480,34 @@ export default function ShippingPage() {
         </>
       )}
 
-      {/* Receive Modal */}
+      {/* Partial Receive Modal (new flow) */}
       {receivingOrder && (
-        <ReceiveModal
+        <PartialReceiveModal
           order={receivingOrder}
-          onConfirm={handleReceiveConfirm}
+          onConfirm={handlePartialReceiveConfirm}
           onClose={() => setReceivingOrder(null)}
+        />
+      )}
+
+      {/* Edit Receipt Modal */}
+      {editingReceiptData && (
+        <PartialReceiveModal
+          order={editingReceiptData.order}
+          editingReceipt={editingReceiptData.receipt}
+          onConfirm={handlePartialReceiveConfirm}
+          onClose={() => setEditingReceiptData(null)}
+        />
+      )}
+
+      {/* Shipment History Modal */}
+      {historyOrder && (
+        <ShipmentHistoryModal
+          order={historyOrder}
+          onAddReceipt={() => { setReceivingOrder(historyOrder); setHistoryOrder(null); }}
+          onEditReceipt={handleHistoryEditReceipt}
+          onDeleteReceipt={handleHistoryDeleteReceipt}
+          onCancelRemaining={handleCancelRemaining}
+          onClose={() => setHistoryOrder(null)}
         />
       )}
 
