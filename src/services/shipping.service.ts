@@ -268,13 +268,19 @@ export const addShipmentReceipt = async (
     );
   }
 
-  const receipt: ShipmentReceipt = {
+  const receipt: Record<string, unknown> = {
     id: receiptId,
-    ...receiptData,
+    date: receiptData.date,
+    lines: receiptData.lines,
+    addedToInventory: receiptData.addedToInventory,
     createdAt: Timestamp.now(),
   };
+  if (receiptData.blNumber)    receipt.blNumber    = receiptData.blNumber;
+  if (receiptData.remarks)     receipt.remarks     = receiptData.remarks;
+  if (receiptData.documentUrl) receipt.documentUrl = receiptData.documentUrl;
+  if (receiptData.documentName) receipt.documentName = receiptData.documentName;
 
-  const updatedReceipts = [...(order.receipts ?? []), receipt];
+  const updatedReceipts = [...(order.receipts ?? []), receipt as unknown as ShipmentReceipt];
   const percent = computeOrderReceiptPercent({ ...order, receipts: updatedReceipts });
   const newStatus: ShippingOrderStatus = percent >= 100 ? 'RECEIVED' : 'PARTIAL';
 
@@ -310,9 +316,22 @@ export const updateShipmentReceipt = async (
     );
   }
 
-  const updatedReceipts = (order.receipts ?? []).map(r =>
-    r.id === receiptId ? { ...r, ...receiptData } : r
-  );
+  const updatedReceipts = (order.receipts ?? []).map(r => {
+    if (r.id !== receiptId) return r;
+    const updated: Record<string, unknown> = {
+      ...r,
+      date: receiptData.date,
+      lines: receiptData.lines,
+      addedToInventory: receiptData.addedToInventory,
+    };
+    if (receiptData.blNumber)    updated.blNumber    = receiptData.blNumber;
+    else                         delete updated.blNumber;
+    if (receiptData.remarks)     updated.remarks     = receiptData.remarks;
+    else                         delete updated.remarks;
+    if (receiptData.documentUrl) updated.documentUrl = receiptData.documentUrl;
+    if (receiptData.documentName) updated.documentName = receiptData.documentName;
+    return updated as unknown as ShipmentReceipt;
+  });
   const percent = computeOrderReceiptPercent({ ...order, receipts: updatedReceipts });
   const newStatus: ShippingOrderStatus = percent >= 100 ? 'RECEIVED' : 'PARTIAL';
 

@@ -1998,6 +1998,7 @@ export default function ShippingPage() {
     setRecipes(recs);
     setLoading(false);
     loadSuppliers();
+    return ords;
   };
 
   useEffect(() => { load(); }, []);
@@ -2156,8 +2157,10 @@ export default function ShippingPage() {
       }
       setReceivingOrder(null);
       setEditingReceiptData(null);
-      setHistoryOrder(null);
-      await load();
+      const freshOrders = await load();
+      // Auto-open history so the user can immediately see the updated receipts
+      const freshOrder = freshOrders?.find(o => o.id === order.id);
+      if (freshOrder) setHistoryOrder(freshOrder);
     } catch (e) {
       throw e;
     } finally {
@@ -2211,9 +2214,9 @@ export default function ShippingPage() {
     const order = historyOrder;
     try {
       await deleteShipmentReceipt(order, receipt.id);
-      await load();
-      // Refresh historyOrder from reloaded data
-      setHistoryOrder(null);
+      const freshOrders = await load();
+      const freshOrder = freshOrders?.find(o => o.id === order.id);
+      setHistoryOrder(freshOrder ?? null);
     } catch (e) {
       alert(`Failed to delete receipt: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }

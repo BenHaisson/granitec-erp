@@ -3,6 +3,7 @@ import {
   FileText, Plus, Trash2, Pencil, X, AlertCircle, Search,
   Upload, ExternalLink, ChevronDown, CheckCircle2, Receipt,
   Cpu, Wrench, BookOpen, Tag, ChevronRight, Eye, Package,
+  FileCheck, FileClock,
 } from 'lucide-react';
 import {
   getInvoices, createInvoice, updateInvoice, deleteInvoice, uploadInvoiceDocument,
@@ -40,15 +41,20 @@ function getOrderBLs(order: ShippingOrder): string[] {
 interface InvoiceModalProps {
   invoice?: Invoice | null;
   orders: ShippingOrder[];
+  prefillOrderId?: string;
+  prefillBL?: string;
   onSave: (data: Omit<Invoice, 'id' | 'createdAt'>, file: File | null) => Promise<void>;
   onClose: () => void;
 }
-function InvoiceModal({ invoice, orders, onSave, onClose }: InvoiceModalProps) {
+function InvoiceModal({ invoice, orders, prefillOrderId, prefillBL, onSave, onClose }: InvoiceModalProps) {
+  const initOrderId = invoice?.shippingOrderId ?? prefillOrderId ?? '';
+  const initOrder = orders.find(o => o.id === initOrderId);
   const [invoiceNumber, setInvoiceNumber] = useState(invoice?.invoiceNumber ?? '');
-  const [selectedOrderId, setSelectedOrderId]   = useState(invoice?.shippingOrderId ?? '');
-  const [selectedOrderRef, setSelectedOrderRef] = useState(invoice?.shippingOrderRef ?? '');
-  const [supplier, setSupplier] = useState(invoice?.supplier ?? '');
-  const [blNumbers, setBlNumbers]   = useState<string[]>(invoice?.blNumbers ?? []);
+  const [selectedOrderId, setSelectedOrderId]   = useState(initOrderId);
+  const [selectedOrderRef, setSelectedOrderRef] = useState(invoice?.shippingOrderRef ?? initOrder?.ref ?? '');
+  const [supplier, setSupplier] = useState(invoice?.supplier ?? initOrder?.supplier ?? '');
+  const initBLs = invoice?.blNumbers ?? (prefillBL ? [prefillBL] : (initOrder ? getOrderBLs(initOrder) : []));
+  const [blNumbers, setBlNumbers]   = useState<string[]>(initBLs);
   const [blInput, setBlInput]       = useState('');
   const [amount, setAmount]         = useState(invoice?.amount ? String(invoice.amount) : '');
   const [currency, setCurrency]     = useState(invoice?.currency ?? 'MAD');
@@ -390,18 +396,34 @@ interface InvoicesTabProps {
   invoices: Invoice[];
   orders: ShippingOrder[];
   onReload: () => Promise<void>;
+  prefillOrder?: ShippingOrder;
+  prefillBL?: string;
+  onPrefillConsumed?: () => void;
 }
-function InvoicesTab({ invoices, orders, onReload }: InvoicesTabProps) {
+function InvoicesTab({ invoices, orders, onReload, prefillOrder, prefillBL, onPrefillConsumed }: InvoicesTabProps) {
   const [showModal, setShowModal]       = useState(false);
   const [editingInv, setEditingInv]     = useState<Invoice | null>(null);
   const [detailOrder, setDetailOrder]   = useState<ShippingOrder | null>(null);
   const [preselectedOrder, setPreselectedOrder] = useState<ShippingOrder | null>(null);
+  const [preselectedBL, setPreselectedBL] = useState<string | null>(null);
   const [search, setSearch]             = useState('');
   const [filterOrder, setFilterOrder]   = useState('');
+
+  // Auto-open modal when navigated from BL Receipts tab
+  useEffect(() => {
+    if (prefillOrder) {
+      setEditingInv(null);
+      setPreselectedOrder(prefillOrder);
+      setPreselectedBL(prefillBL ?? null);
+      setShowModal(true);
+      onPrefillConsumed?.();
+    }
+  }, [prefillOrder]);
 
   const openCreate = (order?: ShippingOrder) => {
     setEditingInv(null);
     setPreselectedOrder(order ?? null);
+    setPreselectedBL(null);
     setShowModal(true);
   };
 
@@ -593,8 +615,10 @@ function InvoicesTab({ invoices, orders, onReload }: InvoicesTabProps) {
         <InvoiceModal
           invoice={editingInv}
           orders={preselectedOrder ? [preselectedOrder, ...orders.filter(o => o.id !== preselectedOrder.id)] : orders}
+          prefillOrderId={preselectedOrder?.id}
+          prefillBL={preselectedBL ?? undefined}
           onSave={handleSave}
-          onClose={() => { setShowModal(false); setEditingInv(null); setPreselectedOrder(null); }}
+          onClose={() => { setShowModal(false); setEditingInv(null); setPreselectedOrder(null); setPreselectedBL(null); }}
         />
       )}
 
@@ -917,17 +941,241 @@ function MachineDocsTab({ docs, machines, onReload }: MachineDocsTabProps) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// BL RECEIPTS TAB
+// ══════════════════════════════════════════════════════════════════
+
+type BLRecord = {
+  key: string;          // orderId + blNumber
+  orderId: string;
+  orderRef: string;
+  supplier?: string;
+  blNumber: string;
+  date: string;
+  documentUrl?: string;
+  documentName?: string;
+};
+
+function extractBLRecords(orders: ShippingOrder[]): BLRecord[] {
+  const records: BLRecord[] = [];
+  for (const order of orders) {
+    // From receipts array (new flow)
+    for (const r of order.receipts ?? []) {
+      if (r.blNumber) {
+        records.push({
+          key: `${order.id}__${r.blNumber}`,
+          orderId: order.id,
+          orderRef: order.ref,
+          supplier: order.supplier,
+          blNumber: r.blNumber,
+          date: r.date,
+          documentUrl: r.documentUrl,
+          documentName: r.documentName,
+        });
+      }
+    }
+    // From legacy blNumber field (old flow - received orders without receipts)
+    if (order.blNumber && (!order.receipts || order.receipts.length === 0)) {
+      records.push({
+        key: `${order.id}__${order.blNumber}`,
+        orderId: order.id,
+        orderRef: order.ref,
+        supplier: order.supplier,
+        blNumber: order.blNumber,
+        date: order.receivedAt ? new Date(order.receivedAt as unknown as string).toISOString().split('T')[0] : order.date,
+        documentUrl: order.documentUrl,
+        documentName: order.documentName,
+      });
+    }
+  }
+  // Sort by date desc
+  return records.sort((a, b) => b.date.localeCompare(a.date));
+}
+
+interface BLReceiptsTabProps {
+  orders: ShippingOrder[];
+  invoices: Invoice[];
+  onReload: () => Promise<void>;
+  onAddInvoice: (order: ShippingOrder, prefillBL: string) => void;
+}
+function BLReceiptsTab({ orders, invoices, onReload, onAddInvoice }: BLReceiptsTabProps) {
+  const [search, setSearch] = useState('');
+  const [filterOrder, setFilterOrder] = useState('');
+
+  const records = extractBLRecords(orders);
+
+  // Map: blNumber → invoices that include it
+  const blInvoiceMap = new Map<string, Invoice[]>();
+  for (const inv of invoices) {
+    for (const bl of inv.blNumbers) {
+      if (!blInvoiceMap.has(bl)) blInvoiceMap.set(bl, []);
+      blInvoiceMap.get(bl)!.push(inv);
+    }
+  }
+
+  const allOrderIds = Array.from(new Set(records.map(r => r.orderId)));
+  const orderMap = new Map(orders.map(o => [o.id, o]));
+
+  const filtered = records.filter(r => {
+    if (filterOrder && r.orderId !== filterOrder) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return r.orderRef.toLowerCase().includes(q)
+        || r.blNumber.toLowerCase().includes(q)
+        || (r.supplier ?? '').toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  return (
+    <div className="space-y-5">
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input type="text" placeholder="Search BL, order, supplier…" value={search} onChange={e => setSearch(e.target.value)}
+            className="pl-8 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white w-56" />
+        </div>
+        {allOrderIds.length > 0 && (
+          <select value={filterOrder} onChange={e => setFilterOrder(e.target.value)}
+            className="px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
+            <option value="">All orders</option>
+            {allOrderIds.map(id => {
+              const o = orderMap.get(id);
+              return o ? <option key={id} value={id}>{o.ref}{o.supplier ? ` · ${o.supplier}` : ''}</option> : null;
+            })}
+          </select>
+        )}
+        <div className="ml-auto flex items-center gap-4 text-xs text-slate-400">
+          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" /> Available</span>
+          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-200 inline-block" /> Missing</span>
+        </div>
+      </div>
+
+      {/* Empty state */}
+      {records.length === 0 ? (
+        <div className="bg-white rounded-xl border border-slate-100 p-14 text-center">
+          <FileCheck size={40} className="mx-auto text-slate-200 mb-3" />
+          <p className="text-slate-500 font-medium">No BL receipts yet</p>
+          <p className="text-slate-400 text-sm mt-1">BL numbers recorded on shipment receipts will appear here</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white rounded-xl border border-slate-100 p-8 text-center text-slate-400 text-sm">No results for the selected filters.</div>
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+          {/* Header */}
+          <div className="grid grid-cols-[2fr_1.5fr_1fr_auto_auto_auto] gap-4 px-5 py-2.5 bg-slate-50 border-b border-slate-100 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+            <span>Shipping Order</span>
+            <span>BL Number</span>
+            <span>Date</span>
+            <span className="text-center">BL Doc</span>
+            <span className="text-center">Invoice</span>
+            <span />
+          </div>
+
+          <div className="divide-y divide-slate-50">
+            {filtered.map(r => {
+              const invs = blInvoiceMap.get(r.blNumber) ?? [];
+              const hasDoc = !!r.documentUrl;
+              const hasInvoice = invs.length > 0;
+              const order = orderMap.get(r.orderId);
+
+              return (
+                <div key={r.key} className="grid grid-cols-[2fr_1.5fr_1fr_auto_auto_auto] gap-4 items-center px-5 py-3 hover:bg-slate-50/60 transition-colors group">
+                  {/* Order */}
+                  <div className="min-w-0">
+                    <p className="font-mono font-bold text-slate-800 text-sm truncate">{r.orderRef}</p>
+                    {r.supplier && <p className="text-xs text-slate-400 truncate">{r.supplier}</p>}
+                  </div>
+
+                  {/* BL Number */}
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-semibold text-sm text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100">
+                      {r.blNumber}
+                    </span>
+                  </div>
+
+                  {/* Date */}
+                  <span className="text-xs text-slate-500">{fmtDate(r.date)}</span>
+
+                  {/* BL Doc status */}
+                  <div className="flex flex-col items-center gap-1 w-14">
+                    {hasDoc ? (
+                      <a href={r.documentUrl} target="_blank" rel="noopener noreferrer"
+                        className="flex flex-col items-center gap-0.5 group/bl" title="View BL document">
+                        <span className="w-3 h-3 rounded-full bg-emerald-500 shadow-sm shadow-emerald-200" />
+                        <span className="text-[9px] text-emerald-600 font-bold hidden group-hover/bl:block absolute mt-4 bg-white border border-emerald-200 rounded px-1 z-10">Open</span>
+                      </a>
+                    ) : (
+                      <span className="w-3 h-3 rounded-full bg-slate-200" title="No BL document attached" />
+                    )}
+                    {hasDoc && (
+                      <a href={r.documentUrl} target="_blank" rel="noopener noreferrer"
+                        className="text-[9px] text-emerald-600 font-semibold hover:underline">
+                        View
+                      </a>
+                    )}
+                  </div>
+
+                  {/* Invoice status */}
+                  <div className="flex flex-col items-center gap-1 w-14">
+                    <span className={`w-3 h-3 rounded-full ${hasInvoice ? 'bg-emerald-500 shadow-sm shadow-emerald-200' : 'bg-slate-200'}`}
+                      title={hasInvoice ? `${invs.length} invoice(s): ${invs.map(i => i.invoiceNumber).join(', ')}` : 'No invoice'} />
+                    {hasInvoice && (
+                      <span className="text-[9px] text-emerald-600 font-semibold">
+                        {invs.length} inv.
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Add invoice action */}
+                  <div className="flex items-center gap-1.5">
+                    {hasInvoice ? (
+                      <div className="flex gap-1">
+                        {invs.map(inv => inv.documentUrl ? (
+                          <a key={inv.id} href={inv.documentUrl} target="_blank" rel="noopener noreferrer"
+                            className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors" title={`View invoice ${inv.invoiceNumber}`}>
+                            <FileCheck size={13} />
+                          </a>
+                        ) : null)}
+                        {order && (
+                          <button onClick={() => onAddInvoice(order, r.blNumber)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors opacity-0 group-hover:opacity-100" title="Add another invoice">
+                            <Plus size={13} />
+                          </button>
+                        )}
+                      </div>
+                    ) : order ? (
+                      <button onClick={() => onAddInvoice(order, r.blNumber)}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
+                        <Plus size={11} /> Invoice
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
 // MAIN DOCUMENTS PAGE
 // ══════════════════════════════════════════════════════════════════
-type DocTab = 'invoices' | 'machines';
+type DocTab = 'invoices' | 'bl-receipts' | 'machines';
 
 export default function DocumentsPage() {
-  const [tab, setTab]           = useState<DocTab>('invoices');
+  const [tab, setTab]           = useState<DocTab>('bl-receipts');
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [orders, setOrders]     = useState<ShippingOrder[]>([]);
   const [machineDocs, setMachineDocs] = useState<MachineDoc[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [loading, setLoading]   = useState(true);
+  // For "Add Invoice from BL" shortcut
+  const [blInvoiceOrder, setBlInvoiceOrder] = useState<ShippingOrder | null>(null);
+  const [blInvoicePrefill, setBlInvoicePrefill] = useState<string>('');
 
   const load = async () => {
     setLoading(true);
@@ -949,9 +1197,11 @@ export default function DocumentsPage() {
 
   useEffect(() => { load(); }, []);
 
+  const blRecordCount = extractBLRecords(orders).length;
   const TABS: { id: DocTab; label: string; icon: React.ReactNode; count?: number }[] = [
-    { id: 'invoices',  label: 'Invoices',      icon: <Receipt size={15} />,  count: invoices.length },
-    { id: 'machines',  label: 'Machine Docs',  icon: <Cpu size={15} />,      count: machineDocs.length },
+    { id: 'bl-receipts', label: 'BL Receipts',   icon: <FileCheck size={15} />, count: blRecordCount },
+    { id: 'invoices',    label: 'Invoices',       icon: <Receipt size={15} />,   count: invoices.length },
+    { id: 'machines',    label: 'Machine Docs',   icon: <Cpu size={15} />,       count: machineDocs.length },
   ];
 
   return (
@@ -991,8 +1241,27 @@ export default function DocumentsPage() {
         </div>
       ) : (
         <>
+          {tab === 'bl-receipts' && (
+            <BLReceiptsTab
+              orders={orders}
+              invoices={invoices}
+              onReload={load}
+              onAddInvoice={(order, bl) => {
+                setBlInvoiceOrder(order);
+                setBlInvoicePrefill(bl);
+                setTab('invoices');
+              }}
+            />
+          )}
           {tab === 'invoices' && (
-            <InvoicesTab invoices={invoices} orders={orders} onReload={load} />
+            <InvoicesTab
+              invoices={invoices}
+              orders={orders}
+              onReload={load}
+              prefillOrder={blInvoiceOrder ?? undefined}
+              prefillBL={blInvoicePrefill || undefined}
+              onPrefillConsumed={() => { setBlInvoiceOrder(null); setBlInvoicePrefill(''); }}
+            />
           )}
           {tab === 'machines' && (
             <MachineDocsTab docs={machineDocs} machines={machines} onReload={load} />
