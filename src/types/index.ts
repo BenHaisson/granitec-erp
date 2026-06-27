@@ -146,7 +146,7 @@ export interface LibraryItem {
   sort_order?: number;
 }
 
-export type ShippingOrderStatus = 'PLANNED' | 'RECEIVED';
+export type ShippingOrderStatus = 'PLANNED' | 'PARTIAL' | 'RECEIVED';
 
 export interface ShippingOrderLine {
   productId: string;
@@ -156,6 +156,25 @@ export interface ShippingOrderLine {
   reconcile?: boolean; // if true, receiving backs unverified_stock instead of adding to live stock
 }
 
+export interface ShipmentReceiptLine {
+  productId: string;
+  productName: string;
+  sku: string;
+  receivedQty: number;
+}
+
+export interface ShipmentReceipt {
+  id: string;
+  date: string; // YYYY-MM-DD
+  blNumber?: string;
+  remarks?: string;
+  documentUrl?: string;
+  documentName?: string;
+  lines: ShipmentReceiptLine[];
+  addedToInventory: boolean;
+  createdAt: Date | { toDate: () => Date };
+}
+
 export interface ShippingOrder {
   id: string;
   ref: string;
@@ -163,6 +182,8 @@ export interface ShippingOrder {
   date: string;
   status: ShippingOrderStatus;
   lines: ShippingOrderLine[];
+  receipts?: ShipmentReceipt[];
+  cancelledRemaining?: boolean;
   receivedAt?: Date;
   createdAt: Date;
   blNumber?: string;

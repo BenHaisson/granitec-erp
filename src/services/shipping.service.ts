@@ -4,7 +4,7 @@ import {
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '@/firebase/config';
-import type { ShippingOrder, ShippingOrderLine } from '@/types';
+import type { ShippingOrder, ShippingOrderLine, ShipmentReceipt, ShipmentReceiptLine, ShippingOrderStatus } from '@/types';
 import { receiveSupplyBatch } from './inventory.service';
 
 const sanitizeFileName = (name: string) => name.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -143,21 +143,28 @@ export const updateReceivedShippingOrder = async (
 };
 
 export const deleteReceivedShippingOrder = async (order: ShippingOrder): Promise<void> => {
-  const movSnap = await getDocs(
-    query(collection(db, 'inventory_movements'), where('note', '==', order.ref))
-  );
-  const purchaseMoves = movSnap.docs.filter(d => d.data().reason === 'PURCHASE');
-  for (const movDoc of purchaseMoves) {
-    const qty = movDoc.data().quantity as number; // positive (e.g. +1000)
-    const productId = movDoc.data().productId as string;
-    await runTransaction(db, async (tx) => {
-      const prodRef = doc(db, 'products', productId);
-      const snap = await tx.get(prodRef);
-      if (snap.exists()) {
-        tx.update(prodRef, { stock_level: (snap.data().stock_level as number) - qty });
-      }
-      tx.delete(movDoc.ref);
-    });
+  // Reverse partial receipt movements (new flow)
+  for (const receipt of (order.receipts ?? [])) {
+    await reverseReceiptMovements(order, receipt.id);
+  }
+  // Reverse legacy movements where note == order.ref (old flow, no receipts array)
+  if (!order.receipts || order.receipts.length === 0) {
+    const movSnap = await getDocs(
+      query(collection(db, 'inventory_movements'), where('note', '==', order.ref))
+    );
+    const purchaseMoves = movSnap.docs.filter(d => d.data().reason === 'PURCHASE');
+    for (const movDoc of purchaseMoves) {
+      const qty = movDoc.data().quantity as number;
+      const productId = movDoc.data().productId as string;
+      await runTransaction(db, async (tx) => {
+        const prodRef = doc(db, 'products', productId);
+        const snap = await tx.get(prodRef);
+        if (snap.exists()) {
+          tx.update(prodRef, { stock_level: (snap.data().stock_level as number) - qty });
+        }
+        tx.delete(movDoc.ref);
+      });
+    }
   }
   await deleteDoc(doc(db, 'shipping_orders', order.id));
 };
@@ -192,4 +199,154 @@ export const updateShippingOrder = async (
   const data: Record<string, unknown> = { ref: patch.ref, date: patch.date, lines: patch.lines };
   if (patch.supplier) data.supplier = patch.supplier;
   await updateDoc(doc(db, 'shipping_orders', id), data);
+};
+
+// ── Partial shipment helpers ──────────────────────────────────────
+
+const genReceiptId = () =>
+  (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const computeReceivedMap = (receipts: ShipmentReceipt[]): Map<string, number> => {
+  const map = new Map<string, number>();
+  for (const r of receipts) {
+    for (const l of r.lines) {
+      map.set(l.productId, (map.get(l.productId) ?? 0) + l.receivedQty);
+    }
+  }
+  return map;
+};
+
+export const computeOrderReceiptPercent = (order: ShippingOrder): number => {
+  const receipts = order.receipts ?? [];
+  if (receipts.length === 0) return 0;
+  const totalOrdered = order.lines.reduce((s, l) => s + l.qty, 0);
+  if (totalOrdered === 0) return 100;
+  const receivedMap = computeReceivedMap(receipts);
+  const totalReceived = order.lines.reduce((s, l) => s + Math.min(l.qty, receivedMap.get(l.productId) ?? 0), 0);
+  return Math.min(100, Math.round((totalReceived / totalOrdered) * 100));
+};
+
+const reverseReceiptMovements = async (order: ShippingOrder, receiptId: string): Promise<void> => {
+  const noteKey = `${order.ref}|rcpt:${receiptId}`;
+  const movSnap = await getDocs(
+    query(collection(db, 'inventory_movements'), where('note', '==', noteKey), where('reason', '==', 'PURCHASE'))
+  );
+  for (const movDoc of movSnap.docs) {
+    const qty = movDoc.data().quantity as number;
+    const productId = movDoc.data().productId as string;
+    await runTransaction(db, async (tx) => {
+      const prodRef = doc(db, 'products', productId);
+      const snap = await tx.get(prodRef);
+      if (snap.exists()) tx.update(prodRef, { stock_level: (snap.data().stock_level as number) - qty });
+      tx.delete(movDoc.ref);
+    });
+  }
+};
+
+export const addShipmentReceipt = async (
+  order: ShippingOrder,
+  receiptData: {
+    date: string;
+    blNumber?: string;
+    remarks?: string;
+    documentUrl?: string;
+    documentName?: string;
+    lines: ShipmentReceiptLine[];
+    addedToInventory: boolean;
+  }
+): Promise<void> => {
+  const receiptId = genReceiptId();
+  const linesToReceive = receiptData.lines.filter(l => l.receivedQty > 0);
+
+  if (receiptData.addedToInventory && !order.verification && linesToReceive.length > 0) {
+    await receiveSupplyBatch(
+      linesToReceive.map(l => ({ productId: l.productId, qty: l.receivedQty })),
+      `${order.ref}|rcpt:${receiptId}`,
+      new Date(receiptData.date)
+    );
+  }
+
+  const receipt: ShipmentReceipt = {
+    id: receiptId,
+    ...receiptData,
+    createdAt: Timestamp.now(),
+  };
+
+  const updatedReceipts = [...(order.receipts ?? []), receipt];
+  const percent = computeOrderReceiptPercent({ ...order, receipts: updatedReceipts });
+  const newStatus: ShippingOrderStatus = percent >= 100 ? 'RECEIVED' : 'PARTIAL';
+
+  const update: Record<string, unknown> = { receipts: updatedReceipts, status: newStatus };
+  if (newStatus === 'RECEIVED') {
+    update.receivedAt = Timestamp.now();
+    update.addedToInventory = receiptData.addedToInventory;
+  }
+  await updateDoc(doc(db, 'shipping_orders', order.id), update);
+};
+
+export const updateShipmentReceipt = async (
+  order: ShippingOrder,
+  receiptId: string,
+  receiptData: {
+    date: string;
+    blNumber?: string;
+    remarks?: string;
+    documentUrl?: string;
+    documentName?: string;
+    lines: ShipmentReceiptLine[];
+    addedToInventory: boolean;
+  }
+): Promise<void> => {
+  await reverseReceiptMovements(order, receiptId);
+
+  const linesToReceive = receiptData.lines.filter(l => l.receivedQty > 0);
+  if (receiptData.addedToInventory && !order.verification && linesToReceive.length > 0) {
+    await receiveSupplyBatch(
+      linesToReceive.map(l => ({ productId: l.productId, qty: l.receivedQty })),
+      `${order.ref}|rcpt:${receiptId}`,
+      new Date(receiptData.date)
+    );
+  }
+
+  const updatedReceipts = (order.receipts ?? []).map(r =>
+    r.id === receiptId ? { ...r, ...receiptData } : r
+  );
+  const percent = computeOrderReceiptPercent({ ...order, receipts: updatedReceipts });
+  const newStatus: ShippingOrderStatus = percent >= 100 ? 'RECEIVED' : 'PARTIAL';
+
+  const update: Record<string, unknown> = { receipts: updatedReceipts, status: newStatus };
+  if (newStatus === 'RECEIVED') {
+    update.receivedAt = Timestamp.now();
+    update.addedToInventory = receiptData.addedToInventory;
+  }
+  await updateDoc(doc(db, 'shipping_orders', order.id), update);
+};
+
+export const deleteShipmentReceipt = async (
+  order: ShippingOrder,
+  receiptId: string
+): Promise<void> => {
+  await reverseReceiptMovements(order, receiptId);
+
+  const updatedReceipts = (order.receipts ?? []).filter(r => r.id !== receiptId);
+  const percent = updatedReceipts.length === 0 ? 0 : computeOrderReceiptPercent({ ...order, receipts: updatedReceipts });
+  const newStatus: ShippingOrderStatus = updatedReceipts.length === 0 ? 'PLANNED' : (percent >= 100 ? 'RECEIVED' : 'PARTIAL');
+
+  const update: Record<string, unknown> = { receipts: updatedReceipts, status: newStatus };
+  if (newStatus !== 'RECEIVED') {
+    update.receivedAt = null;
+    update.addedToInventory = null;
+  }
+  await updateDoc(doc(db, 'shipping_orders', order.id), update);
+};
+
+export const cancelRemainingAndClose = async (order: ShippingOrder): Promise<void> => {
+  await updateDoc(doc(db, 'shipping_orders', order.id), {
+    status: 'RECEIVED',
+    receivedAt: Timestamp.now(),
+    addedToInventory: true,
+    cancelledRemaining: true,
+  });
 };
