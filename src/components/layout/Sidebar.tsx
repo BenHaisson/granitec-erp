@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Package, Factory,
   ShoppingCart, Warehouse, ArrowLeftRight,
-  BarChart3, Settings, LogOut, TrendingUp, BookOpen, Truck, AlertCircle, Building2, Users, NotebookPen,
+  BarChart3, Settings, LogOut, TrendingUp, BookOpen, Truck, AlertCircle, Building2, Users, NotebookPen, FolderOpen,
 } from 'lucide-react';
 import { signOut } from '@/firebase/auth';
 
@@ -36,9 +36,10 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: 'Notebook',
+    label: 'Documents',
     items: [
-      { to: '/notebook', icon: NotebookPen, label: 'Notebook' },
+      { to: '/documents', icon: FolderOpen,   label: 'Documents'  },
+      { to: '/notebook',  icon: NotebookPen,  label: 'Notebook'   },
     ],
   },
   {

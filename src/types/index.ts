@@ -194,6 +194,33 @@ export interface ShippingOrder {
   addedToInventory?: boolean; // whether receipt was added to live inventory stock
 }
 
+export interface Invoice {
+  id: string;
+  invoiceNumber: string;
+  shippingOrderId: string;
+  shippingOrderRef: string;
+  supplier?: string;
+  blNumbers: string[];
+  amount?: number;
+  currency: string;
+  date: string;
+  remarks?: string;
+  documentUrl?: string;
+  documentName?: string;
+  createdAt: Date | { toDate: () => Date };
+}
+
+export interface MachineDoc {
+  id: string;
+  machineName: string;
+  title: string;
+  body: string;
+  remarks?: string;
+  category?: string;
+  createdAt: Date | { toDate: () => Date };
+  updatedAt: Date | { toDate: () => Date };
+}
+
 export type SupplyType = 'raw_material' | 'accessory' | 'packaging';
 
 export interface PhoneContact {
