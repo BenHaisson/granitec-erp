@@ -5,15 +5,22 @@ import {
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '@/firebase/config';
 import type { Invoice, MachineDoc } from '@/types';
+import { withTimeout } from '@/utils/async';
 
 const sanitize = (name: string) => name.replace(/[^a-zA-Z0-9._-]/g, '_');
+const UPLOAD_TIMEOUT_MS = 30000;
 
 // ── Invoice document upload ───────────────────────────────────────
 export const uploadInvoiceDocument = async (invoiceId: string, file: File): Promise<{ url: string; name: string }> => {
   const path = `invoice-documents/${invoiceId}/${Date.now()}_${sanitize(file.name)}`;
   const fileRef = storageRef(storage, path);
-  await uploadBytes(fileRef, file);
-  return { url: await getDownloadURL(fileRef), name: file.name };
+  try {
+    await withTimeout(uploadBytes(fileRef, file), UPLOAD_TIMEOUT_MS, 'Upload timed out. Check your connection or Firebase Storage configuration.');
+    return { url: await withTimeout(getDownloadURL(fileRef), UPLOAD_TIMEOUT_MS, 'Failed to retrieve the uploaded document URL.'), name: file.name };
+  } catch (e) {
+    console.error('uploadInvoiceDocument failed', e);
+    throw e;
+  }
 };
 
 // ── Invoices CRUD ─────────────────────────────────────────────────
