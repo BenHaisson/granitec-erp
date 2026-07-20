@@ -16,9 +16,11 @@ import {
 } from '@/services/shipping.service';
 import { getSuppliers, createSupplier } from '@/services/supplier.service';
 import { getRecipes } from '@/services/production.service';
-import type { Product, ShippingOrder, ShippingOrderLine, ShipmentReceipt, ShipmentReceiptLine, Recipe, Supplier } from '@/types';
+import { getShippedSupplies, createShippedSupply, uploadShippedSupplyDocument } from '@/services/shippedSupply.service';
+import type { Product, ShippingOrder, ShippingOrderLine, ShipmentReceipt, ShipmentReceiptLine, Recipe, Supplier, ShippedSupply, ShippedSupplyLine } from '@/types';
 import { todayISO } from '@/utils/dates';
 import EntityPicker from '@/components/ui/EntityPicker';
+import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
 import { SupplierModal } from '@/pages/suppliers/SuppliersPage';
 
 const PREFIX_LABEL: Record<string, string> = {
@@ -135,6 +137,17 @@ function autoRefByPrefix(orders: ShippingOrder[], prefix: string, year = new Dat
 function autoRef(orders: ShippingOrder[], category?: string, year = new Date().getFullYear(), offset = 0) {
   const prefix = category ? (CAT_PREFIX[category] ?? 'SH') : 'SH';
   return autoRefByPrefix(orders, prefix, year, offset);
+}
+
+function nextShippedSupplyRef(existing: ShippedSupply[], year = new Date().getFullYear()) {
+  const fullPrefix = `SUP-${year}-`;
+  const max = existing
+    .map(s => s.ref)
+    .filter(r => r.startsWith(fullPrefix))
+    .map(r => parseInt(r.slice(fullPrefix.length), 10))
+    .filter(n => !isNaN(n))
+    .reduce((m, n) => Math.max(m, n), 0);
+  return `${fullPrefix}${String(max + 1).padStart(4, '0')}`;
 }
 
 // ── Smart Order types ─────────────────────────────────────────────
@@ -1910,6 +1923,213 @@ function SmartOrderWizard({ finishedProducts, allProducts, recipes, orders, onCl
   );
 }
 
+// ── Shipped Supply Modal ──────────────────────────────────────────
+// Logs supply that has already physically arrived — no PLANNED/receive
+// workflow, everything (amount, document, inventory choice) is entered in one step.
+type SupplyDraftLine = { uid: string; productId: string; productName: string; sku: string; qty: string };
+const EMPTY_SUPPLY_LINE = (): SupplyDraftLine => ({ uid: newUid(), productId: '', productName: '', sku: '', qty: '' });
+
+interface ShippedSupplyModalProps {
+  rawMaterials: Product[];
+  suppliers: Supplier[];
+  onAddSupplier: () => void;
+  nextRef: string;
+  onConfirm: (data: {
+    ref: string;
+    supplier: string;
+    date: string;
+    description: string;
+    file: File | null;
+    lines: ShippedSupplyLine[];
+    addToInventory: boolean;
+  }) => Promise<void>;
+  onClose: () => void;
+}
+function ShippedSupplyModal({ rawMaterials, suppliers, onAddSupplier, nextRef, onConfirm, onClose }: ShippedSupplyModalProps) {
+  const [ref_, setRef] = useState(nextRef);
+  const [supplier, setSupplier] = useState('');
+  const [date, setDate] = useState(todayISO());
+  const [description, setDescription] = useState('');
+  const [lines, setLines] = useState<SupplyDraftLine[]>([EMPTY_SUPPLY_LINE()]);
+  const [file, setFile] = useState<File | null>(null);
+  const [addToInventory, setAddToInventory] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const updateLine = (i: number, patch: Partial<SupplyDraftLine>) =>
+    setLines(l => l.map((row, idx) => idx === i ? { ...row, ...patch } : row));
+  const addLine = () => setLines(l => [...l, EMPTY_SUPPLY_LINE()]);
+  const removeLine = (i: number) => setLines(l => l.length === 1 ? [EMPTY_SUPPLY_LINE()] : l.filter((_, idx) => idx !== i));
+
+  const total = lines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+
+  const handleConfirm = async () => {
+    const validLines: ShippedSupplyLine[] = lines
+      .filter(l => l.productId && Number(l.qty) > 0)
+      .map(l => ({ productId: l.productId, productName: l.productName, sku: l.sku, qty: Number(l.qty) }));
+    if (validLines.length === 0) {
+      setError('Add at least one item with a product and quantity.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await onConfirm({
+        ref: ref_.trim(), supplier: supplier.trim(), date, description: description.trim(),
+        file, lines: validLines, addToInventory,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save shipped supply.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+          <div>
+            <h2 className="font-bold text-slate-800">Shipped Supply</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Supply already received — logged in one step</p>
+          </div>
+          <button onClick={onClose} disabled={saving} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors disabled:opacity-50">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          {/* Ref, Date, Supplier */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Reference</label>
+              <input type="text" value={ref_} onChange={e => setRef(e.target.value)}
+                className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Date</label>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Supplier</label>
+            <EntityPicker
+              value={supplier}
+              onChange={setSupplier}
+              entities={suppliers.map(s => ({ id: s.id, name: s.name, subtitle: s.mainPhone }))}
+              onAddNew={onAddSupplier}
+              placeholder="Supplier name"
+              addLabel="Add new supplier"
+              inputClassName="px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400"
+            />
+          </div>
+
+          {/* Line items */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest">Items Received</label>
+              {total > 0 && <span className="text-xs font-semibold text-slate-500">{total.toLocaleString('fr-FR')} pcs</span>}
+            </div>
+            <div className="space-y-2">
+              {lines.map((line, i) => (
+                <div key={line.uid} className="flex items-center gap-2">
+                  <span className="w-5 text-xs font-bold text-slate-300 text-center shrink-0">{i + 1}</span>
+                  <ProductPickerDropdown
+                    products={rawMaterials}
+                    value={line.productId}
+                    onChange={p => updateLine(i, { productId: p.id, productName: p.name, sku: p.sku })}
+                    placeholder="Select product…"
+                    className="flex-1"
+                  />
+                  <input type="number" min="1" placeholder="Qty" value={line.qty}
+                    onChange={e => updateLine(i, { qty: e.target.value })}
+                    className="w-24 px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-right focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 bg-white tabular-nums" />
+                  <button type="button" onClick={() => removeLine(i)}
+                    className="flex items-center justify-center w-9 h-9 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={addLine}
+              className="mt-2 flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-dashed border-slate-300 text-sm font-semibold text-slate-500 hover:border-emerald-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors">
+              <Plus size={14} /> Add Item
+            </button>
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Description</label>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2}
+              placeholder="What is this supply, where did it come from…"
+              className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400" />
+          </div>
+
+          {/* Document */}
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Document</label>
+            <div onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); setFile(e.dataTransfer.files[0] ?? null); }}
+              onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed border-slate-200 rounded-xl px-4 py-4 text-center hover:border-emerald-300 hover:bg-emerald-50/40 transition-colors cursor-pointer">
+              {file ? (
+                <div className="flex items-center justify-center gap-2 text-sm text-emerald-700">
+                  <FileText size={16} /><span className="font-medium truncate max-w-[260px]">{file.name}</span>
+                  <button type="button" onClick={e => { e.stopPropagation(); setFile(null); }} className="p-0.5 rounded text-slate-400 hover:text-red-500"><X size={13} /></button>
+                </div>
+              ) : (
+                <div className="text-slate-400">
+                  <Upload size={20} className="mx-auto mb-1 text-slate-300" />
+                  <p className="text-sm">Drop file or <span className="text-indigo-600 font-semibold">click to browse</span></p>
+                  <p className="text-xs mt-0.5 text-slate-300">PDF, image, or any document</p>
+                </div>
+              )}
+            </div>
+            <input ref={fileInputRef} type="file" className="hidden" onChange={e => setFile(e.target.files?.[0] ?? null)} />
+          </div>
+
+          {/* Add to inventory toggle */}
+          <div className={`rounded-xl border-2 p-4 transition-all cursor-pointer select-none ${addToInventory ? 'border-emerald-400 bg-emerald-50/60' : 'border-slate-200 bg-slate-50/60'}`}
+            onClick={() => setAddToInventory(v => !v)}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-bold text-slate-800">Add to Live Inventory</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {addToInventory ? 'Stock levels updated immediately for these items.' : 'Logged without updating stock levels.'}
+                </p>
+              </div>
+              <div className={`w-11 h-6 rounded-full flex items-center transition-colors shrink-0 ${addToInventory ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                <div className={`w-5 h-5 bg-white rounded-full shadow-sm transition-transform mx-0.5 ${addToInventory ? 'translate-x-5' : 'translate-x-0'}`} />
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+              <AlertCircle size={14} className="shrink-0" /> {error}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-100 bg-slate-50 shrink-0">
+          <button onClick={onClose} disabled={saving} className="px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
+            Cancel
+          </button>
+          <button onClick={handleConfirm} disabled={saving}
+            className="flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50 shadow-sm shadow-emerald-200">
+            {saving
+              ? <><span className="animate-spin inline-block">↻</span> Saving…</>
+              : <><PackageCheck size={14} /> Save Shipped Supply</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────
 export default function ShippingPage() {
   const [orders, setOrders]           = useState<ShippingOrder[]>([]);
@@ -1920,6 +2140,8 @@ export default function ShippingPage() {
   const [loading, setLoading]         = useState(true);
   const [showSmartOrder, setShowSmartOrder] = useState(false);
   const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
+  const [showShippedSupply, setShowShippedSupply] = useState(false);
+  const [shippedSupplyRef, setShippedSupplyRef] = useState('');
   const [expanded, setExpanded]       = useState<Set<string>>(new Set());
   const [receiving, setReceiving]     = useState<Set<string>>(new Set());
   const [deleting, setDeleting]       = useState<Set<string>>(new Set());
@@ -2168,6 +2390,41 @@ export default function ShippingPage() {
     }
   };
 
+  const openShippedSupply = async () => {
+    const existing = await getShippedSupplies();
+    setShippedSupplyRef(nextShippedSupplyRef(existing));
+    setShowShippedSupply(true);
+  };
+
+  const handleCreateShippedSupply = async (data: {
+    ref: string;
+    supplier: string;
+    date: string;
+    description: string;
+    file: File | null;
+    lines: ShippedSupplyLine[];
+    addToInventory: boolean;
+  }) => {
+    let documentUrl: string | undefined;
+    let documentName: string | undefined;
+    if (data.file) {
+      const uploaded = await uploadShippedSupplyDocument(`temp-${Date.now()}`, data.file);
+      documentUrl = uploaded.url;
+      documentName = uploaded.name;
+    }
+    await createShippedSupply({
+      ref: data.ref,
+      supplier: data.supplier || undefined,
+      date: data.date,
+      description: data.description || undefined,
+      lines: data.lines,
+      documentUrl,
+      documentName,
+    }, data.addToInventory);
+    setShowShippedSupply(false);
+    if (data.addToInventory) await load();
+  };
+
   const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null; addToInventory: boolean }) => {
     if (!receivingOrder) return;
     const order = receivingOrder;
@@ -2317,6 +2574,10 @@ export default function ShippingPage() {
           <button onClick={openCreate}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-200">
             <Plus size={16} /> New Order
+          </button>
+          <button onClick={openShippedSupply}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-200">
+            <PackagePlus size={16} /> Shipped Supply
           </button>
         </div>
       </div>
@@ -2524,6 +2785,18 @@ export default function ShippingPage() {
           orders={orders}
           onClose={() => setShowSmartOrder(false)}
           onCreated={async () => { setShowSmartOrder(false); await load(); }}
+        />
+      )}
+
+      {/* Shipped Supply Modal */}
+      {showShippedSupply && (
+        <ShippedSupplyModal
+          rawMaterials={rawMaterials}
+          suppliers={suppliers}
+          onAddSupplier={() => setShowAddSupplierModal(true)}
+          nextRef={shippedSupplyRef}
+          onConfirm={handleCreateShippedSupply}
+          onClose={() => setShowShippedSupply(false)}
         />
       )}
 
