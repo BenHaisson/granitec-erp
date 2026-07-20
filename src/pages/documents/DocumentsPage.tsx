@@ -11,7 +11,8 @@ import {
 } from '@/services/documents.service';
 import { getShippingOrders } from '@/services/shipping.service';
 import { getMachines } from '@/services/library.service';
-import type { Invoice, MachineDoc, ShippingOrder, Machine } from '@/types';
+import { getShippedSupplies, deleteShippedSupply } from '@/services/shippedSupply.service';
+import type { Invoice, MachineDoc, ShippingOrder, Machine, ShippedSupply } from '@/types';
 
 const toDate = (d: unknown): Date => {
   if (!d) return new Date();
@@ -1162,9 +1163,112 @@ function BLReceiptsTab({ orders, invoices, onReload, onAddInvoice }: BLReceiptsT
 }
 
 // ══════════════════════════════════════════════════════════════════
+// SUPPLY RECEIPTS TAB
+// ══════════════════════════════════════════════════════════════════
+
+interface SupplyReceiptsTabProps {
+  supplies: ShippedSupply[];
+  onReload: () => Promise<void>;
+}
+function SupplyReceiptsTab({ supplies, onReload }: SupplyReceiptsTabProps) {
+  const [search, setSearch] = useState('');
+
+  const filtered = supplies.filter(s => {
+    if (search) {
+      const q = search.toLowerCase();
+      return s.ref.toLowerCase().includes(q)
+        || (s.supplier ?? '').toLowerCase().includes(q)
+        || (s.description ?? '').toLowerCase().includes(q)
+        || s.lines.some(l => l.sku.toLowerCase().includes(q) || l.productName.toLowerCase().includes(q));
+    }
+    return true;
+  });
+
+  const handleDelete = async (s: ShippedSupply) => {
+    if (!confirm(`Delete shipped supply ${s.ref}?${s.addedToInventory ? ' This will reverse the stock it added.' : ''}`)) return;
+    await deleteShippedSupply(s);
+    await onReload();
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input type="text" placeholder="Search ref, supplier, product…" value={search} onChange={e => setSearch(e.target.value)}
+            className="pl-8 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white w-64" />
+        </div>
+      </div>
+
+      {/* Content */}
+      {supplies.length === 0 ? (
+        <div className="bg-white rounded-xl border border-slate-100 p-14 text-center">
+          <Package size={40} className="mx-auto text-slate-200 mb-3" />
+          <p className="text-slate-500 font-medium">No shipped supply logged yet</p>
+          <p className="text-slate-400 text-sm mt-1">Use "Shipped Supply" in the Shipping section to log supply that already arrived</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white rounded-xl border border-slate-100 p-8 text-center text-slate-400 text-sm">No results.</div>
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+          {/* Header */}
+          <div className="grid grid-cols-[1.2fr_1fr_1fr_1.5fr_auto_auto_auto] gap-4 px-5 py-2.5 bg-slate-50 border-b border-slate-100 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+            <span>Reference</span>
+            <span>Date</span>
+            <span>Supplier</span>
+            <span>Description</span>
+            <span className="text-right">Items</span>
+            <span className="text-center">Inventory</span>
+            <span />
+          </div>
+
+          <div className="divide-y divide-slate-50">
+            {filtered.map(s => {
+              const totalQty = s.lines.reduce((sum, l) => sum + l.qty, 0);
+              return (
+                <div key={s.id} className="grid grid-cols-[1.2fr_1fr_1fr_1.5fr_auto_auto_auto] gap-4 items-center px-5 py-3 hover:bg-slate-50/60 transition-colors group">
+                  <div className="min-w-0">
+                    <p className="font-mono font-bold text-slate-800 text-sm truncate">{s.ref}</p>
+                  </div>
+                  <span className="text-xs text-slate-500">{fmtDate(s.date)}</span>
+                  <span className="text-sm text-slate-600 truncate">{s.supplier ?? '—'}</span>
+                  <span className="text-xs text-slate-500 truncate" title={s.description}>{s.description ?? '—'}</span>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-slate-700 tabular-nums">{totalQty.toLocaleString('fr-FR')}</p>
+                    <p className="text-[10px] text-slate-400">{s.lines.length} ref{s.lines.length !== 1 ? 's' : ''}</p>
+                  </div>
+                  <div className="flex justify-center">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${s.addedToInventory ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {s.addedToInventory ? 'Added' : 'Not added'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-end gap-1.5">
+                    {s.documentUrl && (
+                      <a href={s.documentUrl} target="_blank" rel="noopener noreferrer"
+                        className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors" title={s.documentName ?? 'View document'}>
+                        <FileCheck size={14} />
+                      </a>
+                    )}
+                    <button onClick={() => handleDelete(s)}
+                      className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
 // MAIN DOCUMENTS PAGE
 // ══════════════════════════════════════════════════════════════════
-type DocTab = 'invoices' | 'bl-receipts' | 'machines';
+type DocTab = 'invoices' | 'bl-receipts' | 'machines' | 'supply';
 
 export default function DocumentsPage() {
   const [tab, setTab]           = useState<DocTab>('bl-receipts');
@@ -1172,6 +1276,7 @@ export default function DocumentsPage() {
   const [orders, setOrders]     = useState<ShippingOrder[]>([]);
   const [machineDocs, setMachineDocs] = useState<MachineDoc[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
+  const [shippedSupplies, setShippedSupplies] = useState<ShippedSupply[]>([]);
   const [loading, setLoading]   = useState(true);
   // For "Add Invoice from BL" shortcut
   const [blInvoiceOrder, setBlInvoiceOrder] = useState<ShippingOrder | null>(null);
@@ -1180,16 +1285,18 @@ export default function DocumentsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [invs, ords, mDocs, machs] = await Promise.all([
+      const [invs, ords, mDocs, machs, supplies] = await Promise.all([
         getInvoices(),
         getShippingOrders(),
         getMachineDocs(),
         getMachines(),
+        getShippedSupplies(),
       ]);
       setInvoices(invs);
       setOrders(ords);
       setMachineDocs(mDocs);
       setMachines(machs);
+      setShippedSupplies(supplies);
     } finally {
       setLoading(false);
     }
@@ -1201,6 +1308,7 @@ export default function DocumentsPage() {
   const TABS: { id: DocTab; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'bl-receipts', label: 'BL Receipts',   icon: <FileCheck size={15} />, count: blRecordCount },
     { id: 'invoices',    label: 'Invoices',       icon: <Receipt size={15} />,   count: invoices.length },
+    { id: 'supply',      label: 'Supply Receipts', icon: <Package size={15} />,  count: shippedSupplies.length },
     { id: 'machines',    label: 'Machine Docs',   icon: <Cpu size={15} />,       count: machineDocs.length },
   ];
 
@@ -1262,6 +1370,9 @@ export default function DocumentsPage() {
               prefillBL={blInvoicePrefill || undefined}
               onPrefillConsumed={() => { setBlInvoiceOrder(null); setBlInvoicePrefill(''); }}
             />
+          )}
+          {tab === 'supply' && (
+            <SupplyReceiptsTab supplies={shippedSupplies} onReload={load} />
           )}
           {tab === 'machines' && (
             <MachineDocsTab docs={machineDocs} machines={machines} onReload={load} />

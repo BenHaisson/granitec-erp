@@ -80,12 +80,15 @@ function downloadInvoice(order: SalesOrder) {
   const date = order.date instanceof Date ? order.date : new Date(order.date);
   const fmt = date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const totalQty = order.lines.reduce((s, l) => s + l.totalQty, 0);
+  const totalBoxes = order.lines.reduce((s, l) => s + l.boxes, 0);
 
   const rows = order.lines.map((l, i) => `
     <tr>
       <td>${i + 1}</td>
       <td>${l.productName}</td>
       <td class="mono">${l.sku}</td>
+      <td class="num">${l.boxes}</td>
+      <td class="num">${l.qtyPerBox}</td>
       <td class="num">${l.totalQty}</td>
     </tr>`).join('');
 
@@ -147,6 +150,8 @@ function downloadInvoice(order: SalesOrder) {
         <th>#</th>
         <th>Produit</th>
         <th>Référence</th>
+        <th style="text-align:right">Boîtes</th>
+        <th style="text-align:right">Qté/Boîte</th>
         <th style="text-align:right">Quantité</th>
       </tr>
     </thead>
@@ -154,6 +159,10 @@ function downloadInvoice(order: SalesOrder) {
   </table>
   <div class="footer">
     <div class="total-box">
+      <div class="label">Total boîtes</div>
+      <div class="value">${totalBoxes.toLocaleString('fr-FR')}</div>
+    </div>
+    <div class="total-box" style="margin-left:16px">
       <div class="label">Total pièces</div>
       <div class="value">${totalQty.toLocaleString('fr-FR')}</div>
     </div>

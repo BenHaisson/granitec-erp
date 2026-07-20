@@ -194,6 +194,27 @@ export interface ShippingOrder {
   addedToInventory?: boolean; // whether receipt was added to live inventory stock
 }
 
+export interface ShippedSupplyLine {
+  productId: string;
+  productName: string;
+  sku: string;
+  qty: number;
+}
+
+// Supply that has already physically arrived — logged in one step (no PLANNED/receive workflow).
+export interface ShippedSupply {
+  id: string;
+  ref: string;
+  supplier?: string;
+  date: string; // YYYY-MM-DD
+  description?: string;
+  lines: ShippedSupplyLine[];
+  documentUrl?: string;
+  documentName?: string;
+  addedToInventory: boolean;
+  createdAt: Date | { toDate: () => Date };
+}
+
 export interface Invoice {
   id: string;
   invoiceNumber: string;
