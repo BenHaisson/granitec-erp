@@ -2,26 +2,21 @@ import {
   collection, addDoc, getDocs, doc, updateDoc, deleteDoc,
   Timestamp, query, orderBy,
 } from 'firebase/firestore';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '@/firebase/config';
+import { db } from '@/firebase/config';
 import type { Invoice, MachineDoc } from '@/types';
-import { withTimeout } from '@/utils/async';
+import { uploadFileToR2, type R2Attachment } from '@/lib/r2Storage';
 
-const sanitize = (name: string) => name.replace(/[^a-zA-Z0-9._-]/g, '_');
-const UPLOAD_TIMEOUT_MS = 30000;
+// Firestore rejects `undefined` field values — strip them before writing.
+const stripUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> =>
+  Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
 
-// ── Invoice document upload ───────────────────────────────────────
-export const uploadInvoiceDocument = async (invoiceId: string, file: File): Promise<{ url: string; name: string }> => {
-  const path = `invoice-documents/${invoiceId}/${Date.now()}_${sanitize(file.name)}`;
-  const fileRef = storageRef(storage, path);
-  try {
-    await withTimeout(uploadBytes(fileRef, file), UPLOAD_TIMEOUT_MS, 'Upload timed out. Check your connection or Firebase Storage configuration.');
-    return { url: await withTimeout(getDownloadURL(fileRef), UPLOAD_TIMEOUT_MS, 'Failed to retrieve the uploaded document URL.'), name: file.name };
-  } catch (e) {
-    console.error('uploadInvoiceDocument failed', e);
-    throw e;
-  }
-};
+// ── Invoice document upload (Cloudflare R2) ───────────────────────
+// Returns the attachment metadata to persist on the invoice. The permanent
+// identifier is `objectKey`; signed URLs are minted on demand when opening.
+export const uploadInvoiceDocument = (
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<R2Attachment> => uploadFileToR2(file, { folder: 'invoice-documents', onProgress });
 
 // ── Invoices CRUD ─────────────────────────────────────────────────
 export const getInvoices = async (): Promise<Invoice[]> => {
@@ -30,12 +25,12 @@ export const getInvoices = async (): Promise<Invoice[]> => {
 };
 
 export const createInvoice = async (data: Omit<Invoice, 'id' | 'createdAt'>): Promise<string> => {
-  const ref = await addDoc(collection(db, 'invoices'), { ...data, createdAt: Timestamp.now() });
+  const ref = await addDoc(collection(db, 'invoices'), stripUndefined({ ...data, createdAt: Timestamp.now() }));
   return ref.id;
 };
 
 export const updateInvoice = async (id: string, data: Partial<Omit<Invoice, 'id' | 'createdAt'>>): Promise<void> => {
-  await updateDoc(doc(db, 'invoices', id), data);
+  await updateDoc(doc(db, 'invoices', id), stripUndefined({ ...data }));
 };
 
 export const deleteInvoice = async (id: string): Promise<void> => {

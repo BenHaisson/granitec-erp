@@ -12,7 +12,19 @@ import {
 import { getShippingOrders } from '@/services/shipping.service';
 import { getMachines } from '@/services/library.service';
 import { getShippedSupplies, deleteShippedSupply } from '@/services/shippedSupply.service';
+import { openR2File, deleteFileFromR2 } from '@/lib/r2Storage';
 import type { Invoice, MachineDoc, ShippingOrder, Machine, ShippedSupply } from '@/types';
+
+// Open an invoice's attached document — a fresh signed URL for R2-backed
+// attachments, or the stored legacy Firebase URL for older records.
+const openInvoiceDoc = (inv: { documentKey?: string; documentUrl?: string }) => {
+  if (inv.documentKey) {
+    openR2File(inv.documentKey).catch(err =>
+      alert(err instanceof Error ? err.message : 'Failed to open the document.'));
+  } else if (inv.documentUrl) {
+    window.open(inv.documentUrl, '_blank', 'noopener,noreferrer');
+  }
+};
 
 const toDate = (d: unknown): Date => {
   if (!d) return new Date();
@@ -112,6 +124,8 @@ function InvoiceModal({ invoice, orders, prefillOrderId, prefillBL, onSave, onCl
         remarks: remarks.trim() || undefined,
         documentUrl: invoice?.documentUrl,
         documentName: invoice?.documentName,
+        documentKey: invoice?.documentKey,
+        storageProvider: invoice?.storageProvider,
       }, file);
       onClose();
     } catch (e) {
@@ -246,7 +260,7 @@ function InvoiceModal({ invoice, orders, prefillOrderId, prefillBL, onSave, onCl
           {/* Document */}
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">
-              Attached Document {invoice?.documentUrl && <span className="text-emerald-600 font-normal normal-case">(existing attached)</span>}
+              Attached Document {(invoice?.documentKey || invoice?.documentUrl) && <span className="text-emerald-600 font-normal normal-case">(existing attached)</span>}
             </label>
             <div onDragOver={e => e.preventDefault()}
               onDrop={e => { e.preventDefault(); setFile(e.dataTransfer.files[0] ?? null); }}
@@ -258,11 +272,13 @@ function InvoiceModal({ invoice, orders, prefillOrderId, prefillBL, onSave, onCl
                   <span className="font-medium truncate max-w-[280px]">{file.name}</span>
                   <button type="button" onClick={ev => { ev.stopPropagation(); setFile(null); }} className="p-0.5 rounded text-slate-400 hover:text-red-500"><X size={13} /></button>
                 </div>
-              ) : invoice?.documentUrl ? (
+              ) : (invoice?.documentKey || invoice?.documentUrl) ? (
                 <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
                   <FileText size={14} className="text-emerald-600" />
-                  <a href={invoice.documentUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-emerald-700 font-medium hover:underline">
-                    {invoice.documentName ?? 'View Document'}
+                  <a href={invoice?.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+                    onClick={e => { e.preventDefault(); e.stopPropagation(); openInvoiceDoc({ documentKey: invoice?.documentKey, documentUrl: invoice?.documentUrl }); }}
+                    className="text-emerald-700 font-medium hover:underline">
+                    {invoice?.documentName ?? 'View Document'}
                   </a>
                   <span className="text-slate-400 text-xs">· click to replace</span>
                 </div>
@@ -366,8 +382,9 @@ function InvoiceDetailModal({ order, invoices, onEdit, onDelete, onAdd, onClose 
                     </div>
                   )}
                   <div className="flex items-center gap-1">
-                    {inv.documentUrl && (
-                      <a href={inv.documentUrl} target="_blank" rel="noopener noreferrer"
+                    {(inv.documentKey || inv.documentUrl) && (
+                      <a href={inv.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+                        onClick={e => { e.preventDefault(); openInvoiceDoc(inv); }}
                         className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors" title="View document">
                         <ExternalLink size={13} />
                       </a>
@@ -436,28 +453,35 @@ function InvoicesTab({ invoices, orders, onReload, prefillOrder, prefillBL, onPr
   };
 
   const handleSave = async (data: Omit<Invoice, 'id' | 'createdAt'>, file: File | null) => {
-    let documentUrl = data.documentUrl;
-    let documentName = data.documentName;
-    const id = editingInv?.id ?? 'temp-' + Date.now();
+    const payload: Omit<Invoice, 'id' | 'createdAt'> = { ...data };
     if (file) {
-      const realId = editingInv?.id ?? id;
-      const uploaded = await uploadInvoiceDocument(realId, file);
-      documentUrl = uploaded.url;
-      documentName = uploaded.name;
+      // Replacing an existing R2 attachment — clean up the old object (best-effort).
+      if (editingInv?.storageProvider === 'r2' && editingInv.documentKey) {
+        deleteFileFromR2(editingInv.documentKey).catch(err =>
+          console.error('Failed to remove replaced R2 document', err));
+      }
+      const uploaded = await uploadInvoiceDocument(file);
+      payload.documentKey = uploaded.objectKey;
+      payload.documentName = uploaded.originalName;
+      payload.storageProvider = 'r2';
     }
     if (editingInv) {
-      await updateInvoice(editingInv.id, { ...data, documentUrl, documentName });
+      await updateInvoice(editingInv.id, payload);
     } else {
-      const newId = await createInvoice({ ...data, documentUrl, documentName });
-      if (file && newId !== id) {
-        // re-upload with correct id if needed (already uploaded above, URL is fine)
-      }
+      await createInvoice(payload);
     }
     await onReload();
   };
 
   const handleDelete = async (inv: Invoice) => {
     if (!confirm(`Delete invoice ${inv.invoiceNumber}?`)) return;
+    if (inv.storageProvider === 'r2' && inv.documentKey) {
+      try {
+        await deleteFileFromR2(inv.documentKey);
+      } catch (err) {
+        console.error('Failed to delete R2 document', err);
+      }
+    }
     await deleteInvoice(inv.id);
     await onReload();
   };
@@ -592,8 +616,9 @@ function InvoicesTab({ invoices, orders, onReload, prefillOrder, prefillBL, onPr
                           </span>
                         )}
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {inv.documentUrl && (
-                            <a href={inv.documentUrl} target="_blank" rel="noopener noreferrer"
+                          {(inv.documentKey || inv.documentUrl) && (
+                            <a href={inv.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+                              onClick={e => { e.preventDefault(); openInvoiceDoc(inv); }}
                               className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors" title="View document">
                               <ExternalLink size={13} />
                             </a>
@@ -1132,8 +1157,9 @@ function BLReceiptsTab({ orders, invoices, onReload, onAddInvoice }: BLReceiptsT
                   <div className="flex items-center gap-1.5">
                     {hasInvoice ? (
                       <div className="flex gap-1">
-                        {invs.map(inv => inv.documentUrl ? (
-                          <a key={inv.id} href={inv.documentUrl} target="_blank" rel="noopener noreferrer"
+                        {invs.map(inv => (inv.documentKey || inv.documentUrl) ? (
+                          <a key={inv.id} href={inv.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+                            onClick={e => { e.preventDefault(); openInvoiceDoc(inv); }}
                             className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors" title={`View invoice ${inv.invoiceNumber}`}>
                             <FileCheck size={13} />
                           </a>

@@ -226,8 +226,10 @@ export interface Invoice {
   currency: string;
   date: string;
   remarks?: string;
-  documentUrl?: string;
+  documentUrl?: string;          // legacy Firebase Storage download URL
   documentName?: string;
+  documentKey?: string;          // Cloudflare R2 object key (new attachments)
+  storageProvider?: 'r2';        // set when the attachment lives in R2
   createdAt: Date | { toDate: () => Date };
 }
 
