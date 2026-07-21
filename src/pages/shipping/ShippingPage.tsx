@@ -17,6 +17,7 @@ import {
 import { getSuppliers, createSupplier } from '@/services/supplier.service';
 import { getRecipes } from '@/services/production.service';
 import { getShippedSupplies, createShippedSupply, uploadShippedSupplyDocument } from '@/services/shippedSupply.service';
+import { openAttachment, resolveAttachmentHref, deleteAttachmentObject } from '@/lib/r2Storage';
 import type { Product, ShippingOrder, ShippingOrderLine, ShipmentReceipt, ShipmentReceiptLine, Recipe, Supplier, ShippedSupply, ShippedSupplyLine } from '@/types';
 import { todayISO } from '@/utils/dates';
 import EntityPicker from '@/components/ui/EntityPicker';
@@ -908,7 +909,7 @@ function PartialReceiveModal({ order, editingReceipt, onConfirm, onClose }: Part
           {/* Document */}
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">
-              BL Document {editingReceipt?.documentUrl && <span className="text-emerald-600 font-normal normal-case">(existing attached)</span>}
+              BL Document {(editingReceipt?.documentKey || editingReceipt?.documentUrl) && <span className="text-emerald-600 font-normal normal-case">(existing attached)</span>}
             </label>
             <div onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); setFile(e.dataTransfer.files[0] ?? null); }}
               onClick={() => fileInputRef.current?.click()}
@@ -918,11 +919,13 @@ function PartialReceiveModal({ order, editingReceipt, onConfirm, onClose }: Part
                   <FileText size={16} /><span className="font-medium truncate max-w-[260px]">{file.name}</span>
                   <button type="button" onClick={e => { e.stopPropagation(); setFile(null); }} className="p-0.5 rounded text-slate-400 hover:text-red-500"><X size={13} /></button>
                 </div>
-              ) : editingReceipt?.documentUrl ? (
+              ) : (editingReceipt?.documentKey || editingReceipt?.documentUrl) ? (
                 <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
                   <FileText size={14} className="text-emerald-600" />
-                  <a href={editingReceipt.documentUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-emerald-700 font-medium hover:underline">
-                    {editingReceipt.documentName ?? 'View Document'}
+                  <a href={editingReceipt?.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+                    onClick={e => { e.preventDefault(); e.stopPropagation(); openAttachment({ documentKey: editingReceipt?.documentKey, documentUrl: editingReceipt?.documentUrl }); }}
+                    className="text-emerald-700 font-medium hover:underline">
+                    {editingReceipt?.documentName ?? 'View Document'}
                   </a>
                   <span className="text-slate-400 text-xs">· click here to replace</span>
                 </div>
@@ -1094,8 +1097,9 @@ function ShipmentHistoryModal({ order, onAddReceipt, onEditReceipt, onDeleteRece
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    {r.documentUrl && (
-                      <a href={r.documentUrl} target="_blank" rel="noopener noreferrer"
+                    {(r.documentKey || r.documentUrl) && (
+                      <a href={r.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+                        onClick={e => { e.preventDefault(); openAttachment(r); }}
                         className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors" title="View document">
                         <FileText size={14} />
                       </a>
@@ -1378,7 +1382,7 @@ function OrderDetail({ order }: { order: ShippingOrder }) {
         })}
       </div>
       {/* Legacy receipt info (old orders without receipts array) */}
-      {order.status === 'RECEIVED' && receipts.length === 0 && (order.blNumber || order.remarks || order.documentUrl) && (
+      {order.status === 'RECEIVED' && receipts.length === 0 && (order.blNumber || order.remarks || order.documentUrl || order.documentKey) && (
         <div className="mt-3 flex flex-wrap items-start gap-2">
           {order.blNumber && (
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 text-xs rounded-lg border border-indigo-100">
@@ -1392,8 +1396,9 @@ function OrderDetail({ order }: { order: ShippingOrder }) {
               <span>{order.remarks}</span>
             </span>
           )}
-          {order.documentUrl && (
-            <a href={order.documentUrl} target="_blank" rel="noopener noreferrer"
+          {(order.documentKey || order.documentUrl) && (
+            <a href={order.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+              onClick={e => { e.preventDefault(); openAttachment(order); }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs rounded-lg border border-emerald-100 hover:bg-emerald-100 transition-colors">
               <FileText size={12} />
               <span>{order.documentName ?? 'Document'}</span>
@@ -1464,7 +1469,7 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
                         {percent}%
                       </span>
                     )}
-                    {order.status === 'RECEIVED' && (order.blNumber || order.documentUrl || hasReceipts) && (
+                    {order.status === 'RECEIVED' && (order.blNumber || order.documentUrl || order.documentKey || hasReceipts) && (
                       <span className="ml-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">
                         <CheckCircle2 size={8} /> {hasReceipts ? '100%' : 'BL'}
                       </span>
@@ -1583,7 +1588,10 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
 }
 
 // ── Bon de Réception — opens styled page in new tab ──────────────
-function openBonDeReception(order: ShippingOrder, format: 'web' | 'pdf' = 'web') {
+async function openBonDeReception(order: ShippingOrder, format: 'web' | 'pdf' = 'web') {
+  // Open the tab synchronously (inside the click gesture) so pop-up blockers
+  // allow it; the signed document URL is resolved before writing the document.
+  const w = window.open('', '_blank');
   const category = refToCategory(order.ref);
   const dateStr = new Date(order.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
   const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
@@ -1594,6 +1602,7 @@ function openBonDeReception(order: ShippingOrder, format: 'web' | 'pdf' = 'web')
       <td class="mono">${l.sku}</td>
       <td class="num">${l.qty.toLocaleString('fr-FR')}</td>
     </tr>`).join('');
+  const docHref = await resolveAttachmentHref(order);
   const html = `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8"><title>Bon de réception ${order.ref}</title>
 <style>
@@ -1642,10 +1651,9 @@ function openBonDeReception(order: ShippingOrder, format: 'web' | 'pdf' = 'web')
     <tfoot><tr><td colspan="3">Total</td><td class="num">${totalQty.toLocaleString('fr-FR')}</td></tr></tfoot>
   </table>
   ${order.remarks ? `<div class="remarks"><label>Remarques</label><p>${order.remarks.replace(/\n/g, '<br>')}</p></div>` : ''}
-  ${order.documentUrl ? `<div class="doc-link"><label>Document joint</label><a href="${order.documentUrl}" target="_blank">📎 ${order.documentName ?? 'Document'}</a></div>` : ''}
+  ${docHref ? `<div class="doc-link"><label>Document joint</label><a href="${docHref}" target="_blank">📎 ${order.documentName ?? 'Document'}</a></div>` : ''}
   <div class="stamp">Document généré par Granitec ERP · ${new Date().toLocaleDateString('fr-FR')}</div>
 </body></html>`;
-  const w = window.open('', '_blank');
   if (w) { w.document.write(html); w.document.close(); if (format === 'pdf') setTimeout(() => w.print(), 500); }
 }
 
@@ -2366,12 +2374,16 @@ export default function ShippingPage() {
     try {
       let documentUrl = editingReceipt?.documentUrl;
       let documentName = editingReceipt?.documentName;
+      let documentKey = editingReceipt?.documentKey;
+      let storageProvider = editingReceipt?.storageProvider;
       if (data.file) {
-        const uploaded = await uploadReceiptDocument(order.id, data.file);
-        documentUrl = uploaded.url;
-        documentName = uploaded.name;
+        if (editingReceipt) await deleteAttachmentObject(editingReceipt);
+        const uploaded = await uploadReceiptDocument(data.file);
+        documentKey = uploaded.objectKey;
+        documentName = uploaded.originalName;
+        storageProvider = 'r2';
       }
-      const receiptData = { date: data.date, blNumber: data.blNumber, remarks: data.remarks, documentUrl, documentName, lines: data.lines, addedToInventory: data.addedToInventory };
+      const receiptData = { date: data.date, blNumber: data.blNumber, remarks: data.remarks, documentUrl, documentName, documentKey, storageProvider, lines: data.lines, addedToInventory: data.addedToInventory };
       if (editingReceipt) {
         await updateShipmentReceipt(order, editingReceipt.id, receiptData);
       } else {
@@ -2405,12 +2417,14 @@ export default function ShippingPage() {
     lines: ShippedSupplyLine[];
     addToInventory: boolean;
   }) => {
-    let documentUrl: string | undefined;
     let documentName: string | undefined;
+    let documentKey: string | undefined;
+    let storageProvider: 'r2' | undefined;
     if (data.file) {
-      const uploaded = await uploadShippedSupplyDocument(`temp-${Date.now()}`, data.file);
-      documentUrl = uploaded.url;
-      documentName = uploaded.name;
+      const uploaded = await uploadShippedSupplyDocument(data.file);
+      documentKey = uploaded.objectKey;
+      documentName = uploaded.originalName;
+      storageProvider = 'r2';
     }
     await createShippedSupply({
       ref: data.ref,
@@ -2418,8 +2432,9 @@ export default function ShippingPage() {
       date: data.date,
       description: data.description || undefined,
       lines: data.lines,
-      documentUrl,
       documentName,
+      documentKey,
+      storageProvider,
     }, data.addToInventory);
     setShowShippedSupply(false);
     if (data.addToInventory) await load();
@@ -2430,18 +2445,21 @@ export default function ShippingPage() {
     const order = receivingOrder;
     setReceiving(s => new Set(s).add(order.id));
     try {
-      let documentUrl: string | undefined;
       let documentName: string | undefined;
+      let documentKey: string | undefined;
+      let storageProvider: 'r2' | undefined;
       if (data.file) {
-        const uploaded = await uploadReceiptDocument(order.id, data.file);
-        documentUrl = uploaded.url;
-        documentName = uploaded.name;
+        const uploaded = await uploadReceiptDocument(data.file);
+        documentKey = uploaded.objectKey;
+        documentName = uploaded.originalName;
+        storageProvider = 'r2';
       }
       const failedIds = await receiveShippingOrder(order, {
         blNumber: data.blNumber.trim() || undefined,
         remarks: data.remarks.trim() || undefined,
-        documentUrl,
         documentName,
+        documentKey,
+        storageProvider,
       }, data.addToInventory);
       setReceivingOrder(null);
       if (failedIds.length > 0) {

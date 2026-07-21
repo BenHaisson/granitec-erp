@@ -2,28 +2,16 @@ import {
   collection, addDoc, getDocs, doc, updateDoc, deleteDoc, Timestamp,
   query, where, orderBy, limit, runTransaction, writeBatch,
 } from 'firebase/firestore';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '@/firebase/config';
+import { db } from '@/firebase/config';
 import type { ShippingOrder, ShippingOrderLine, ShipmentReceipt, ShipmentReceiptLine, ShippingOrderStatus } from '@/types';
 import { receiveSupplyBatch } from './inventory.service';
-import { withTimeout } from '@/utils/async';
+import { uploadFileToR2, deleteAttachmentObject, type R2Attachment } from '@/lib/r2Storage';
 
-const sanitizeFileName = (name: string) => name.replace(/[^a-zA-Z0-9._-]/g, '_');
-const UPLOAD_TIMEOUT_MS = 30000;
-
-export const uploadReceiptDocument = async (orderId: string, file: File): Promise<{ url: string; name: string }> => {
-  const safeName = sanitizeFileName(file.name);
-  const path = `receipt-documents/${orderId}/${Date.now()}_${safeName}`;
-  const fileRef = storageRef(storage, path);
-  try {
-    await withTimeout(uploadBytes(fileRef, file), UPLOAD_TIMEOUT_MS, 'Upload timed out. Check your connection or Firebase Storage configuration.');
-    const url = await withTimeout(getDownloadURL(fileRef), UPLOAD_TIMEOUT_MS, 'Failed to retrieve the uploaded document URL.');
-    return { url, name: file.name };
-  } catch (e) {
-    console.error('uploadReceiptDocument failed', e);
-    throw e;
-  }
-};
+// ── Receipt document upload (Cloudflare R2) ───────────────────────
+export const uploadReceiptDocument = (
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<R2Attachment> => uploadFileToR2(file, { folder: 'receipt-documents', onProgress });
 
 export const getShippingOrders = async (): Promise<ShippingOrder[]> => {
   const snap = await getDocs(
@@ -49,7 +37,7 @@ export const createShippingOrder = async (
 
 export const receiveShippingOrder = async (
   order: ShippingOrder,
-  receipt?: { blNumber?: string; remarks?: string; documentUrl?: string; documentName?: string },
+  receipt?: { blNumber?: string; remarks?: string; documentUrl?: string; documentName?: string; documentKey?: string; storageProvider?: 'r2' },
   addToInventory: boolean = true
 ): Promise<string[]> => {
   if (order.verification) {
@@ -75,6 +63,8 @@ export const receiveShippingOrder = async (
   if (receipt?.remarks) update.remarks = receipt.remarks;
   if (receipt?.documentUrl) update.documentUrl = receipt.documentUrl;
   if (receipt?.documentName) update.documentName = receipt.documentName;
+  if (receipt?.documentKey) update.documentKey = receipt.documentKey;
+  if (receipt?.storageProvider) update.storageProvider = receipt.storageProvider;
   await updateDoc(doc(db, 'shipping_orders', order.id), update);
   return [];
 };
@@ -150,6 +140,9 @@ export const updateReceivedShippingOrder = async (
 };
 
 export const deleteReceivedShippingOrder = async (order: ShippingOrder): Promise<void> => {
+  // Clean up any R2 documents attached to the order or its receipts (best-effort)
+  await deleteAttachmentObject(order);
+  for (const r of (order.receipts ?? [])) await deleteAttachmentObject(r);
   // Reverse partial receipt movements (new flow)
   for (const receipt of (order.receipts ?? [])) {
     await reverseReceiptMovements(order, receipt.id);
@@ -260,6 +253,8 @@ export const addShipmentReceipt = async (
     remarks?: string;
     documentUrl?: string;
     documentName?: string;
+    documentKey?: string;
+    storageProvider?: 'r2';
     lines: ShipmentReceiptLine[];
     addedToInventory: boolean;
   }
@@ -286,6 +281,8 @@ export const addShipmentReceipt = async (
   if (receiptData.remarks)     receipt.remarks     = receiptData.remarks;
   if (receiptData.documentUrl) receipt.documentUrl = receiptData.documentUrl;
   if (receiptData.documentName) receipt.documentName = receiptData.documentName;
+  if (receiptData.documentKey) receipt.documentKey = receiptData.documentKey;
+  if (receiptData.storageProvider) receipt.storageProvider = receiptData.storageProvider;
 
   const updatedReceipts = [...(order.receipts ?? []), receipt as unknown as ShipmentReceipt];
   const percent = computeOrderReceiptPercent({ ...order, receipts: updatedReceipts });
@@ -308,6 +305,8 @@ export const updateShipmentReceipt = async (
     remarks?: string;
     documentUrl?: string;
     documentName?: string;
+    documentKey?: string;
+    storageProvider?: 'r2';
     lines: ShipmentReceiptLine[];
     addedToInventory: boolean;
   }
@@ -337,6 +336,8 @@ export const updateShipmentReceipt = async (
     else                         delete updated.remarks;
     if (receiptData.documentUrl) updated.documentUrl = receiptData.documentUrl;
     if (receiptData.documentName) updated.documentName = receiptData.documentName;
+    if (receiptData.documentKey) updated.documentKey = receiptData.documentKey;
+    if (receiptData.storageProvider) updated.storageProvider = receiptData.storageProvider;
     return updated as unknown as ShipmentReceipt;
   });
   const percent = computeOrderReceiptPercent({ ...order, receipts: updatedReceipts });
@@ -354,6 +355,8 @@ export const deleteShipmentReceipt = async (
   order: ShippingOrder,
   receiptId: string
 ): Promise<void> => {
+  const removed = (order.receipts ?? []).find(r => r.id === receiptId);
+  if (removed) await deleteAttachmentObject(removed);
   await reverseReceiptMovements(order, receiptId);
 
   const updatedReceipts = (order.receipts ?? []).filter(r => r.id !== receiptId);
