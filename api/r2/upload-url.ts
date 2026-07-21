@@ -18,7 +18,7 @@ import {
   fail,
   HttpError,
   SIGNED_URL_TTL_SECONDS,
-} from './_shared';
+} from './_shared.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (!methodGuard(req, res)) return;
