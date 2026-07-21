@@ -104,28 +104,39 @@ not pick up new values automatically.
 
 ## What is migrated
 
-- ✅ **Invoices** (Documents page) — upload, open, delete, and replace all use R2.
+All document attachments now use Cloudflare R2. **Firebase Storage is no longer
+used anywhere** — the `storage` export was removed from `src/firebase/config.ts`.
 
-Still on Firebase Storage (legacy `documentUrl` values keep working everywhere):
+- ✅ **Invoices** (Documents page)
+- ✅ **Shipping BL receipts** — partial receipts, full receipts, and legacy
+  received-order documents (`shipping.service.ts`)
+- ✅ **Shipped-supply documents** (`shippedSupply.service.ts`)
+- ✅ **Print / preview views** — the "Bon de réception" documents in
+  `InventoryPage` and `ShippingPage` resolve a fresh short-lived signed URL at
+  open time (`resolveAttachmentHref`) and embed it, rather than baking a
+  permanent URL into the generated HTML.
 
-- ⬜ Shipping BL receipts — `uploadReceiptDocument` in `shipping.service.ts`
-- ⬜ Shipped-supply documents — `uploadShippedSupplyDocument` in `shippedSupply.service.ts`
+### Backward compatibility
 
-### Migrating another flow (pattern)
+Documents uploaded before the migration still carry a Firebase Storage
+`documentUrl`. Every open path prefers the R2 `documentKey` when present and
+falls back to the legacy `documentUrl` (`openAttachment` / `resolveAttachmentHref`
+in `src/lib/r2Storage.ts`), so old attachments keep opening. New uploads and
+replacements write `documentKey` + `storageProvider: 'r2'`; deleting or replacing
+an R2-backed attachment removes the R2 object (best-effort via
+`deleteAttachmentObject`).
 
-1. Swap the service upload to `uploadFileToR2(file, { folder: '<name>' })`.
-2. Persist `documentKey` + `storageProvider: 'r2'` (+ `documentName`) instead of
-   a URL; strip `undefined` before writing to Firestore.
-3. Change each read site to open via a signed URL when `documentKey` is present,
-   falling back to the legacy `documentUrl`:
+Old Firebase Storage objects are **not** deleted or back-filled — historical
+files stay in Firebase Storage and keep working through the fallback. Migrate
+them later or leave them as-is.
 
-   ```ts
-   documentKey ? openR2File(documentKey) : window.open(documentUrl, '_blank', 'noopener,noreferrer')
-   ```
+### The `documentKey` shape
 
-4. On delete/replace, call `deleteFileFromR2(oldKey)` for R2-backed attachments.
+Attachments are stored on their Firestore record as flat fields:
 
-The print/preview views (`InventoryPage`, `ShippingPage`) embed `documentUrl`
-directly into generated HTML; those need a rethink for signed URLs (e.g. resolve
-a URL on click rather than baking it into the printed markup) before the
-shipping flows can fully drop Firebase Storage.
+```ts
+documentKey?: string        // R2 object key, e.g. "invoice-documents/2026-07-21/<uuid>-file.pdf"
+storageProvider?: 'r2'      // present for R2-backed attachments
+documentName?: string       // original file name, for display
+documentUrl?: string        // legacy Firebase URL (old records only)
+```

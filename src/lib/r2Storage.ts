@@ -144,3 +144,51 @@ export async function openR2File(objectKey: string): Promise<void> {
 export async function deleteFileFromR2(objectKey: string): Promise<void> {
   await postJson<{ ok: boolean }>('/api/r2/delete', { objectKey }, 'Failed to delete the document.');
 }
+
+export interface AttachmentRef {
+  documentKey?: string | null; // R2 object key (new storage)
+  documentUrl?: string | null; // legacy Firebase Storage URL
+}
+
+/** Open an attachment: signed URL for R2-backed keys, else the legacy URL. */
+export function openAttachment(a: AttachmentRef): void {
+  if (a.documentKey) {
+    openR2File(a.documentKey).catch((err) =>
+      alert(err instanceof Error ? err.message : 'Failed to open the document.'),
+    );
+  } else if (a.documentUrl) {
+    window.open(a.documentUrl, '_blank', 'noopener,noreferrer');
+  }
+}
+
+/**
+ * Resolve a directly-usable href for an attachment — a fresh signed URL for an
+ * R2 object, or the stored legacy URL. Returns null when neither is available
+ * (or the signed URL can't be minted). Intended for embedding into generated
+ * print/preview HTML; the signed URL is short-lived, so resolve it at the
+ * moment the document is opened, never persist it.
+ */
+export async function resolveAttachmentHref(a: AttachmentRef): Promise<string | null> {
+  if (a.documentKey) {
+    try {
+      return await getR2DownloadUrl(a.documentKey);
+    } catch {
+      return null;
+    }
+  }
+  return a.documentUrl ?? null;
+}
+
+/** Best-effort delete of an attachment's R2 object (no-op for legacy URLs). */
+export async function deleteAttachmentObject(a: {
+  documentKey?: string | null;
+  storageProvider?: string | null;
+}): Promise<void> {
+  if (a.storageProvider === 'r2' && a.documentKey) {
+    try {
+      await deleteFileFromR2(a.documentKey);
+    } catch (err) {
+      console.error('Failed to delete R2 object', a.documentKey, err);
+    }
+  }
+}

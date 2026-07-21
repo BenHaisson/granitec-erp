@@ -168,8 +168,10 @@ export interface ShipmentReceipt {
   date: string; // YYYY-MM-DD
   blNumber?: string;
   remarks?: string;
-  documentUrl?: string;
+  documentUrl?: string;          // legacy Firebase Storage download URL
   documentName?: string;
+  documentKey?: string;          // Cloudflare R2 object key (new attachments)
+  storageProvider?: 'r2';
   lines: ShipmentReceiptLine[];
   addedToInventory: boolean;
   createdAt: Date | { toDate: () => Date };
@@ -188,8 +190,10 @@ export interface ShippingOrder {
   createdAt: Date;
   blNumber?: string;
   remarks?: string;
-  documentUrl?: string;
+  documentUrl?: string;          // legacy Firebase Storage download URL
   documentName?: string;
+  documentKey?: string;          // Cloudflare R2 object key (new attachments)
+  storageProvider?: 'r2';
   verification?: boolean;
   addedToInventory?: boolean; // whether receipt was added to live inventory stock
 }
@@ -209,8 +213,10 @@ export interface ShippedSupply {
   date: string; // YYYY-MM-DD
   description?: string;
   lines: ShippedSupplyLine[];
-  documentUrl?: string;
+  documentUrl?: string;          // legacy Firebase Storage download URL
   documentName?: string;
+  documentKey?: string;          // Cloudflare R2 object key (new attachments)
+  storageProvider?: 'r2';
   addedToInventory: boolean;
   createdAt: Date | { toDate: () => Date };
 }

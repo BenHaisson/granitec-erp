@@ -4,6 +4,7 @@ import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
 import { addProduct, adjustStock, getMovements, deleteProduct, updateProduct, receiveSupplyBatch, reconcileInventoryToMovements } from '@/services/inventory.service';
 import { useProducts } from '@/hooks/useProducts';
 import { getShippingOrders } from '@/services/shipping.service';
+import { resolveAttachmentHref } from '@/lib/r2Storage';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
 import type { Product, ProductType, InventoryMovement, ShippingOrder } from '@/types';
@@ -33,6 +34,8 @@ interface ShippingGroup {
   remarks?: string;
   documentUrl?: string;
   documentName?: string;
+  documentKey?: string;
+  storageProvider?: 'r2';
 }
 
 function categoryLabel(group: ShippingGroup): string {
@@ -46,7 +49,10 @@ function categoryLabel(group: ShippingGroup): string {
   return map[prefix] ?? 'Matières premières';
 }
 
-function openShippingDoc(group: ShippingGroup, format: 'web' | 'pdf' = 'web') {
+async function openShippingDoc(group: ShippingGroup, format: 'web' | 'pdf' = 'web') {
+  // Open the tab synchronously (inside the click gesture) so pop-up blockers
+  // allow it; the signed document URL is resolved before writing the document.
+  const w = window.open('', '_blank');
   const fmt = group.date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const rows = group.items.map((item, i) => `
     <tr>
@@ -55,6 +61,7 @@ function openShippingDoc(group: ShippingGroup, format: 'web' | 'pdf' = 'web') {
       <td class="mono">${item.sku}</td>
       <td class="num">${item.qty.toLocaleString('fr-FR')}</td>
     </tr>`).join('');
+  const docHref = await resolveAttachmentHref(group);
   const html = `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8"><title>Bon de réception ${group.ref}</title>
 <style>
@@ -109,10 +116,9 @@ function openShippingDoc(group: ShippingGroup, format: 'web' | 'pdf' = 'web') {
     </div>
   </div>
   ${group.remarks ? `<div class="remarks"><label>Remarques</label><p>${group.remarks.replace(/\n/g, '<br>')}</p></div>` : ''}
-  ${group.documentUrl ? `<div class="doc-link"><label>Document joint</label><a href="${group.documentUrl}" target="_blank">📎 ${group.documentName ?? 'Document'}</a></div>` : ''}
+  ${docHref ? `<div class="doc-link"><label>Document joint</label><a href="${docHref}" target="_blank">📎 ${group.documentName ?? 'Document'}</a></div>` : ''}
   <div class="stamp">Document généré par Granitec ERP · ${new Date().toLocaleDateString('fr-FR')}</div>
 </body></html>`;
-  const w = window.open('', '_blank');
   if (w) { w.document.write(html); w.document.close(); if (format === 'pdf') setTimeout(() => w.print(), 500); }
 }
 
@@ -1110,6 +1116,8 @@ export default function InventoryPage() {
         remarks: order?.remarks,
         documentUrl: order?.documentUrl,
         documentName: order?.documentName,
+        documentKey: order?.documentKey,
+        storageProvider: order?.storageProvider,
       };
     }).sort((a, b) => b.date.getTime() - a.date.getTime());
   })();

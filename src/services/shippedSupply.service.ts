@@ -2,26 +2,16 @@ import {
   collection, addDoc, getDocs, doc, deleteDoc, Timestamp,
   query, orderBy, limit, where, runTransaction,
 } from 'firebase/firestore';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '@/firebase/config';
+import { db } from '@/firebase/config';
 import type { ShippedSupply, ShippedSupplyLine } from '@/types';
-import { withTimeout } from '@/utils/async';
 import { receiveSupplyBatch } from './inventory.service';
+import { uploadFileToR2, deleteAttachmentObject, type R2Attachment } from '@/lib/r2Storage';
 
-const sanitizeFileName = (name: string) => name.replace(/[^a-zA-Z0-9._-]/g, '_');
-const UPLOAD_TIMEOUT_MS = 30000;
-
-export const uploadShippedSupplyDocument = async (id: string, file: File): Promise<{ url: string; name: string }> => {
-  const path = `shipped-supply-documents/${id}/${Date.now()}_${sanitizeFileName(file.name)}`;
-  const fileRef = storageRef(storage, path);
-  try {
-    await withTimeout(uploadBytes(fileRef, file), UPLOAD_TIMEOUT_MS, 'Upload timed out. Check your connection or Firebase Storage configuration.');
-    return { url: await withTimeout(getDownloadURL(fileRef), UPLOAD_TIMEOUT_MS, 'Failed to retrieve the uploaded document URL.'), name: file.name };
-  } catch (e) {
-    console.error('uploadShippedSupplyDocument failed', e);
-    throw e;
-  }
-};
+// ── Shipped-supply document upload (Cloudflare R2) ────────────────
+export const uploadShippedSupplyDocument = (
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<R2Attachment> => uploadFileToR2(file, { folder: 'shipped-supply-documents', onProgress });
 
 export const getShippedSupplies = async (): Promise<ShippedSupply[]> => {
   const snap = await getDocs(
@@ -39,6 +29,8 @@ export const createShippedSupply = async (
     lines: ShippedSupplyLine[];
     documentUrl?: string;
     documentName?: string;
+    documentKey?: string;
+    storageProvider?: 'r2';
   },
   addToInventory: boolean
 ): Promise<void> => {
@@ -61,10 +53,13 @@ export const createShippedSupply = async (
   if (data.description) record.description = data.description;
   if (data.documentUrl) record.documentUrl = data.documentUrl;
   if (data.documentName) record.documentName = data.documentName;
+  if (data.documentKey) record.documentKey = data.documentKey;
+  if (data.storageProvider) record.storageProvider = data.storageProvider;
   await addDoc(collection(db, 'shipped_supplies'), record);
 };
 
 export const deleteShippedSupply = async (item: ShippedSupply): Promise<void> => {
+  await deleteAttachmentObject(item);
   if (item.addedToInventory) {
     const movSnap = await getDocs(
       query(collection(db, 'inventory_movements'), where('note', '==', item.ref), where('reason', '==', 'PURCHASE'))

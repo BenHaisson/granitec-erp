@@ -12,19 +12,12 @@ import {
 import { getShippingOrders } from '@/services/shipping.service';
 import { getMachines } from '@/services/library.service';
 import { getShippedSupplies, deleteShippedSupply } from '@/services/shippedSupply.service';
-import { openR2File, deleteFileFromR2 } from '@/lib/r2Storage';
+import { openAttachment, deleteFileFromR2 } from '@/lib/r2Storage';
 import type { Invoice, MachineDoc, ShippingOrder, Machine, ShippedSupply } from '@/types';
 
-// Open an invoice's attached document — a fresh signed URL for R2-backed
-// attachments, or the stored legacy Firebase URL for older records.
-const openInvoiceDoc = (inv: { documentKey?: string; documentUrl?: string }) => {
-  if (inv.documentKey) {
-    openR2File(inv.documentKey).catch(err =>
-      alert(err instanceof Error ? err.message : 'Failed to open the document.'));
-  } else if (inv.documentUrl) {
-    window.open(inv.documentUrl, '_blank', 'noopener,noreferrer');
-  }
-};
+// Open an attachment — a fresh signed URL for R2-backed documents, or the
+// stored legacy Firebase URL for older records.
+const openInvoiceDoc = openAttachment;
 
 const toDate = (d: unknown): Date => {
   if (!d) return new Date();
@@ -979,6 +972,8 @@ type BLRecord = {
   date: string;
   documentUrl?: string;
   documentName?: string;
+  documentKey?: string;
+  storageProvider?: 'r2';
 };
 
 function extractBLRecords(orders: ShippingOrder[]): BLRecord[] {
@@ -996,6 +991,8 @@ function extractBLRecords(orders: ShippingOrder[]): BLRecord[] {
           date: r.date,
           documentUrl: r.documentUrl,
           documentName: r.documentName,
+          documentKey: r.documentKey,
+          storageProvider: r.storageProvider,
         });
       }
     }
@@ -1010,6 +1007,8 @@ function extractBLRecords(orders: ShippingOrder[]): BLRecord[] {
         date: order.receivedAt ? new Date(order.receivedAt as unknown as string).toISOString().split('T')[0] : order.date,
         documentUrl: order.documentUrl,
         documentName: order.documentName,
+        documentKey: order.documentKey,
+        storageProvider: order.storageProvider,
       });
     }
   }
@@ -1101,7 +1100,7 @@ function BLReceiptsTab({ orders, invoices, onReload, onAddInvoice }: BLReceiptsT
           <div className="divide-y divide-slate-50">
             {filtered.map(r => {
               const invs = blInvoiceMap.get(r.blNumber) ?? [];
-              const hasDoc = !!r.documentUrl;
+              const hasDoc = !!(r.documentKey || r.documentUrl);
               const hasInvoice = invs.length > 0;
               const order = orderMap.get(r.orderId);
 
@@ -1126,7 +1125,8 @@ function BLReceiptsTab({ orders, invoices, onReload, onAddInvoice }: BLReceiptsT
                   {/* BL Doc status */}
                   <div className="flex flex-col items-center gap-1 w-14">
                     {hasDoc ? (
-                      <a href={r.documentUrl} target="_blank" rel="noopener noreferrer"
+                      <a href={r.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+                        onClick={e => { e.preventDefault(); openAttachment(r); }}
                         className="flex flex-col items-center gap-0.5 group/bl" title="View BL document">
                         <span className="w-3 h-3 rounded-full bg-emerald-500 shadow-sm shadow-emerald-200" />
                         <span className="text-[9px] text-emerald-600 font-bold hidden group-hover/bl:block absolute mt-4 bg-white border border-emerald-200 rounded px-1 z-10">Open</span>
@@ -1135,7 +1135,8 @@ function BLReceiptsTab({ orders, invoices, onReload, onAddInvoice }: BLReceiptsT
                       <span className="w-3 h-3 rounded-full bg-slate-200" title="No BL document attached" />
                     )}
                     {hasDoc && (
-                      <a href={r.documentUrl} target="_blank" rel="noopener noreferrer"
+                      <a href={r.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+                        onClick={e => { e.preventDefault(); openAttachment(r); }}
                         className="text-[9px] text-emerald-600 font-semibold hover:underline">
                         View
                       </a>
@@ -1270,8 +1271,9 @@ function SupplyReceiptsTab({ supplies, onReload }: SupplyReceiptsTabProps) {
                     </span>
                   </div>
                   <div className="flex items-center justify-end gap-1.5">
-                    {s.documentUrl && (
-                      <a href={s.documentUrl} target="_blank" rel="noopener noreferrer"
+                    {(s.documentKey || s.documentUrl) && (
+                      <a href={s.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+                        onClick={e => { e.preventDefault(); openAttachment(s); }}
                         className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors" title={s.documentName ?? 'View document'}>
                         <FileCheck size={14} />
                       </a>
