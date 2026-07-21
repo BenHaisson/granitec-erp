@@ -29,6 +29,9 @@
     "recharts": "^3.8.1",
     "vite": "^6.2.3"
   },
+  "overrides": {
+    "jose": "^4.15.9"
+  },
   "devDependencies": {
     "@firebase/eslint-plugin-security-rules": "^0.0.2",
     "@types/express": "^4.17.21",
