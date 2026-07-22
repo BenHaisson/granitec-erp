@@ -2161,6 +2161,9 @@ export default function ShippingPage() {
   // Filters
   const [filterCat, setFilterCat]           = useState('');
   const [filterSupplier, setFilterSupplier] = useState('');
+  const [filterStatus, setFilterStatus]     = useState<'all' | 'PLANNED' | 'PARTIAL' | 'RECEIVED'>('all');
+  const [dateFrom, setDateFrom]             = useState('');
+  const [dateTo, setDateTo]                 = useState('');
   const [search, setSearch]                 = useState('');
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -2555,6 +2558,9 @@ export default function ShippingPage() {
   const displayOrders = orders.filter(o => {
     if (filterCat && refToCategory(o.ref) !== filterCat) return false;
     if (filterSupplier && (o.supplier ?? '') !== filterSupplier) return false;
+    if (filterStatus !== 'all' && o.status !== filterStatus) return false;
+    if (dateFrom && o.date < dateFrom) return false;
+    if (dateTo && o.date > dateTo) return false;
 
     if (search) {
       const searchLower = search.toLowerCase();
@@ -2646,6 +2652,34 @@ export default function ShippingPage() {
               {allSuppliers.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           )}
+
+          {/* Status filter */}
+          <div className="inline-flex rounded-xl border border-slate-200 overflow-hidden">
+            {([['all', 'Tous'], ['PLANNED', 'Planifié'], ['PARTIAL', 'En cours'], ['RECEIVED', 'Reçu']] as [typeof filterStatus, string][]).map(([val, label]) => (
+              <button key={val} onClick={() => setFilterStatus(val)}
+                className={`px-3 py-1.5 text-xs font-bold transition-colors ${filterStatus === val ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Date range */}
+          <div className="inline-flex items-center gap-1.5">
+            <CalendarCheck size={13} className="text-slate-400" />
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              title="Date de début"
+              className="px-2 py-1.5 border border-slate-200 rounded-xl text-xs text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            <span className="text-slate-300 text-xs">→</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              title="Date de fin"
+              className="px-2 py-1.5 border border-slate-200 rounded-xl text-xs text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            {(dateFrom || dateTo) && (
+              <button onClick={() => { setDateFrom(''); setDateTo(''); }}
+                className="p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Effacer les dates">
+                <X size={13} />
+              </button>
+            )}
+          </div>
 
           {/* Export */}
           <div className="ml-auto relative" ref={exportMenuRef}>

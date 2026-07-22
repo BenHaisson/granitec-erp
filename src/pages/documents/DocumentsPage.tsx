@@ -1003,11 +1003,12 @@ function MachineDocsTab({ docs, machines, onReload }: MachineDocsTabProps) {
 
 type BLRow = {
   kind: 'bl';
-  key: string;          // orderId + blNumber
+  key: string;          // orderId + receipt/legacy discriminator
   orderId: string;
   orderRef: string;
   supplier?: string;
-  blNumber: string;
+  blNumber: string;     // '' when the receipt carries no BL number
+  status?: string;      // parent order status (PARTIAL / RECEIVED)
   date: string;
   documentUrl?: string;
   documentName?: string;
@@ -1034,19 +1035,24 @@ type SupplyRow = {
 
 type ReceiptRow = BLRow | SupplyRow;
 
+// Surface EVERY recorded shipment receipt in the document trail — including
+// those without a BL number or an attached document (they show up flagged as
+// "No BL" / "without document" so nothing recorded on the Shipping page is lost).
 function extractBLRecords(orders: ShippingOrder[]): BLRow[] {
   const records: BLRow[] = [];
   for (const order of orders) {
-    // From receipts array (new flow)
-    for (const r of order.receipts ?? []) {
-      if (r.blNumber) {
+    const receipts = order.receipts ?? [];
+    if (receipts.length > 0) {
+      // New flow — one row per recorded shipment receipt.
+      for (const r of receipts) {
         records.push({
           kind: 'bl',
-          key: `${order.id}__${r.blNumber}`,
+          key: `${order.id}__rcpt__${r.id}`,
           orderId: order.id,
           orderRef: order.ref,
           supplier: order.supplier,
-          blNumber: r.blNumber,
+          blNumber: r.blNumber ?? '',
+          status: order.status,
           date: r.date,
           documentUrl: r.documentUrl,
           documentName: r.documentName,
@@ -1054,16 +1060,16 @@ function extractBLRecords(orders: ShippingOrder[]): BLRow[] {
           storageProvider: r.storageProvider,
         });
       }
-    }
-    // From legacy blNumber field (old flow - received orders without receipts)
-    if (order.blNumber && (!order.receipts || order.receipts.length === 0)) {
+    } else if (order.status === 'RECEIVED') {
+      // Legacy flow — received order marked done without a receipts array.
       records.push({
         kind: 'bl',
-        key: `${order.id}__${order.blNumber}`,
+        key: `${order.id}__legacy`,
         orderId: order.id,
         orderRef: order.ref,
         supplier: order.supplier,
-        blNumber: order.blNumber,
+        blNumber: order.blNumber ?? '',
+        status: order.status,
         date: order.receivedAt ? new Date(order.receivedAt as unknown as string).toISOString().split('T')[0] : order.date,
         documentUrl: order.documentUrl,
         documentName: order.documentName,
@@ -1102,9 +1108,18 @@ interface BLReceiptsTabProps {
   onAddInvoice: (order: ShippingOrder, prefillBL: string) => void;
   onAddInvoiceForSupply: (supplyRef: string, supplierName?: string) => void;
 }
+type DocFilter = 'all' | 'has' | 'none';
+type InvFilter = 'all' | 'has' | 'none';
+type TypeFilter = 'all' | 'bl' | 'supply';
+
 function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onAddInvoiceForSupply }: BLReceiptsTabProps) {
   const [search, setSearch] = useState('');
   const [filterOrder, setFilterOrder] = useState('');
+  const [filterType, setFilterType] = useState<TypeFilter>('all');
+  const [filterDoc, setFilterDoc] = useState<DocFilter>('all');
+  const [filterInvoice, setFilterInvoice] = useState<InvFilter>('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const blRows = extractBLRecords(orders);
   const supplyRows = buildSupplyRows(supplies);
@@ -1112,18 +1127,45 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
 
   // Map: blNumber → invoices that include it
   const blInvoiceMap = new Map<string, Invoice[]>();
+  // Map: shippingOrderId → invoices linked to that order (regardless of BL)
+  const orderInvoiceMap = new Map<string, Invoice[]>();
   for (const inv of invoices) {
     for (const bl of inv.blNumbers) {
+      if (!bl) continue;
       if (!blInvoiceMap.has(bl)) blInvoiceMap.set(bl, []);
       blInvoiceMap.get(bl)!.push(inv);
     }
+    if (inv.shippingOrderId) {
+      if (!orderInvoiceMap.has(inv.shippingOrderId)) orderInvoiceMap.set(inv.shippingOrderId, []);
+      orderInvoiceMap.get(inv.shippingOrderId)!.push(inv);
+    }
   }
+
+  // Resolve the invoices tied to a receipt row — by BL number OR by parent order,
+  // deduplicated so an invoice linked through both channels counts once.
+  const invoicesForBLRow = (r: BLRow): Invoice[] => {
+    const seen = new Map<string, Invoice>();
+    for (const inv of blInvoiceMap.get(r.blNumber) ?? []) seen.set(inv.id, inv);
+    for (const inv of orderInvoiceMap.get(r.orderId) ?? []) seen.set(inv.id, inv);
+    return Array.from(seen.values());
+  };
+
+  const rowHasDoc = (r: ReceiptRow) => !!(r.documentKey || r.documentUrl);
+  const rowHasInvoice = (r: ReceiptRow) =>
+    r.kind === 'bl' ? invoicesForBLRow(r).length > 0 : (blInvoiceMap.get(r.ref) ?? []).length > 0;
 
   const allOrderIds = Array.from(new Set(blRows.map(r => r.orderId)));
   const orderMap = new Map(orders.map(o => [o.id, o]));
 
   const filtered = allRows.filter(r => {
+    if (filterType !== 'all' && r.kind !== filterType) return false;
     if (filterOrder && (r.kind !== 'bl' || r.orderId !== filterOrder)) return false;
+    if (filterDoc === 'has' && !rowHasDoc(r)) return false;
+    if (filterDoc === 'none' && rowHasDoc(r)) return false;
+    if (filterInvoice === 'has' && !rowHasInvoice(r)) return false;
+    if (filterInvoice === 'none' && rowHasInvoice(r)) return false;
+    if (dateFrom && r.date < dateFrom) return false;
+    if (dateTo && r.date > dateTo) return false;
     if (search) {
       const q = search.toLowerCase();
       if (r.kind === 'bl') {
@@ -1138,6 +1180,15 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
     return true;
   });
 
+  const docMissingCount = allRows.filter(r => !rowHasDoc(r)).length;
+  const invMissingCount = allRows.filter(r => !rowHasInvoice(r)).length;
+  const hasActiveFilters = filterType !== 'all' || filterDoc !== 'all' || filterInvoice !== 'all'
+    || !!dateFrom || !!dateTo || !!filterOrder || !!search;
+  const clearFilters = () => {
+    setSearch(''); setFilterOrder(''); setFilterType('all');
+    setFilterDoc('all'); setFilterInvoice('all'); setDateFrom(''); setDateTo('');
+  };
+
   const handleDeleteSupply = async (s: ShippedSupply) => {
     if (!confirm(`Delete shipped supply ${s.ref}?${s.addedToInventory ? ' This will reverse the stock it added.' : ''}`)) return;
     await deleteShippedSupply(s);
@@ -1147,25 +1198,77 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
   return (
     <div className="space-y-5">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input type="text" placeholder="Search BL, ref, order, supplier…" value={search} onChange={e => setSearch(e.target.value)}
-            className="pl-8 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white w-56" />
+      <div className="space-y-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input type="text" placeholder="Search BL, ref, order, supplier…" value={search} onChange={e => setSearch(e.target.value)}
+              className="pl-8 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white w-56" />
+          </div>
+          {allOrderIds.length > 0 && (
+            <select value={filterOrder} onChange={e => setFilterOrder(e.target.value)}
+              className="px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
+              <option value="">All orders</option>
+              {allOrderIds.map(id => {
+                const o = orderMap.get(id);
+                return o ? <option key={id} value={id}>{o.ref}{o.supplier ? ` · ${o.supplier}` : ''}</option> : null;
+              })}
+            </select>
+          )}
+          <div className="ml-auto flex items-center gap-4 text-xs text-slate-400">
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" /> Doc available</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-200 inline-block" /> Missing</span>
+          </div>
         </div>
-        {allOrderIds.length > 0 && (
-          <select value={filterOrder} onChange={e => setFilterOrder(e.target.value)}
-            className="px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="">All orders</option>
-            {allOrderIds.map(id => {
-              const o = orderMap.get(id);
-              return o ? <option key={id} value={id}>{o.ref}{o.supplier ? ` · ${o.supplier}` : ''}</option> : null;
-            })}
-          </select>
-        )}
-        <div className="ml-auto flex items-center gap-4 text-xs text-slate-400">
-          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" /> Doc available</span>
-          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-200 inline-block" /> Missing</span>
+
+        {/* Filter row: type · document · invoice · date range */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Type */}
+          <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+            {([['all', 'All'], ['bl', 'Orders'], ['supply', 'Supplies']] as [TypeFilter, string][]).map(([val, label]) => (
+              <button key={val} onClick={() => setFilterType(val)}
+                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${filterType === val ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Document status */}
+          <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+            {([['all', 'Any doc'], ['has', 'With BL doc'], ['none', 'Without document']] as [DocFilter, string][]).map(([val, label]) => (
+              <button key={val} onClick={() => setFilterDoc(val)}
+                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${filterDoc === val ? 'bg-emerald-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                {label}{val === 'none' && docMissingCount > 0 ? ` (${docMissingCount})` : ''}
+              </button>
+            ))}
+          </div>
+
+          {/* Invoice status */}
+          <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+            {([['all', 'Any invoice'], ['has', 'BL has invoice'], ['none', 'No invoice']] as [InvFilter, string][]).map(([val, label]) => (
+              <button key={val} onClick={() => setFilterInvoice(val)}
+                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${filterInvoice === val ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                {label}{val === 'none' && invMissingCount > 0 ? ` (${invMissingCount})` : ''}
+              </button>
+            ))}
+          </div>
+
+          {/* Date range */}
+          <div className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+            <FileClock size={13} className="text-slate-400" />
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              className="px-2 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" />
+            <span className="text-slate-300">→</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              className="px-2 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" />
+          </div>
+
+          {hasActiveFilters && (
+            <button onClick={clearFilters}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors">
+              <X size={12} /> Clear · {filtered.length}/{allRows.length}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1215,17 +1318,29 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
               );
 
               if (r.kind === 'bl') {
-                const invs = blInvoiceMap.get(r.blNumber) ?? [];
+                const invs = invoicesForBLRow(r);
                 const hasInvoice = invs.length > 0;
                 const order = orderMap.get(r.orderId);
                 return (
                   <div key={r.key} className="grid grid-cols-[2fr_1.2fr_1fr_auto_auto_auto] gap-4 items-center px-5 py-3 hover:bg-slate-50/60 transition-colors group">
                     {/* Reference */}
-                    <div className="min-w-0 flex items-center gap-2">
+                    <div className="min-w-0 flex items-center gap-2 flex-wrap">
                       <p className="font-mono font-bold text-slate-800 text-sm truncate">{r.orderRef}</p>
-                      <span className="font-mono font-semibold text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 shrink-0">
-                        BL: {r.blNumber}
-                      </span>
+                      {r.blNumber ? (
+                        <span className="font-mono font-semibold text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 shrink-0">
+                          BL: {r.blNumber}
+                        </span>
+                      ) : (
+                        <span className="font-mono font-semibold text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
+                          No BL
+                        </span>
+                      )}
+                      {r.status === 'PARTIAL' && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded shrink-0">Partial</span>
+                      )}
+                      {!hasDoc && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">Without document</span>
+                      )}
                     </div>
 
                     {/* Supplier */}
@@ -1279,6 +1394,9 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0 ${r.addedToInventory ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                         {r.addedToInventory ? 'Added' : 'Not added'}
                       </span>
+                      {!hasDoc && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">Without document</span>
+                      )}
                     </div>
                     <p className="text-xs text-slate-400 truncate mt-0.5" title={r.description}>
                       {r.totalQty.toLocaleString('fr-FR')} pcs · {r.lineCount} ref{r.lineCount !== 1 ? 's' : ''}{r.description ? ` · ${r.description}` : ''}
