@@ -2379,12 +2379,21 @@ export default function ShippingPage() {
       let documentName = editingReceipt?.documentName;
       let documentKey = editingReceipt?.documentKey;
       let storageProvider = editingReceipt?.storageProvider;
+      let uploadError = '';
       if (data.file) {
-        if (editingReceipt) await deleteAttachmentObject(editingReceipt);
-        const uploaded = await uploadReceiptDocument(data.file);
-        documentKey = uploaded.objectKey;
-        documentName = uploaded.originalName;
-        storageProvider = 'r2';
+        // Document upload must never discard the recorded shipment. If the R2
+        // upload fails (e.g. bucket CORS), we still save the receipt quantities
+        // and let the user re-attach the file later.
+        try {
+          if (editingReceipt) await deleteAttachmentObject(editingReceipt);
+          const uploaded = await uploadReceiptDocument(data.file);
+          documentKey = uploaded.objectKey;
+          documentName = uploaded.originalName;
+          storageProvider = 'r2';
+        } catch (e) {
+          uploadError = e instanceof Error ? e.message : 'Document upload failed.';
+          console.error('Receipt document upload failed — saving receipt without it.', e);
+        }
       }
       const receiptData = { date: data.date, blNumber: data.blNumber, remarks: data.remarks, documentUrl, documentName, documentKey, storageProvider, lines: data.lines, addedToInventory: data.addedToInventory };
       if (editingReceipt) {
@@ -2398,6 +2407,9 @@ export default function ShippingPage() {
       // Auto-open history so the user can immediately see the updated receipts
       const freshOrder = freshOrders?.find(o => o.id === order.id);
       if (freshOrder) setHistoryOrder(freshOrder);
+      if (uploadError) {
+        alert(`Shipment saved, but the document could not be uploaded:\n${uploadError}\n\nThe receipt and its quantities were recorded. Edit the receipt to attach the document once storage is reachable.`);
+      }
     } catch (e) {
       throw e;
     } finally {
@@ -2423,11 +2435,18 @@ export default function ShippingPage() {
     let documentName: string | undefined;
     let documentKey: string | undefined;
     let storageProvider: 'r2' | undefined;
+    let uploadError = '';
     if (data.file) {
-      const uploaded = await uploadShippedSupplyDocument(data.file);
-      documentKey = uploaded.objectKey;
-      documentName = uploaded.originalName;
-      storageProvider = 'r2';
+      // Never lose the logged supply because the document upload failed.
+      try {
+        const uploaded = await uploadShippedSupplyDocument(data.file);
+        documentKey = uploaded.objectKey;
+        documentName = uploaded.originalName;
+        storageProvider = 'r2';
+      } catch (e) {
+        uploadError = e instanceof Error ? e.message : 'Document upload failed.';
+        console.error('Shipped-supply document upload failed — saving without it.', e);
+      }
     }
     await createShippedSupply({
       ref: data.ref,
@@ -2440,7 +2459,10 @@ export default function ShippingPage() {
       storageProvider,
     }, data.addToInventory);
     setShowShippedSupply(false);
-    if (data.addToInventory) await load();
+    await load();
+    if (uploadError) {
+      alert(`Supply saved, but the document could not be uploaded:\n${uploadError}\n\nThe supply was recorded (visible in Documents, flagged "Without document"). You can attach the document later once storage is reachable.`);
+    }
   };
 
   const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null; addToInventory: boolean }) => {
@@ -2451,11 +2473,18 @@ export default function ShippingPage() {
       let documentName: string | undefined;
       let documentKey: string | undefined;
       let storageProvider: 'r2' | undefined;
+      let uploadError = '';
       if (data.file) {
-        const uploaded = await uploadReceiptDocument(data.file);
-        documentKey = uploaded.objectKey;
-        documentName = uploaded.originalName;
-        storageProvider = 'r2';
+        // Never lose the receipt because the document upload failed.
+        try {
+          const uploaded = await uploadReceiptDocument(data.file);
+          documentKey = uploaded.objectKey;
+          documentName = uploaded.originalName;
+          storageProvider = 'r2';
+        } catch (e) {
+          uploadError = e instanceof Error ? e.message : 'Document upload failed.';
+          console.error('Receipt document upload failed — receiving without it.', e);
+        }
       }
       const failedIds = await receiveShippingOrder(order, {
         blNumber: data.blNumber.trim() || undefined,
@@ -2467,6 +2496,9 @@ export default function ShippingPage() {
       setReceivingOrder(null);
       if (failedIds.length > 0) {
         alert(`⚠ ${failedIds.length} product(s) could not be received (not found in inventory): ${failedIds.join(', ')}`);
+      }
+      if (uploadError) {
+        alert(`Order received, but the document could not be uploaded:\n${uploadError}\n\nThe receipt was recorded. Edit the order to attach the document once storage is reachable.`);
       }
       await load();
     } catch (e) {
