@@ -49,16 +49,17 @@ interface InvoiceModalProps {
   orders: ShippingOrder[];
   prefillOrderId?: string;
   prefillBL?: string;
+  prefillSupplier?: string;
   onSave: (data: Omit<Invoice, 'id' | 'createdAt'>, file: File | null) => Promise<void>;
   onClose: () => void;
 }
-function InvoiceModal({ invoice, orders, prefillOrderId, prefillBL, onSave, onClose }: InvoiceModalProps) {
+function InvoiceModal({ invoice, orders, prefillOrderId, prefillBL, prefillSupplier, onSave, onClose }: InvoiceModalProps) {
   const initOrderId = invoice?.shippingOrderId ?? prefillOrderId ?? '';
   const initOrder = orders.find(o => o.id === initOrderId);
   const [invoiceNumber, setInvoiceNumber] = useState(invoice?.invoiceNumber ?? '');
   const [selectedOrderId, setSelectedOrderId]   = useState(initOrderId);
   const [selectedOrderRef, setSelectedOrderRef] = useState(invoice?.shippingOrderRef ?? initOrder?.ref ?? '');
-  const [supplier, setSupplier] = useState(invoice?.supplier ?? initOrder?.supplier ?? '');
+  const [supplier, setSupplier] = useState(invoice?.supplier ?? initOrder?.supplier ?? prefillSupplier ?? '');
   const initBLs = invoice?.blNumbers ?? (prefillBL ? [prefillBL] : (initOrder ? getOrderBLs(initOrder) : []));
   const [blNumbers, setBlNumbers]   = useState<string[]>(initBLs);
   const [blInput, setBlInput]       = useState('');
@@ -100,15 +101,15 @@ function InvoiceModal({ invoice, orders, prefillOrderId, prefillBL, onSave, onCl
 
   const handleSave = async () => {
     if (!invoiceNumber.trim()) { setError('Invoice number is required.'); return; }
-    if (!selectedOrderId)      { setError('Select a shipping order.'); return; }
+    if (!selectedOrderId && blNumbers.length === 0) { setError('Select a shipping order or add a BL/reference number.'); return; }
     if (!date)                 { setError('Date is required.'); return; }
     setSaving(true);
     setError('');
     try {
       await onSave({
         invoiceNumber: invoiceNumber.trim(),
-        shippingOrderId: selectedOrderId,
-        shippingOrderRef: selectedOrderRef,
+        shippingOrderId: selectedOrderId || undefined,
+        shippingOrderRef: selectedOrderRef || undefined,
         supplier: supplier.trim() || undefined,
         blNumbers,
         amount: amount ? Number(amount) : undefined,
@@ -160,16 +161,19 @@ function InvoiceModal({ invoice, orders, prefillOrderId, prefillBL, onSave, onCl
 
           {/* Shipping Order */}
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Shipping Order *</label>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Shipping Order</label>
             <select value={selectedOrderId} onChange={e => handleOrderSelect(e.target.value)}
               className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 bg-white">
-              <option value="">— Select a shipping order —</option>
+              <option value="">— No shipping order (BL / direct invoice) —</option>
               {orders.map(o => (
                 <option key={o.id} value={o.id}>
                   {o.ref}{o.supplier ? ` · ${o.supplier}` : ''} · {o.date}
                 </option>
               ))}
             </select>
+            {!selectedOrderId && (
+              <p className="text-[11px] text-slate-400 mt-1">Optional if a BL/reference number is added below — e.g. for a shipped supply.</p>
+            )}
           </div>
 
           {/* BL Numbers */}
@@ -411,32 +415,37 @@ interface InvoicesTabProps {
   onReload: () => Promise<void>;
   prefillOrder?: ShippingOrder;
   prefillBL?: string;
+  prefillSupplier?: string;
   onPrefillConsumed?: () => void;
 }
-function InvoicesTab({ invoices, orders, onReload, prefillOrder, prefillBL, onPrefillConsumed }: InvoicesTabProps) {
+function InvoicesTab({ invoices, orders, onReload, prefillOrder, prefillBL, prefillSupplier, onPrefillConsumed }: InvoicesTabProps) {
   const [showModal, setShowModal]       = useState(false);
   const [editingInv, setEditingInv]     = useState<Invoice | null>(null);
   const [detailOrder, setDetailOrder]   = useState<ShippingOrder | null>(null);
   const [preselectedOrder, setPreselectedOrder] = useState<ShippingOrder | null>(null);
   const [preselectedBL, setPreselectedBL] = useState<string | null>(null);
+  const [preselectedSupplier, setPreselectedSupplier] = useState<string | null>(null);
   const [search, setSearch]             = useState('');
   const [filterOrder, setFilterOrder]   = useState('');
 
-  // Auto-open modal when navigated from BL Receipts tab
+  // Auto-open modal when navigated from BL Receipts tab (either an order-backed
+  // BL receipt, or a direct BL/reference such as a shipped supply's ref).
   useEffect(() => {
-    if (prefillOrder) {
+    if (prefillOrder || prefillBL) {
       setEditingInv(null);
-      setPreselectedOrder(prefillOrder);
+      setPreselectedOrder(prefillOrder ?? null);
       setPreselectedBL(prefillBL ?? null);
+      setPreselectedSupplier(prefillSupplier ?? null);
       setShowModal(true);
       onPrefillConsumed?.();
     }
-  }, [prefillOrder]);
+  }, [prefillOrder, prefillBL, prefillSupplier]);
 
   const openCreate = (order?: ShippingOrder) => {
     setEditingInv(null);
     setPreselectedOrder(order ?? null);
     setPreselectedBL(null);
+    setPreselectedSupplier(null);
     setShowModal(true);
   };
 
@@ -481,9 +490,12 @@ function InvoicesTab({ invoices, orders, onReload, prefillOrder, prefillBL, onPr
     await onReload();
   };
 
-  // Group invoices by shipping order
+  // Group invoices by shipping order; invoices without one (e.g. linked
+  // directly via a shipped supply's BL/reference) are kept separately.
   const byOrder = new Map<string, Invoice[]>();
+  const directInvoices: Invoice[] = [];
   for (const inv of invoices) {
+    if (!inv.shippingOrderId) { directInvoices.push(inv); continue; }
     if (!byOrder.has(inv.shippingOrderId)) byOrder.set(inv.shippingOrderId, []);
     byOrder.get(inv.shippingOrderId)!.push(inv);
   }
@@ -496,7 +508,7 @@ function InvoicesTab({ invoices, orders, onReload, prefillOrder, prefillBL, onPr
     if (search) {
       const q = search.toLowerCase();
       return inv.invoiceNumber.toLowerCase().includes(q)
-        || inv.shippingOrderRef.toLowerCase().includes(q)
+        || (inv.shippingOrderRef ?? '').toLowerCase().includes(q)
         || (inv.supplier ?? '').toLowerCase().includes(q)
         || inv.blNumbers.some(bl => bl.toLowerCase().includes(q));
     }
@@ -516,6 +528,43 @@ function InvoicesTab({ invoices, orders, onReload, prefillOrder, prefillBL, onPr
       invoices: (byOrder.get(o.id) ?? []).filter(inv => filteredInvoices.find(fi => fi.id === inv.id)),
     }))
     .filter(g => g.invoices.length > 0);
+
+  // Direct invoices (no shipping order) never match a specific order filter.
+  const filteredDirectInvoices = filterOrder ? [] : directInvoices.filter(inv => filteredInvoices.find(fi => fi.id === inv.id));
+
+  const renderInvoiceRow = (inv: Invoice) => (
+    <div key={inv.id} className="flex items-center justify-between px-5 py-3 hover:bg-slate-50/50 transition-colors group">
+      <div className="flex items-center gap-3">
+        <Receipt size={14} className="text-slate-400 shrink-0" />
+        <div>
+          <span className="font-mono font-bold text-slate-800 text-sm">{inv.invoiceNumber}</span>
+          <span className="text-xs text-slate-400 ml-3">{fmtDate(inv.date)}</span>
+          <span className={`ml-2 text-xs font-semibold font-mono ${inv.blNumbers.length > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>
+            BL: {inv.blNumbers.length > 0 ? inv.blNumbers.join(', ') : '—'}
+          </span>
+          {inv.remarks && <p className="text-xs text-slate-400 mt-0.5 italic">{inv.remarks}</p>}
+        </div>
+      </div>
+      <div className="flex items-center gap-4">
+        {inv.amount && (
+          <span className="text-sm font-bold text-slate-700 tabular-nums">
+            {inv.amount.toLocaleString('fr-FR')} <span className="text-xs font-normal text-slate-400">{inv.currency}</span>
+          </span>
+        )}
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {(inv.documentKey || inv.documentUrl) && (
+            <a href={inv.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+              onClick={e => { e.preventDefault(); openInvoiceDoc(inv); }}
+              className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors" title="View document">
+              <ExternalLink size={13} />
+            </a>
+          )}
+          <button onClick={() => openEdit(inv)} className="p-1.5 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors"><Pencil size={13} /></button>
+          <button onClick={() => handleDelete(inv)} className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 transition-colors"><Trash2 size={13} /></button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-5">
@@ -547,10 +596,28 @@ function InvoicesTab({ invoices, orders, onReload, prefillOrder, prefillBL, onPr
             <Plus size={14} /> Add Invoice
           </button>
         </div>
-      ) : groupedDisplay.length === 0 ? (
+      ) : groupedDisplay.length === 0 && filteredDirectInvoices.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-100 p-8 text-center text-slate-400 text-sm">No results for the selected filters.</div>
       ) : (
         <div className="space-y-4">
+          {filteredDirectInvoices.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+              <div className="flex items-center gap-3 px-5 py-3 bg-slate-50 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                  <FileCheck size={14} className="text-slate-500" />
+                </div>
+                <div>
+                  <span className="font-bold text-slate-800 text-sm">Direct Invoices</span>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {filteredDirectInvoices.length} invoice{filteredDirectInvoices.length !== 1 ? 's' : ''} linked by BL/reference, no shipping order
+                  </p>
+                </div>
+              </div>
+              <div className="divide-y divide-slate-50">
+                {filteredDirectInvoices.map(inv => renderInvoiceRow(inv))}
+              </div>
+            </div>
+          )}
           {groupedDisplay.map(({ order, invoices: orderInvs }) => {
             const totalAmt = orderInvs.reduce((s, i) => s + (i.amount ?? 0), 0);
             const allBLs = Array.from(new Set(orderInvs.flatMap(i => i.blNumbers)));
@@ -591,39 +658,7 @@ function InvoicesTab({ invoices, orders, onReload, prefillOrder, prefillBL, onPr
 
                 {/* Invoice rows */}
                 <div className="divide-y divide-slate-50">
-                  {orderInvs.map(inv => (
-                    <div key={inv.id} className="flex items-center justify-between px-5 py-3 hover:bg-slate-50/50 transition-colors group">
-                      <div className="flex items-center gap-3">
-                        <Receipt size={14} className="text-slate-400 shrink-0" />
-                        <div>
-                          <span className="font-mono font-bold text-slate-800 text-sm">{inv.invoiceNumber}</span>
-                          <span className="text-xs text-slate-400 ml-3">{fmtDate(inv.date)}</span>
-                          <span className={`ml-2 text-xs font-semibold font-mono ${inv.blNumbers.length > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>
-                            BL: {inv.blNumbers.length > 0 ? inv.blNumbers.join(', ') : '—'}
-                          </span>
-                          {inv.remarks && <p className="text-xs text-slate-400 mt-0.5 italic">{inv.remarks}</p>}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        {inv.amount && (
-                          <span className="text-sm font-bold text-slate-700 tabular-nums">
-                            {inv.amount.toLocaleString('fr-FR')} <span className="text-xs font-normal text-slate-400">{inv.currency}</span>
-                          </span>
-                        )}
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {(inv.documentKey || inv.documentUrl) && (
-                            <a href={inv.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
-                              onClick={e => { e.preventDefault(); openInvoiceDoc(inv); }}
-                              className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors" title="View document">
-                              <ExternalLink size={13} />
-                            </a>
-                          )}
-                          <button onClick={() => openEdit(inv)} className="p-1.5 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors"><Pencil size={13} /></button>
-                          <button onClick={() => handleDelete(inv)} className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 transition-colors"><Trash2 size={13} /></button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                  {orderInvs.map(inv => renderInvoiceRow(inv))}
                 </div>
               </div>
             );
@@ -638,8 +673,9 @@ function InvoicesTab({ invoices, orders, onReload, prefillOrder, prefillBL, onPr
           orders={preselectedOrder ? [preselectedOrder, ...orders.filter(o => o.id !== preselectedOrder.id)] : orders}
           prefillOrderId={preselectedOrder?.id}
           prefillBL={preselectedBL ?? undefined}
+          prefillSupplier={preselectedSupplier ?? undefined}
           onSave={handleSave}
-          onClose={() => { setShowModal(false); setEditingInv(null); setPreselectedOrder(null); setPreselectedBL(null); }}
+          onClose={() => { setShowModal(false); setEditingInv(null); setPreselectedOrder(null); setPreselectedBL(null); setPreselectedSupplier(null); }}
         />
       )}
 
@@ -1064,8 +1100,9 @@ interface BLReceiptsTabProps {
   invoices: Invoice[];
   onReload: () => Promise<void>;
   onAddInvoice: (order: ShippingOrder, prefillBL: string) => void;
+  onAddInvoiceForSupply: (supplyRef: string, supplierName?: string) => void;
 }
-function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice }: BLReceiptsTabProps) {
+function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onAddInvoiceForSupply }: BLReceiptsTabProps) {
   const [search, setSearch] = useState('');
   const [filterOrder, setFilterOrder] = useState('');
 
@@ -1226,13 +1263,18 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice }: B
                 );
               }
 
-              // Shipped-supply row
+              // Shipped-supply row — its reference is treated as its own BL number
+              const supplyInvs = blInvoiceMap.get(r.ref) ?? [];
+              const supplyHasInvoice = supplyInvs.length > 0;
               return (
                 <div key={r.key} className="grid grid-cols-[2fr_1.2fr_1fr_auto_auto_auto] gap-4 items-center px-5 py-3 hover:bg-slate-50/60 transition-colors group">
                   {/* Reference */}
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="font-mono font-bold text-slate-800 text-sm truncate">{r.ref}</p>
+                      <span className="font-mono font-semibold text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 shrink-0">
+                        BL: {r.ref}
+                      </span>
                       <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">Supply</span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0 ${r.addedToInventory ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                         {r.addedToInventory ? 'Added' : 'Not added'}
@@ -1254,11 +1296,25 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice }: B
 
                   {/* Invoice status */}
                   <div className="flex items-center justify-center w-28">
-                    <span className="text-[11px] font-semibold text-slate-400">No invoice</span>
+                    {supplyHasInvoice ? (
+                      <button type="button" onClick={() => openInvoiceDoc(supplyInvs[0])}
+                        className="text-[11px] font-bold text-emerald-600 hover:underline"
+                        title={supplyInvs.map(i => i.invoiceNumber).join(', ')}>
+                        View Invoice{supplyInvs.length > 1 ? ` (${supplyInvs.length})` : ''}
+                      </button>
+                    ) : (
+                      <span className="text-[11px] font-semibold text-slate-400">No invoice</span>
+                    )}
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center justify-end">
+                  <div className="flex items-center justify-end gap-1">
+                    {!supplyHasInvoice && (
+                      <button onClick={() => onAddInvoiceForSupply(r.ref, r.supplier)}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
+                        <Plus size={11} /> Invoice
+                      </button>
+                    )}
                     <button onClick={() => handleDeleteSupply(r.supply)}
                       className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100">
                       <Trash2 size={14} />
@@ -1290,6 +1346,7 @@ export default function DocumentsPage() {
   // For "Add Invoice from BL" shortcut
   const [blInvoiceOrder, setBlInvoiceOrder] = useState<ShippingOrder | null>(null);
   const [blInvoicePrefill, setBlInvoicePrefill] = useState<string>('');
+  const [blInvoiceSupplier, setBlInvoiceSupplier] = useState<string>('');
 
   const load = async () => {
     setLoading(true);
@@ -1366,6 +1423,13 @@ export default function DocumentsPage() {
               onAddInvoice={(order, bl) => {
                 setBlInvoiceOrder(order);
                 setBlInvoicePrefill(bl);
+                setBlInvoiceSupplier('');
+                setTab('invoices');
+              }}
+              onAddInvoiceForSupply={(supplyRef, supplierName) => {
+                setBlInvoiceOrder(null);
+                setBlInvoicePrefill(supplyRef);
+                setBlInvoiceSupplier(supplierName ?? '');
                 setTab('invoices');
               }}
             />
@@ -1377,7 +1441,8 @@ export default function DocumentsPage() {
               onReload={load}
               prefillOrder={blInvoiceOrder ?? undefined}
               prefillBL={blInvoicePrefill || undefined}
-              onPrefillConsumed={() => { setBlInvoiceOrder(null); setBlInvoicePrefill(''); }}
+              prefillSupplier={blInvoiceSupplier || undefined}
+              onPrefillConsumed={() => { setBlInvoiceOrder(null); setBlInvoicePrefill(''); setBlInvoiceSupplier(''); }}
             />
           )}
           {tab === 'machines' && (

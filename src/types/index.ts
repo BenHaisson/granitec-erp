@@ -224,8 +224,8 @@ export interface ShippedSupply {
 export interface Invoice {
   id: string;
   invoiceNumber: string;
-  shippingOrderId: string;
-  shippingOrderRef: string;
+  shippingOrderId?: string;   // absent when the invoice is linked directly via a BL/reference (e.g. a shipped supply)
+  shippingOrderRef?: string;
   supplier?: string;
   blNumbers: string[];
   amount?: number;
