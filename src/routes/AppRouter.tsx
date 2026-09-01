@@ -17,6 +17,7 @@ import DocumentsPage from '@/pages/documents/DocumentsPage';
 import UnverifiedStockPage from '@/pages/inventory/UnverifiedStockPage';
 import SuppliersPage from '@/pages/suppliers/SuppliersPage';
 import ClientsPage from '@/pages/clients/ClientsPage';
+import PersonnelPage from '@/pages/personnel/PersonnelPage';
 
 export default function AppRouter() {
   return (
@@ -31,6 +32,7 @@ export default function AppRouter() {
         <Route path="/sales" element={<SalesPage />} />
         <Route path="/suppliers" element={<SuppliersPage />} />
         <Route path="/clients" element={<ClientsPage />} />
+        <Route path="/personnel" element={<PersonnelPage />} />
         <Route path="/production" element={<ProductionPage />} />
         <Route path="/bom" element={<BOMPage />} />
         <Route path="/movements" element={<MovementsPage />} />

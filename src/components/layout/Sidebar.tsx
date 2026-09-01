@@ -3,6 +3,7 @@ import {
   LayoutDashboard, Package, Factory,
   ShoppingCart, Warehouse, ArrowLeftRight,
   BarChart3, Settings, LogOut, TrendingUp, BookOpen, Truck, AlertCircle, Building2, Users, NotebookPen, FolderOpen,
+  UserCog,
 } from 'lucide-react';
 import { signOut } from '@/firebase/auth';
 
@@ -26,6 +27,12 @@ const NAV_SECTIONS = [
       { to: '/suppliers',  icon: Building2,      label: 'Suppliers'   },
       { to: '/clients',    icon: Users,          label: 'Clients'     },
       { to: '/movements',  icon: ArrowLeftRight, label: 'Movements'   },
+    ],
+  },
+  {
+    label: 'Personnel',
+    items: [
+      { to: '/personnel', icon: UserCog, label: 'Personnel' },
     ],
   },
   {
