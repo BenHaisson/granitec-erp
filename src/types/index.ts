@@ -281,3 +281,103 @@ export interface Client {
   description?: string;
   createdAt?: string;
 }
+
+// ── Personnel (HR) ────────────────────────────────────────────────
+export type ContractType   = 'CDI' | 'CDD' | 'interim' | 'trial';
+export type EmployeeStatus = 'active' | 'suspended' | 'left';
+
+export interface Employee {
+  id: string;
+  firstName: string;
+  lastName: string;
+  matricule?: string;        // internal staff number
+  cin?: string;              // national ID
+  cnss?: string;
+  position?: string;
+  department?: string;
+  hireDate: string;          // YYYY-MM-DD — drives leave accrual
+  endDate?: string;          // YYYY-MM-DD, set when the employee leaves
+  contractType?: ContractType;
+  status: EmployeeStatus;
+  mainPhone?: string;
+  phones?: PhoneContact[];
+  address?: string;
+  notes?: string;
+  leaveDaysPerYear?: number; // overrides the 18 d/yr legal default
+  leaveCarryOver?: number;   // days carried in from before the system
+  createdAt?: string;
+}
+
+export type AbsenceType     = 'absence' | 'sick' | 'late' | 'unpaid';
+export type AbsenceDuration = 'full' | 'half' | 'hours';
+
+export interface Absence {
+  id: string;
+  employeeId: string;
+  employeeName: string;      // display snapshot; live name wins when resolvable
+  date: string;              // YYYY-MM-DD
+  type: AbsenceType;
+  duration: AbsenceDuration;
+  hours?: number;            // when duration === 'hours' (lateness / part-day)
+  justified: boolean;
+  reason?: string;
+  documentUrl?: string;          // legacy Firebase Storage download URL
+  documentName?: string;
+  documentKey?: string;          // Cloudflare R2 object key
+  storageProvider?: 'r2';
+  createdAt: Date | { toDate: () => Date };
+}
+
+export type LeaveType     = 'annual' | 'sick' | 'unpaid' | 'special';
+export type RequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export interface LeaveRequest {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  type: LeaveType;
+  startDate: string;         // YYYY-MM-DD
+  endDate: string;           // YYYY-MM-DD
+  days: number;              // pre-filled from the dates, editable
+  status: RequestStatus;
+  reason?: string;
+  decidedAt?: string;        // ISO timestamp
+  decidedBy?: string;        // signed-in user's email
+  createdAt: Date | { toDate: () => Date };
+}
+
+export type OvertimePeriod = 'day' | 'night' | 'rest_day' | 'holiday';
+
+export interface OvertimeEntry {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string;              // YYYY-MM-DD
+  hours: number;
+  period?: OvertimePeriod;   // context only — no rate maths in this scope
+  status: RequestStatus;
+  note?: string;
+  createdAt: Date | { toDate: () => Date };
+}
+
+export type AdvanceStatus = 'open' | 'settled';
+export type PaymentMethod = 'cash' | 'transfer' | 'cheque';
+
+export interface AdvancePayment {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string;              // YYYY-MM-DD paid out
+  amount: number;
+  currency: string;
+  method?: PaymentMethod;
+  deductMonth: string;       // YYYY-MM the advance comes off
+  status: AdvanceStatus;
+  settledDate?: string;      // YYYY-MM-DD
+  reason?: string;
+  documentUrl?: string;          // legacy Firebase Storage download URL
+  documentName?: string;
+  documentKey?: string;          // Cloudflare R2 object key
+  storageProvider?: 'r2';
+  createdAt: Date | { toDate: () => Date };
+}

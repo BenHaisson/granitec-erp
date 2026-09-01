@@ -31,6 +31,13 @@ service cloud.firestore {
     match /suppliers/{id}          { allow read, write: if auth(); }
     match /clients/{id}            { allow read, write: if auth(); }
 
+    // Personnel (HR)
+    match /employees/{id}          { allow read, write: if auth(); }
+    match /hr_absences/{id}        { allow read, write: if auth(); }
+    match /hr_leave/{id}           { allow read, write: if auth(); }
+    match /hr_overtime/{id}        { allow read, write: if auth(); }
+    match /hr_advances/{id}        { allow read, write: if auth(); }
+
     match /{document=**} { allow read, write: if auth(); }
   }
 }
