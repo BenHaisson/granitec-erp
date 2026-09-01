@@ -16,7 +16,7 @@ import {
 } from '@/services/shipping.service';
 import { getSuppliers, createSupplier } from '@/services/supplier.service';
 import { getRecipes } from '@/services/production.service';
-import { getShippedSupplies, createShippedSupply, uploadShippedSupplyDocument } from '@/services/shippedSupply.service';
+import { getShippedSupplies, createShippedSupply, uploadShippedSupplyDocument, deleteShippedSupply } from '@/services/shippedSupply.service';
 import { openAttachment, resolveAttachmentHref, deleteAttachmentObject } from '@/lib/r2Storage';
 import type { Product, ShippingOrder, ShippingOrderLine, ShipmentReceipt, ShipmentReceiptLine, Recipe, Supplier, ShippedSupply, ShippedSupplyLine } from '@/types';
 import { todayISO } from '@/utils/dates';
@@ -1587,6 +1587,111 @@ function OrderTable({ orders, expanded, receiving, deleting, onToggleExpand, onR
   );
 }
 
+// ── Shipped Supply history table ──────────────────────────────────
+interface SupplyTableProps {
+  supplies: ShippedSupply[];
+  expanded: Set<string>;
+  deleting: Set<string>;
+  onToggleExpand: (id: string) => void;
+  onDelete: (supply: ShippedSupply) => void;
+}
+function SupplyTable({ supplies, expanded, deleting, onToggleExpand, onDelete }: SupplyTableProps) {
+  return (
+    <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-slate-100 bg-slate-50">
+            <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest w-8" />
+            <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Référence</th>
+            <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Fournisseur</th>
+            <th className="text-left px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Date</th>
+            <th className="text-center px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Art.</th>
+            <th className="text-center px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Qté totale</th>
+            <th className="text-right px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-50">
+          {supplies.map(supply => {
+            const isExpanded = expanded.has(supply.id);
+            const totalQty = supply.lines.reduce((s, l) => s + l.qty, 0);
+            const isDeleting = deleting.has(supply.id);
+            const hasDoc = !!(supply.documentKey || supply.documentUrl);
+            return (
+              <>
+                <tr key={supply.id}
+                  className="hover:bg-slate-50 cursor-pointer transition-colors"
+                  onClick={() => onToggleExpand(supply.id)}>
+                  <td className="px-4 py-3">
+                    <ChevronDown size={14} className={`text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="font-mono font-bold text-slate-800">{supply.ref}</span>
+                    <span className="ml-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">
+                      <PackageCheck size={8} /> Supply
+                    </span>
+                    {supply.addedToInventory ? (
+                      <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600">+Stock</span>
+                    ) : (
+                      <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">No stock</span>
+                    )}
+                    {!hasDoc && (
+                      <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-400">No doc</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">{supply.supplier || <span className="text-slate-300">—</span>}</td>
+                  <td className="px-4 py-3 text-slate-500">{fmtDate(supply.date)}</td>
+                  <td className="px-4 py-3 text-center font-semibold text-slate-600">{supply.lines.length}</td>
+                  <td className="px-4 py-3 text-center">
+                    <span className="font-bold text-slate-700 tabular-nums">{totalQty.toLocaleString('fr-FR')}</span>
+                  </td>
+                  <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-2">
+                      {hasDoc && (
+                        <button onClick={() => openAttachment(supply)} title="Voir le document"
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600 text-xs font-bold hover:bg-emerald-100 transition-colors">
+                          <FileText size={12} /> Document
+                        </button>
+                      )}
+                      <button onClick={() => onDelete(supply)} disabled={isDeleting} title="Supprimer"
+                        className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {isExpanded && (
+                  <tr key={`${supply.id}-detail`}>
+                    <td colSpan={7} className="p-0">
+                      <div className="px-4 py-3 bg-slate-50 border-b border-slate-100">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1.5">
+                          {supply.lines.map(l => (
+                            <div key={l.sku} className="flex items-center justify-between text-xs bg-white rounded-lg px-3 py-2 border border-slate-100">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-slate-600 font-medium truncate">{l.productName}</p>
+                                <p className="font-mono text-slate-400 text-[10px]">{l.sku}</p>
+                              </div>
+                              <span className="ml-2 shrink-0 font-bold text-slate-700 tabular-nums">{l.qty.toLocaleString()}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {supply.description && (
+                          <p className="mt-2 text-xs text-slate-500 italic">{supply.description}</p>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </>
+            );
+          })}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  );
+}
+
 // ── Bon de Réception — opens styled page in new tab ──────────────
 async function openBonDeReception(order: ShippingOrder, format: 'web' | 'pdf' = 'web') {
   // Open the tab synchronously (inside the click gesture) so pop-up blockers
@@ -2141,6 +2246,7 @@ function ShippedSupplyModal({ rawMaterials, suppliers, onAddSupplier, nextRef, o
 // ── Main Page ─────────────────────────────────────────────────────
 export default function ShippingPage() {
   const [orders, setOrders]           = useState<ShippingOrder[]>([]);
+  const [supplies, setSupplies]       = useState<ShippedSupply[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [rawMaterials, setRawMaterials] = useState<Product[]>([]);
   const [recipes, setRecipes]         = useState<Recipe[]>([]);
@@ -2161,6 +2267,9 @@ export default function ShippingPage() {
   // Filters
   const [filterCat, setFilterCat]           = useState('');
   const [filterSupplier, setFilterSupplier] = useState('');
+  const [filterStatus, setFilterStatus]     = useState<'all' | 'PLANNED' | 'PARTIAL' | 'RECEIVED'>('all');
+  const [dateFrom, setDateFrom]             = useState('');
+  const [dateTo, setDateTo]                 = useState('');
   const [search, setSearch]                 = useState('');
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -2221,8 +2330,9 @@ export default function ShippingPage() {
 
   const load = async () => {
     setLoading(true);
-    const [ords, prods, recs] = await Promise.all([getShippingOrders(), getProducts(), getRecipes()]);
+    const [ords, prods, recs, sups] = await Promise.all([getShippingOrders(), getProducts(), getRecipes(), getShippedSupplies()]);
     setOrders(ords);
+    setSupplies(sups);
     setAllProducts(prods);
     setRawMaterials(prods.filter(p => p.type === 'RAW'));
     setRecipes(recs);
@@ -2376,12 +2486,21 @@ export default function ShippingPage() {
       let documentName = editingReceipt?.documentName;
       let documentKey = editingReceipt?.documentKey;
       let storageProvider = editingReceipt?.storageProvider;
+      let uploadError = '';
       if (data.file) {
-        if (editingReceipt) await deleteAttachmentObject(editingReceipt);
-        const uploaded = await uploadReceiptDocument(data.file);
-        documentKey = uploaded.objectKey;
-        documentName = uploaded.originalName;
-        storageProvider = 'r2';
+        // Document upload must never discard the recorded shipment. If the R2
+        // upload fails (e.g. bucket CORS), we still save the receipt quantities
+        // and let the user re-attach the file later.
+        try {
+          if (editingReceipt) await deleteAttachmentObject(editingReceipt);
+          const uploaded = await uploadReceiptDocument(data.file);
+          documentKey = uploaded.objectKey;
+          documentName = uploaded.originalName;
+          storageProvider = 'r2';
+        } catch (e) {
+          uploadError = e instanceof Error ? e.message : 'Document upload failed.';
+          console.error('Receipt document upload failed — saving receipt without it.', e);
+        }
       }
       const receiptData = { date: data.date, blNumber: data.blNumber, remarks: data.remarks, documentUrl, documentName, documentKey, storageProvider, lines: data.lines, addedToInventory: data.addedToInventory };
       if (editingReceipt) {
@@ -2395,6 +2514,9 @@ export default function ShippingPage() {
       // Auto-open history so the user can immediately see the updated receipts
       const freshOrder = freshOrders?.find(o => o.id === order.id);
       if (freshOrder) setHistoryOrder(freshOrder);
+      if (uploadError) {
+        alert(`Shipment saved, but the document could not be uploaded:\n${uploadError}\n\nThe receipt and its quantities were recorded. Edit the receipt to attach the document once storage is reachable.`);
+      }
     } catch (e) {
       throw e;
     } finally {
@@ -2420,11 +2542,18 @@ export default function ShippingPage() {
     let documentName: string | undefined;
     let documentKey: string | undefined;
     let storageProvider: 'r2' | undefined;
+    let uploadError = '';
     if (data.file) {
-      const uploaded = await uploadShippedSupplyDocument(data.file);
-      documentKey = uploaded.objectKey;
-      documentName = uploaded.originalName;
-      storageProvider = 'r2';
+      // Never lose the logged supply because the document upload failed.
+      try {
+        const uploaded = await uploadShippedSupplyDocument(data.file);
+        documentKey = uploaded.objectKey;
+        documentName = uploaded.originalName;
+        storageProvider = 'r2';
+      } catch (e) {
+        uploadError = e instanceof Error ? e.message : 'Document upload failed.';
+        console.error('Shipped-supply document upload failed — saving without it.', e);
+      }
     }
     await createShippedSupply({
       ref: data.ref,
@@ -2437,7 +2566,10 @@ export default function ShippingPage() {
       storageProvider,
     }, data.addToInventory);
     setShowShippedSupply(false);
-    if (data.addToInventory) await load();
+    await load();
+    if (uploadError) {
+      alert(`Supply saved, but the document could not be uploaded:\n${uploadError}\n\nThe supply was recorded (visible in Documents, flagged "Without document"). You can attach the document later once storage is reachable.`);
+    }
   };
 
   const handleReceiveConfirm = async (data: { blNumber: string; remarks: string; file: File | null; addToInventory: boolean }) => {
@@ -2448,11 +2580,18 @@ export default function ShippingPage() {
       let documentName: string | undefined;
       let documentKey: string | undefined;
       let storageProvider: 'r2' | undefined;
+      let uploadError = '';
       if (data.file) {
-        const uploaded = await uploadReceiptDocument(data.file);
-        documentKey = uploaded.objectKey;
-        documentName = uploaded.originalName;
-        storageProvider = 'r2';
+        // Never lose the receipt because the document upload failed.
+        try {
+          const uploaded = await uploadReceiptDocument(data.file);
+          documentKey = uploaded.objectKey;
+          documentName = uploaded.originalName;
+          storageProvider = 'r2';
+        } catch (e) {
+          uploadError = e instanceof Error ? e.message : 'Document upload failed.';
+          console.error('Receipt document upload failed — receiving without it.', e);
+        }
       }
       const failedIds = await receiveShippingOrder(order, {
         blNumber: data.blNumber.trim() || undefined,
@@ -2464,6 +2603,9 @@ export default function ShippingPage() {
       setReceivingOrder(null);
       if (failedIds.length > 0) {
         alert(`⚠ ${failedIds.length} product(s) could not be received (not found in inventory): ${failedIds.join(', ')}`);
+      }
+      if (uploadError) {
+        alert(`Order received, but the document could not be uploaded:\n${uploadError}\n\nThe receipt was recorded. Edit the order to attach the document once storage is reachable.`);
       }
       await load();
     } catch (e) {
@@ -2533,6 +2675,20 @@ export default function ShippingPage() {
     }
   };
 
+  const handleDeleteSupply = async (supply: ShippedSupply) => {
+    if (!confirm(`Supprimer l'approvisionnement ${supply.ref}?${supply.addedToInventory ? ' Le stock qu\'il a ajouté sera annulé.' : ''}`)) return;
+    setDeleting(s => new Set(s).add(supply.id));
+    try {
+      await deleteShippedSupply(supply);
+      setSupplies(prev => prev.filter(x => x.id !== supply.id));
+    } catch (e) {
+      alert(`Échec de la suppression : ${e instanceof Error ? e.message : 'Unknown error'}`);
+      await load();
+    } finally {
+      setDeleting(s => { const n = new Set(s); n.delete(supply.id); return n; });
+    }
+  };
+
   const toggleExpand = (id: string) => setExpanded(s => {
     const n = new Set(s);
     s.has(id) ? n.delete(id) : n.add(id);
@@ -2549,12 +2705,42 @@ export default function ShippingPage() {
     return () => document.removeEventListener('mousedown', handler);
   }, [showExportMenu]);
 
-  const allCategories = Array.from(new Set(orders.map(o => refToCategory(o.ref)))).sort();
-  const allSuppliers  = Array.from(new Set(orders.map(o => o.supplier ?? '').filter(Boolean))).sort() as string[];
+  const SUPPLY_CAT = 'Shipped Supply';
+  const allCategories = Array.from(new Set([
+    ...orders.map(o => refToCategory(o.ref)),
+    ...(supplies.length > 0 ? [SUPPLY_CAT] : []),
+  ])).sort();
+  const allSuppliers  = Array.from(new Set([
+    ...orders.map(o => o.supplier ?? '').filter(Boolean),
+    ...supplies.map(s => s.supplier ?? '').filter(Boolean),
+  ])).sort() as string[];
+
+  const displaySupplies = supplies.filter(s => {
+    // Shipped supplies are already received — hide them under planning/partial filters.
+    if (filterStatus === 'PLANNED' || filterStatus === 'PARTIAL') return false;
+    // Category pills are order-centric; supplies live under their own pseudo-category.
+    if (filterCat && filterCat !== SUPPLY_CAT) return false;
+    if (filterSupplier && (s.supplier ?? '') !== filterSupplier) return false;
+    if (dateFrom && s.date < dateFrom) return false;
+    if (dateTo && s.date > dateTo) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const match = s.ref.toLowerCase().includes(q)
+        || (s.supplier ?? '').toLowerCase().includes(q)
+        || (s.description ?? '').toLowerCase().includes(q)
+        || s.date.includes(search)
+        || s.lines.some(l => l.sku.toLowerCase().includes(q) || l.productName.toLowerCase().includes(q));
+      if (!match) return false;
+    }
+    return true;
+  });
 
   const displayOrders = orders.filter(o => {
     if (filterCat && refToCategory(o.ref) !== filterCat) return false;
     if (filterSupplier && (o.supplier ?? '') !== filterSupplier) return false;
+    if (filterStatus !== 'all' && o.status !== filterStatus) return false;
+    if (dateFrom && o.date < dateFrom) return false;
+    if (dateTo && o.date > dateTo) return false;
 
     if (search) {
       const searchLower = search.toLowerCase();
@@ -2581,7 +2767,7 @@ export default function ShippingPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Shipping</h1>
           <p className="text-sm text-slate-400 mt-0.5">
-            {loading ? 'Loading…' : `${planned.filter(o=>o.status==='PLANNED').length} planned · ${planned.filter(o=>o.status==='PARTIAL').length} in progress · ${received.length} received`}
+            {loading ? 'Loading…' : `${planned.filter(o=>o.status==='PLANNED').length} planned · ${planned.filter(o=>o.status==='PARTIAL').length} in progress · ${received.length} received${supplies.length > 0 ? ` · ${supplies.length} shipped supply` : ''}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -2601,7 +2787,7 @@ export default function ShippingPage() {
       </div>
 
       {/* Filter bar */}
-      {!loading && orders.length > 0 && (
+      {!loading && (orders.length > 0 || supplies.length > 0) && (
         <div className="space-y-3">
           {/* Search bar */}
           <div className="relative max-w-md">
@@ -2646,6 +2832,34 @@ export default function ShippingPage() {
               {allSuppliers.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           )}
+
+          {/* Status filter */}
+          <div className="inline-flex rounded-xl border border-slate-200 overflow-hidden">
+            {([['all', 'Tous'], ['PLANNED', 'Planifié'], ['PARTIAL', 'En cours'], ['RECEIVED', 'Reçu']] as [typeof filterStatus, string][]).map(([val, label]) => (
+              <button key={val} onClick={() => setFilterStatus(val)}
+                className={`px-3 py-1.5 text-xs font-bold transition-colors ${filterStatus === val ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Date range */}
+          <div className="inline-flex items-center gap-1.5">
+            <CalendarCheck size={13} className="text-slate-400" />
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              title="Date de début"
+              className="px-2 py-1.5 border border-slate-200 rounded-xl text-xs text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            <span className="text-slate-300 text-xs">→</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              title="Date de fin"
+              className="px-2 py-1.5 border border-slate-200 rounded-xl text-xs text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            {(dateFrom || dateTo) && (
+              <button onClick={() => { setDateFrom(''); setDateTo(''); }}
+                className="p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Effacer les dates">
+                <X size={13} />
+              </button>
+            )}
+          </div>
 
           {/* Export */}
           <div className="ml-auto relative" ref={exportMenuRef}>
@@ -2706,7 +2920,7 @@ export default function ShippingPage() {
         <div className="bg-white rounded-xl border border-slate-100 p-10 text-center text-slate-400 text-sm animate-pulse">
           Loading orders…
         </div>
-      ) : orders.length === 0 ? (
+      ) : orders.length === 0 && supplies.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-100 p-12 text-center">
           <Truck size={40} className="mx-auto text-slate-200 mb-3" />
           <p className="text-slate-500 font-medium">No shipping orders yet</p>
@@ -2754,7 +2968,23 @@ export default function ShippingPage() {
             </div>
           )}
 
-          {planned.length === 0 && received.length === 0 && (
+          {/* ── Shipped supply history ── */}
+          {displaySupplies.length > 0 && (
+            <div>
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 px-1">
+                Approvisionnements reçus · {displaySupplies.length}
+              </h2>
+              <SupplyTable
+                supplies={displaySupplies}
+                expanded={expanded}
+                deleting={deleting}
+                onToggleExpand={toggleExpand}
+                onDelete={handleDeleteSupply}
+              />
+            </div>
+          )}
+
+          {planned.length === 0 && received.length === 0 && displaySupplies.length === 0 && (
             <div className="bg-white rounded-xl border border-slate-100 p-8 text-center text-slate-400 text-sm">
               Aucun résultat pour les filtres sélectionnés.
             </div>
