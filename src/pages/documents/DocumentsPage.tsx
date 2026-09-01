@@ -13,6 +13,7 @@ import { getShippingOrders } from '@/services/shipping.service';
 import { getMachines } from '@/services/library.service';
 import { getShippedSupplies, deleteShippedSupply } from '@/services/shippedSupply.service';
 import { openAttachment, deleteFileFromR2 } from '@/lib/r2Storage';
+import Modal from '@/components/ui/Modal';
 import type { Invoice, MachineDoc, ShippingOrder, Machine, ShippedSupply } from '@/types';
 
 // Open an attachment — a fresh signed URL for R2-backed documents, or the
@@ -1001,6 +1002,14 @@ function MachineDocsTab({ docs, machines, onReload }: MachineDocsTabProps) {
 // BL RECEIPTS TAB
 // ══════════════════════════════════════════════════════════════════
 
+// One column template shared by the header and every row. Each row is its own
+// grid, so `auto` tracks would size per-row and the columns would not line up.
+const ROW_GRID =
+  'grid grid-cols-[minmax(0,2.4fr)_minmax(0,1fr)_116px_92px_128px_104px] gap-4 items-center';
+
+/** One received article, normalised across BL receipts and shipped supply. */
+type ReceiptLine = { productName: string; sku: string; qty: number };
+
 type BLRow = {
   kind: 'bl';
   key: string;          // orderId + receipt/legacy discriminator
@@ -1010,6 +1019,11 @@ type BLRow = {
   blNumber: string;     // '' when the receipt carries no BL number
   status?: string;      // parent order status (PARTIAL / RECEIVED)
   date: string;
+  description?: string; // the receipt's remarks
+  lines: ReceiptLine[];
+  totalQty: number;
+  lineCount: number;
+  addedToInventory?: boolean;
   documentUrl?: string;
   documentName?: string;
   documentKey?: string;
@@ -1023,6 +1037,7 @@ type SupplyRow = {
   supplier?: string;
   date: string;
   description?: string;
+  lines: ReceiptLine[];
   totalQty: number;
   lineCount: number;
   addedToInventory: boolean;
@@ -1045,6 +1060,9 @@ function extractBLRecords(orders: ShippingOrder[]): BLRow[] {
     if (receipts.length > 0) {
       // New flow — one row per recorded shipment receipt.
       for (const r of receipts) {
+        const lines: ReceiptLine[] = (r.lines ?? []).map(l => ({
+          productName: l.productName, sku: l.sku, qty: l.receivedQty,
+        }));
         records.push({
           kind: 'bl',
           key: `${order.id}__rcpt__${r.id}`,
@@ -1054,6 +1072,11 @@ function extractBLRecords(orders: ShippingOrder[]): BLRow[] {
           blNumber: r.blNumber ?? '',
           status: order.status,
           date: r.date,
+          description: r.remarks,
+          lines,
+          totalQty: lines.reduce((sum, l) => sum + l.qty, 0),
+          lineCount: lines.length,
+          addedToInventory: r.addedToInventory,
           documentUrl: r.documentUrl,
           documentName: r.documentName,
           documentKey: r.documentKey,
@@ -1062,6 +1085,10 @@ function extractBLRecords(orders: ShippingOrder[]): BLRow[] {
       }
     } else if (order.status === 'RECEIVED') {
       // Legacy flow — received order marked done without a receipts array.
+      // Its ordered lines are the best record of what came in.
+      const lines: ReceiptLine[] = (order.lines ?? []).map(l => ({
+        productName: l.productName, sku: l.sku, qty: l.qty,
+      }));
       records.push({
         kind: 'bl',
         key: `${order.id}__legacy`,
@@ -1071,6 +1098,11 @@ function extractBLRecords(orders: ShippingOrder[]): BLRow[] {
         blNumber: order.blNumber ?? '',
         status: order.status,
         date: order.receivedAt ? new Date(order.receivedAt as unknown as string).toISOString().split('T')[0] : order.date,
+        description: order.remarks,
+        lines,
+        totalQty: lines.reduce((sum, l) => sum + l.qty, 0),
+        lineCount: lines.length,
+        addedToInventory: order.addedToInventory,
         documentUrl: order.documentUrl,
         documentName: order.documentName,
         documentKey: order.documentKey,
@@ -1089,6 +1121,7 @@ function buildSupplyRows(supplies: ShippedSupply[]): SupplyRow[] {
     supplier: s.supplier,
     date: s.date,
     description: s.description,
+    lines: s.lines.map(l => ({ productName: l.productName, sku: l.sku, qty: l.qty })),
     totalQty: s.lines.reduce((sum, l) => sum + l.qty, 0),
     lineCount: s.lines.length,
     addedToInventory: s.addedToInventory,
@@ -1098,6 +1131,187 @@ function buildSupplyRows(supplies: ShippedSupply[]): SupplyRow[] {
     storageProvider: s.storageProvider,
     supply: s,
   }));
+}
+
+// ── Receipt detail ────────────────────────────────────────────────
+// Everything recorded about one receipt: what came in, the remarks the
+// receiver left, the attached document and the invoices linked to it.
+function ReceiptDetailModal({ row, invoices, onClose, onAddInvoice, onDelete }: {
+  row: ReceiptRow;
+  invoices: Invoice[];
+  onClose: () => void;
+  onAddInvoice?: () => void;
+  onDelete?: () => void;
+}) {
+  const isBL = row.kind === 'bl';
+  const reference = isBL ? row.orderRef : row.ref;
+  const blNumber = isBL ? row.blNumber : row.ref;
+  const hasDoc = !!(row.documentKey || row.documentUrl);
+
+  const meta: { label: string; value: string }[] = [
+    { label: 'Supplier', value: row.supplier ?? '—' },
+    { label: 'Date', value: fmtDate(row.date) },
+    { label: 'Pieces', value: row.totalQty.toLocaleString('fr-FR') },
+    { label: 'References', value: String(row.lineCount) },
+  ];
+  if (isBL) meta.splice(2, 0, { label: 'Order', value: row.orderRef });
+
+  return (
+    <Modal title={reference} onClose={onClose} className="max-w-2xl">
+      <div className="space-y-5">
+        {/* Badges */}
+        <div className="flex flex-wrap items-center gap-2">
+          {blNumber ? (
+            <span className="font-mono font-semibold text-[11px] text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+              BL: {blNumber}
+            </span>
+          ) : (
+            <span className="font-mono font-semibold text-[11px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+              No BL
+            </span>
+          )}
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+            {isBL ? 'Order receipt' : 'Shipped supply'}
+          </span>
+          {isBL && row.status === 'PARTIAL' && (
+            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-700 bg-amber-100 px-2 py-0.5 rounded">Partial</span>
+          )}
+          {row.addedToInventory !== undefined && (
+            <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
+              row.addedToInventory ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+            }`}>
+              {row.addedToInventory ? 'Added to stock' : 'Not added to stock'}
+            </span>
+          )}
+        </div>
+
+        {/* Meta */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {meta.map(m => (
+            <div key={m.label} className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{m.label}</p>
+              <p className="text-sm font-semibold text-slate-700 truncate mt-0.5" title={m.value}>{m.value}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Description / remarks */}
+        {row.description && (
+          <div>
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Description</h3>
+            <p className="text-sm text-slate-600 bg-amber-50/60 border border-amber-100 rounded-xl px-3 py-2.5 whitespace-pre-wrap">
+              {row.description}
+            </p>
+          </div>
+        )}
+
+        {/* Lines */}
+        <div>
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
+            Supply list {row.lineCount > 0 && `· ${row.lineCount} reference${row.lineCount !== 1 ? 's' : ''}`}
+          </h3>
+          {row.lines.length === 0 ? (
+            <p className="text-sm text-slate-400 italic px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+              No article lines were recorded on this receipt.
+            </p>
+          ) : (
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <div className="max-h-64 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-400 sticky top-0">
+                    <tr className="text-left text-[10px] uppercase tracking-widest">
+                      <th className="px-3 py-2 font-bold">Product</th>
+                      <th className="px-3 py-2 font-bold">SKU</th>
+                      <th className="px-3 py-2 font-bold text-right">Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {row.lines.map((l, i) => (
+                      <tr key={`${l.sku}-${i}`} className="hover:bg-slate-50/70">
+                        <td className="px-3 py-2 text-slate-700">{l.productName}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-slate-400">{l.sku || '—'}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-slate-800">{l.qty.toLocaleString('fr-FR')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* Kept outside the scroll area so the total is always visible */}
+              <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-t border-slate-200 text-sm font-bold text-slate-700">
+                <span>Total</span>
+                <span>{row.totalQty.toLocaleString('fr-FR')}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Document */}
+        <div>
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">BL document</h3>
+          {hasDoc ? (
+            <button onClick={() => openAttachment(row)}
+              className="flex items-center gap-2 px-3 py-2.5 w-full rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 text-sm font-semibold hover:bg-emerald-100 transition-colors">
+              <Eye size={14} />
+              <span className="truncate">{row.documentName ?? 'Open the attached document'}</span>
+              <ExternalLink size={12} className="ml-auto shrink-0" />
+            </button>
+          ) : (
+            <p className="text-sm text-slate-400 italic px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+              No document attached to this receipt.
+            </p>
+          )}
+        </div>
+
+        {/* Invoices */}
+        <div>
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
+            Invoices {invoices.length > 0 && `· ${invoices.length}`}
+          </h3>
+          {invoices.length === 0 ? (
+            <div className="flex items-center gap-3 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+              <span className="text-sm text-slate-400 italic flex-1">No invoice linked yet.</span>
+              {onAddInvoice && (
+                <button onClick={onAddInvoice}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
+                  <Plus size={11} /> Invoice
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {invoices.map(inv => (
+                <button key={inv.id} onClick={() => openInvoiceDoc(inv)}
+                  className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl border border-slate-200 hover:border-indigo-200 hover:bg-indigo-50/50 transition-colors text-left">
+                  <Receipt size={14} className="text-indigo-500 shrink-0" />
+                  <span className="font-mono font-bold text-sm text-slate-700 truncate">{inv.invoiceNumber}</span>
+                  <span className="text-xs text-slate-400">{fmtDate(inv.date)}</span>
+                  {inv.amount != null && (
+                    <span className="ml-auto text-sm font-bold text-slate-700 whitespace-nowrap">
+                      {inv.amount.toLocaleString('fr-FR')} <span className="text-xs font-normal text-slate-400">{inv.currency}</span>
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 pt-1 border-t border-slate-100">
+          {onDelete && (
+            <button onClick={onDelete}
+              className="flex items-center gap-1.5 mr-auto mt-3 px-3 py-2 rounded-xl text-sm text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+              <Trash2 size={14} /> Delete receipt
+            </button>
+          )}
+          <button onClick={onClose}
+            className="mt-3 px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-100 transition-colors">
+            Close
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
 }
 
 interface BLReceiptsTabProps {
@@ -1120,6 +1334,7 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
   const [filterInvoice, setFilterInvoice] = useState<InvFilter>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [detail, setDetail] = useState<ReceiptRow | null>(null);
 
   const blRows = extractBLRecords(orders);
   const supplyRows = buildSupplyRows(supplies);
@@ -1215,9 +1430,11 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
               })}
             </select>
           )}
-          <div className="ml-auto flex items-center gap-4 text-xs text-slate-400">
+          <div className="ml-auto flex items-center gap-3 text-xs text-slate-400">
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" /> Doc available</span>
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-200 inline-block" /> Missing</span>
+            <span className="hidden lg:inline text-slate-300">·</span>
+            <span className="hidden lg:inline">Click a row for the full detail</span>
           </div>
         </div>
 
@@ -1283,8 +1500,10 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
         <div className="bg-white rounded-xl border border-slate-100 p-8 text-center text-slate-400 text-sm">No results for the selected filters.</div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+         <div className="overflow-x-auto">
+          <div className="min-w-[940px]">
           {/* Header */}
-          <div className="grid grid-cols-[2fr_1.2fr_1fr_auto_auto_auto] gap-4 px-5 py-2.5 bg-slate-50 border-b border-slate-100 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+          <div className={`${ROW_GRID} px-5 py-2.5 bg-slate-50 border-b border-slate-100 text-[10px] font-bold uppercase tracking-widest text-slate-400`}>
             <span>Reference</span>
             <span>Supplier</span>
             <span>Date</span>
@@ -1297,22 +1516,19 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
             {filtered.map(r => {
               const hasDoc = !!(r.documentKey || r.documentUrl);
               const docCell = (
-                <div className="flex flex-col items-center gap-1 w-14">
+                <div className="flex items-center justify-center">
                   {hasDoc ? (
-                    <>
-                      <a href={r.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
-                        onClick={e => { e.preventDefault(); openAttachment(r); }}
-                        title="View document">
-                        <span className="w-3 h-3 rounded-full bg-emerald-500 shadow-sm shadow-emerald-200 inline-block" />
-                      </a>
-                      <a href={r.documentUrl ?? '#'} target="_blank" rel="noopener noreferrer"
-                        onClick={e => { e.preventDefault(); openAttachment(r); }}
-                        className="text-[9px] text-emerald-600 font-semibold hover:underline">
-                        View
-                      </a>
-                    </>
+                    <button type="button"
+                      onClick={e => { e.stopPropagation(); openAttachment(r); }}
+                      title={r.documentName ?? 'View document'}
+                      className="flex items-center gap-1 px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-[10px] font-bold hover:bg-emerald-100 transition-colors">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" /> View
+                    </button>
                   ) : (
-                    <span className="w-3 h-3 rounded-full bg-slate-200" title="No document attached" />
+                    <span title="No document attached"
+                      className="flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-slate-400 text-[10px] font-bold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0" /> None
+                    </span>
                   )}
                 </div>
               );
@@ -1322,10 +1538,15 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
                 const hasInvoice = invs.length > 0;
                 const order = orderMap.get(r.orderId);
                 return (
-                  <div key={r.key} className="grid grid-cols-[2fr_1.2fr_1fr_auto_auto_auto] gap-4 items-center px-5 py-3 hover:bg-slate-50/60 transition-colors group">
+                  <div key={r.key} role="button" tabIndex={0}
+                    onClick={() => setDetail(r)}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetail(r); } }}
+                    title="Open the receipt detail"
+                    className={`${ROW_GRID} px-5 py-3 cursor-pointer hover:bg-slate-50/60 focus:bg-slate-50 focus:outline-none transition-colors group`}>
                     {/* Reference */}
-                    <div className="min-w-0 flex items-center gap-2 flex-wrap">
-                      <p className="font-mono font-bold text-slate-800 text-sm truncate">{r.orderRef}</p>
+                    <div className="min-w-0">
+                     <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-mono font-bold text-slate-800 text-sm truncate group-hover:text-indigo-600 transition-colors">{r.orderRef}</p>
                       {r.blNumber ? (
                         <span className="font-mono font-semibold text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 shrink-0">
                           BL: {r.blNumber}
@@ -1338,9 +1559,13 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
                       {r.status === 'PARTIAL' && (
                         <span className="text-[10px] font-bold uppercase tracking-wide text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded shrink-0">Partial</span>
                       )}
-                      {!hasDoc && (
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">Without document</span>
-                      )}
+                     </div>
+                     <p className="text-xs text-slate-400 truncate mt-0.5" title={r.description}>
+                       {r.lineCount > 0
+                         ? `${r.totalQty.toLocaleString('fr-FR')} pcs · ${r.lineCount} ref${r.lineCount !== 1 ? 's' : ''}`
+                         : 'No lines recorded'}
+                       {r.description ? ` · ${r.description}` : ''}
+                     </p>
                     </div>
 
                     {/* Supplier */}
@@ -1353,9 +1578,9 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
                     {docCell}
 
                     {/* Invoice status */}
-                    <div className="flex items-center justify-center w-28">
+                    <div className="flex items-center justify-center">
                       {hasInvoice ? (
-                        <button type="button" onClick={() => openInvoiceDoc(invs[0])}
+                        <button type="button" onClick={e => { e.stopPropagation(); openInvoiceDoc(invs[0]); }}
                           className="text-[11px] font-bold text-emerald-600 hover:underline"
                           title={invs.map(i => i.invoiceNumber).join(', ')}>
                           View Invoice{invs.length > 1 ? ` (${invs.length})` : ''}
@@ -1366,13 +1591,14 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center justify-end">
+                    <div className="flex items-center justify-end gap-1">
                       {!hasInvoice && order && (
-                        <button onClick={() => onAddInvoice(order, r.blNumber)}
+                        <button onClick={e => { e.stopPropagation(); onAddInvoice(order, r.blNumber); }}
                           className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
                           <Plus size={11} /> Invoice
                         </button>
                       )}
+                      <ChevronRight size={15} className="text-slate-300 group-hover:text-indigo-400 transition-colors shrink-0" />
                     </div>
                   </div>
                 );
@@ -1382,21 +1608,20 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
               const supplyInvs = blInvoiceMap.get(r.ref) ?? [];
               const supplyHasInvoice = supplyInvs.length > 0;
               return (
-                <div key={r.key} className="grid grid-cols-[2fr_1.2fr_1fr_auto_auto_auto] gap-4 items-center px-5 py-3 hover:bg-slate-50/60 transition-colors group">
+                <div key={r.key} role="button" tabIndex={0}
+                  onClick={() => setDetail(r)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetail(r); } }}
+                  title="Open the receipt detail"
+                  className={`${ROW_GRID} px-5 py-3 cursor-pointer hover:bg-slate-50/60 focus:bg-slate-50 focus:outline-none transition-colors group`}>
                   {/* Reference */}
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-mono font-bold text-slate-800 text-sm truncate">{r.ref}</p>
-                      <span className="font-mono font-semibold text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 shrink-0">
-                        BL: {r.ref}
-                      </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-mono font-bold text-slate-800 text-sm truncate group-hover:text-indigo-600 transition-colors"
+                        title={`${r.ref} — this reference doubles as the BL number`}>{r.ref}</p>
                       <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">Supply</span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0 ${r.addedToInventory ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                         {r.addedToInventory ? 'Added' : 'Not added'}
                       </span>
-                      {!hasDoc && (
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">Without document</span>
-                      )}
                     </div>
                     <p className="text-xs text-slate-400 truncate mt-0.5" title={r.description}>
                       {r.totalQty.toLocaleString('fr-FR')} pcs · {r.lineCount} ref{r.lineCount !== 1 ? 's' : ''}{r.description ? ` · ${r.description}` : ''}
@@ -1413,9 +1638,9 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
                   {docCell}
 
                   {/* Invoice status */}
-                  <div className="flex items-center justify-center w-28">
+                  <div className="flex items-center justify-center">
                     {supplyHasInvoice ? (
-                      <button type="button" onClick={() => openInvoiceDoc(supplyInvs[0])}
+                      <button type="button" onClick={e => { e.stopPropagation(); openInvoiceDoc(supplyInvs[0]); }}
                         className="text-[11px] font-bold text-emerald-600 hover:underline"
                         title={supplyInvs.map(i => i.invoiceNumber).join(', ')}>
                         View Invoice{supplyInvs.length > 1 ? ` (${supplyInvs.length})` : ''}
@@ -1428,21 +1653,44 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
                   {/* Actions */}
                   <div className="flex items-center justify-end gap-1">
                     {!supplyHasInvoice && (
-                      <button onClick={() => onAddInvoiceForSupply(r.ref, r.supplier)}
+                      <button onClick={e => { e.stopPropagation(); onAddInvoiceForSupply(r.ref, r.supplier); }}
                         className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 text-xs font-bold hover:bg-indigo-100 transition-colors">
                         <Plus size={11} /> Invoice
                       </button>
                     )}
-                    <button onClick={() => handleDeleteSupply(r.supply)}
-                      className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100">
-                      <Trash2 size={14} />
-                    </button>
+                    <ChevronRight size={15} className="text-slate-300 group-hover:text-indigo-400 transition-colors shrink-0" />
                   </div>
                 </div>
               );
             })}
           </div>
+          </div>
+         </div>
         </div>
+      )}
+
+      {detail && (
+        <ReceiptDetailModal
+          row={detail}
+          invoices={detail.kind === 'bl' ? invoicesForBLRow(detail) : (blInvoiceMap.get(detail.ref) ?? [])}
+          onClose={() => setDetail(null)}
+          onAddInvoice={() => {
+            if (detail.kind === 'bl') {
+              const order = orderMap.get(detail.orderId);
+              if (!order) return;
+              setDetail(null);
+              onAddInvoice(order, detail.blNumber);
+            } else {
+              setDetail(null);
+              onAddInvoiceForSupply(detail.ref, detail.supplier);
+            }
+          }}
+          onDelete={detail.kind === 'supply' ? async () => {
+            const supply = detail.supply;
+            setDetail(null);
+            await handleDeleteSupply(supply);
+          } : undefined}
+        />
       )}
     </div>
   );
