@@ -1,6 +1,6 @@
 import { type ReactNode, type ElementType } from 'react';
 import Badge from '@/components/ui/Badge';
-import type { Employee, RequestStatus, AdvanceStatus } from '@/types';
+import type { Absence, Employee, RequestStatus, AdvanceStatus } from '@/types';
 
 // Shared styling + small building blocks for the Personnel tabs.
 export const INPUT_CLS =
@@ -116,3 +116,22 @@ export const fmtAmount = (n: number): string => n.toLocaleString('fr-FR');
 /** "rest_day" → "Rest day" — for enum values rendered inline. */
 export const titleCase = (s: string): string =>
   s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ');
+
+// ── Absence maths, shared by the Absences, Monthly and profile views ──
+/** Days an absence costs. Part-day lateness counts as hours, not days. */
+export const absenceDays = (a: Absence): number =>
+  a.duration === 'full' ? 1 : a.duration === 'half' ? 0.5 : 0;
+
+/** Hours an absence costs when it was logged as a part-day. */
+export const absenceHours = (a: Absence): number =>
+  a.duration === 'hours' ? (a.hours ?? 0) : 0;
+
+/** Whether the absence comes off pay. Records written before the field
+ *  existed fall back to the old implicit rule: unjustified means deducted. */
+export const isDeducted = (a: Absence): boolean => a.deductFromPay ?? !a.justified;
+
+export function DeductionBadge({ absence }: { absence: Absence }) {
+  return isDeducted(absence)
+    ? <Badge label="Deducted" variant="red" />
+    : <Badge label="Paid" variant="green" />;
+}

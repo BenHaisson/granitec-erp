@@ -12,7 +12,7 @@ import { monthKey } from '@/utils/leave';
 import type { Absence, AbsenceType, AbsenceDuration, Employee } from '@/types';
 import {
   INPUT_CLS, FILTER_CLS, PRIMARY_BTN, Field, EmployeeSelect, EmptyState, Loading,
-  ErrorNote, resolveName, fmtDate,
+  ErrorNote, resolveName, fmtDate, absenceDays, absenceHours, isDeducted, DeductionBadge,
 } from './shared';
 
 const TYPE_LABEL: Record<AbsenceType, string> = {
@@ -25,18 +25,14 @@ const DURATION_LABEL: Record<AbsenceDuration, string> = {
   full: 'Full day', half: 'Half day', hours: 'Hours',
 };
 
-/** Days an absence costs — used by the header total and the monthly summary. */
-export const absenceDays = (a: Absence): number =>
-  a.duration === 'full' ? 1 : a.duration === 'half' ? 0.5 : 0;
-
 interface FormState {
   employeeId: string; date: string; type: AbsenceType; duration: AbsenceDuration;
-  hours: string; justified: boolean; reason: string;
+  hours: string; justified: boolean; reason: string; deductFromPay: boolean;
 }
 
 const emptyForm = (): FormState => ({
   employeeId: '', date: todayISO(), type: 'absence', duration: 'full',
-  hours: '', justified: false, reason: '',
+  hours: '', justified: false, reason: '', deductFromPay: true,
 });
 
 function AbsenceModal({ initial, employees, onSave, onClose }: {
@@ -49,7 +45,10 @@ function AbsenceModal({ initial, employees, onSave, onClose }: {
     employeeId: initial.employeeId, date: initial.date, type: initial.type,
     duration: initial.duration, hours: initial.hours != null ? String(initial.hours) : '',
     justified: initial.justified, reason: initial.reason ?? '',
+    deductFromPay: isDeducted(initial),
   } : emptyForm());
+  // The justified toggle presets the deduction until HR overrides it by hand.
+  const [deductionTouched, setDeductionTouched] = useState(!!initial);
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -61,6 +60,11 @@ function AbsenceModal({ initial, employees, onSave, onClose }: {
     if (!employee) { setError('Select an employee.'); return; }
     if (!form.date) { setError('Date is required.'); return; }
     if (form.duration === 'hours' && !form.hours) { setError('Enter the number of hours.'); return; }
+    // A justified absence has to say why — it is what HR reads when deciding pay.
+    if (form.justified && !form.reason.trim() && !file && !initial?.documentKey && !initial?.documentUrl) {
+      setError('Give the reason, or attach the justification document.');
+      return;
+    }
     setSaving(true); setError('');
     try {
       await onSave({
@@ -72,6 +76,7 @@ function AbsenceModal({ initial, employees, onSave, onClose }: {
         hours: form.duration === 'hours' ? Number(form.hours) : undefined,
         justified: form.justified,
         reason: form.reason.trim() || undefined,
+        deductFromPay: form.deductFromPay,
         documentUrl: initial?.documentUrl,
         documentName: initial?.documentName,
         documentKey: initial?.documentKey,
@@ -116,13 +121,28 @@ function AbsenceModal({ initial, employees, onSave, onClose }: {
         </div>
 
         <label className="flex items-center gap-2.5 px-3 py-2.5 border-2 border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50">
-          <input type="checkbox" checked={form.justified} onChange={e => set({ justified: e.target.checked })} className="w-4 h-4 accent-indigo-600" />
+          <input type="checkbox" checked={form.justified}
+            onChange={e => set(deductionTouched
+              ? { justified: e.target.checked }
+              : { justified: e.target.checked, deductFromPay: !e.target.checked })}
+            className="w-4 h-4 accent-indigo-600" />
           <span className="text-sm text-slate-700 font-medium">Justified</span>
           <span className="text-xs text-slate-400">— a certificate or accepted reason exists</span>
         </label>
 
-        <Field label="Reason">
+        <Field label="Reason" required={form.justified} hint="What HR reads when deciding whether the day is paid.">
           <textarea value={form.reason} onChange={e => set({ reason: e.target.value })} rows={2} className={`${INPUT_CLS} resize-none`} placeholder="e.g. medical appointment" />
+        </Field>
+
+        <Field label="Salary" hint={form.deductFromPay
+          ? 'The day comes off this month\u2019s pay.'
+          : 'Accepted \u2014 the day is paid in full.'}>
+          <select value={form.deductFromPay ? 'deduct' : 'paid'}
+            onChange={e => { setDeductionTouched(true); set({ deductFromPay: e.target.value === 'deduct' }); }}
+            className={INPUT_CLS}>
+            <option value="deduct">Deduct from salary</option>
+            <option value="paid">Do not deduct — paid</option>
+          </select>
         </Field>
 
         <Field label="Justification Document" hint="Medical certificate, written excuse…">
@@ -162,6 +182,7 @@ export default function Absences() {
   const [employeeFilter, setEmployeeFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<'' | AbsenceType>('');
   const [justifiedFilter, setJustifiedFilter] = useState<'' | 'yes' | 'no'>('');
+  const [payFilter, setPayFilter] = useState<'' | 'deduct' | 'paid'>('');
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Absence | null>(null);
 
@@ -208,12 +229,15 @@ export default function Absences() {
     if (typeFilter && a.type !== typeFilter) return false;
     if (justifiedFilter === 'yes' && !a.justified) return false;
     if (justifiedFilter === 'no' && a.justified) return false;
+    if (payFilter === 'deduct' && !isDeducted(a)) return false;
+    if (payFilter === 'paid' && isDeducted(a)) return false;
     return true;
-  }), [absences, month, employeeFilter, typeFilter, justifiedFilter]);
+  }), [absences, month, employeeFilter, typeFilter, justifiedFilter, payFilter]);
 
   const totalDays = filtered.reduce((s, a) => s + absenceDays(a), 0);
-  const totalHours = filtered.reduce((s, a) => s + (a.duration === 'hours' ? (a.hours ?? 0) : 0), 0);
+  const totalHours = filtered.reduce((s, a) => s + absenceHours(a), 0);
   const unjustified = filtered.filter(a => !a.justified).length;
+  const deductedDays = filtered.filter(isDeducted).reduce((s, a) => s + absenceDays(a), 0);
 
   return (
     <div className="space-y-5">
@@ -224,6 +248,8 @@ export default function Absences() {
           <span><strong className="text-slate-700">{totalDays}</strong> day{totalDays !== 1 ? 's' : ''}{totalHours > 0 ? ` + ${totalHours} h` : ''}</span>
           <span>·</span>
           <span className={unjustified > 0 ? 'text-red-600 font-semibold' : ''}>{unjustified} unjustified</span>
+          <span>·</span>
+          <span><strong className="text-slate-700">{deductedDays}</strong> day{deductedDays !== 1 ? 's' : ''} deducted</span>
         </div>
         <button onClick={() => { setEditing(null); setShowModal(true); }} className={PRIMARY_BTN}>
           <Plus size={16} /> Log Absence
@@ -242,8 +268,13 @@ export default function Absences() {
           <option value="yes">Justified only</option>
           <option value="no">Unjustified only</option>
         </select>
-        {(month || employeeFilter || typeFilter || justifiedFilter) && (
-          <button onClick={() => { setMonth(''); setEmployeeFilter(''); setTypeFilter(''); setJustifiedFilter(''); }}
+        <select value={payFilter} onChange={e => setPayFilter(e.target.value as typeof payFilter)} className={FILTER_CLS}>
+          <option value="">Deducted & paid</option>
+          <option value="deduct">Deducted only</option>
+          <option value="paid">Paid only</option>
+        </select>
+        {(month || employeeFilter || typeFilter || justifiedFilter || payFilter) && (
+          <button onClick={() => { setMonth(''); setEmployeeFilter(''); setTypeFilter(''); setJustifiedFilter(''); setPayFilter(''); }}
             className="text-xs text-slate-400 hover:text-slate-600 underline">Clear filters</button>
         )}
       </div>
@@ -262,6 +293,7 @@ export default function Absences() {
                   <th className="px-4 py-3 font-bold">Type</th>
                   <th className="px-4 py-3 font-bold">Duration</th>
                   <th className="px-4 py-3 font-bold">Justified</th>
+                  <th className="px-4 py-3 font-bold">Salary</th>
                   <th className="px-4 py-3 font-bold">Reason</th>
                   <th className="px-4 py-3 font-bold text-right">Actions</th>
                 </tr>
@@ -278,6 +310,7 @@ export default function Absences() {
                     <td className="px-4 py-3">
                       <Badge label={a.justified ? 'Yes' : 'No'} variant={a.justified ? 'green' : 'red'} />
                     </td>
+                    <td className="px-4 py-3"><DeductionBadge absence={a} /></td>
                     <td className="px-4 py-3 text-slate-500 max-w-[220px]">
                       <div className="flex items-center gap-2">
                         <span className="truncate">{a.reason || '—'}</span>

@@ -5,13 +5,15 @@ import { getAbsences, getLeaveRequests, getOvertimeEntries, getAdvances } from '
 import { todayISO } from '@/utils/dates';
 import { monthKey, monthLabel } from '@/utils/leave';
 import type { Absence, AdvancePayment, Employee, LeaveRequest, OvertimeEntry } from '@/types';
-import { absenceDays } from './Absences';
-import { FILTER_CLS, EmptyState, Loading, fmtAmount } from './shared';
+import {
+  FILTER_CLS, EmptyState, Loading, fmtAmount, absenceDays, absenceHours, isDeducted,
+} from './shared';
 
 interface SummaryRow {
   employee: Employee;
   absenceDays: number;
   absenceHours: number;
+  deductedDays: number;
   unjustified: number;
   leaveDays: number;
   overtimeHours: number;
@@ -62,7 +64,8 @@ export default function MonthlySummary() {
       return {
         employee,
         absenceDays: monthAbsences.reduce((s, a) => s + absenceDays(a), 0),
-        absenceHours: monthAbsences.reduce((s, a) => s + (a.duration === 'hours' ? (a.hours ?? 0) : 0), 0),
+        absenceHours: monthAbsences.reduce((s, a) => s + absenceHours(a), 0),
+        deductedDays: monthAbsences.filter(isDeducted).reduce((s, a) => s + absenceDays(a), 0),
         unjustified: monthAbsences.filter(a => !a.justified).length,
         leaveDays: monthLeave.reduce((s, r) => s + r.days, 0),
         overtimeHours: monthOvertime.reduce((s, o) => s + o.hours, 0),
@@ -78,10 +81,11 @@ export default function MonthlySummary() {
 
   const totals = rows.reduce((acc, r) => ({
     absenceDays: acc.absenceDays + r.absenceDays,
+    deductedDays: acc.deductedDays + r.deductedDays,
     leaveDays: acc.leaveDays + r.leaveDays,
     overtimeHours: acc.overtimeHours + r.overtimeHours,
     advancesTotal: acc.advancesTotal + r.advancesTotal,
-  }), { absenceDays: 0, leaveDays: 0, overtimeHours: 0, advancesTotal: 0 });
+  }), { absenceDays: 0, deductedDays: 0, leaveDays: 0, overtimeHours: 0, advancesTotal: 0 });
 
   return (
     <div className="space-y-5">
@@ -112,6 +116,7 @@ export default function MonthlySummary() {
                   <th className="px-4 py-3 font-bold">Employee</th>
                   <th className="px-4 py-3 font-bold text-right">Absence days</th>
                   <th className="px-4 py-3 font-bold text-right">Unjustified</th>
+                  <th className="px-4 py-3 font-bold text-right">Deducted days</th>
                   <th className="px-4 py-3 font-bold text-right">Leave days</th>
                   <th className="px-4 py-3 font-bold text-right">Overtime</th>
                   <th className="px-4 py-3 font-bold text-right">Advances</th>
@@ -131,6 +136,9 @@ export default function MonthlySummary() {
                     <td className={`px-4 py-3 text-right ${r.unjustified > 0 ? 'text-red-600 font-bold' : 'text-slate-400'}`}>
                       {r.unjustified || '—'}
                     </td>
+                    <td className={`px-4 py-3 text-right ${r.deductedDays > 0 ? 'text-slate-700 font-semibold' : 'text-slate-400'}`}>
+                      {r.deductedDays || '—'}
+                    </td>
                     <td className="px-4 py-3 text-right text-slate-700">{r.leaveDays || '—'}</td>
                     <td className="px-4 py-3 text-right text-slate-700">{r.overtimeHours ? `${r.overtimeHours} h` : '—'}</td>
                     <td className="px-4 py-3 text-right text-slate-700">
@@ -144,6 +152,7 @@ export default function MonthlySummary() {
                   <td className="px-4 py-3">Total — {withActivity.length} with activity</td>
                   <td className="px-4 py-3 text-right">{totals.absenceDays || '—'}</td>
                   <td className="px-4 py-3" />
+                  <td className="px-4 py-3 text-right">{totals.deductedDays || '—'}</td>
                   <td className="px-4 py-3 text-right">{totals.leaveDays || '—'}</td>
                   <td className="px-4 py-3 text-right">{totals.overtimeHours ? `${totals.overtimeHours} h` : '—'}</td>
                   <td className="px-4 py-3 text-right">{totals.advancesTotal ? fmtAmount(totals.advancesTotal) : '—'}</td>

@@ -16,7 +16,7 @@ import type {
 } from '@/types';
 import {
   INPUT_CLS, FILTER_CLS, PRIMARY_BTN, Field, EmptyState, Loading, ErrorNote,
-  StatusBadge, fmtDate, fmtAmount, titleCase,
+  StatusBadge, fmtDate, fmtAmount, titleCase, isDeducted,
 } from './shared';
 
 const CONTRACT_LABEL: Record<string, string> = {
@@ -275,8 +275,11 @@ function ProfileModal({ employee, onClose }: { employee: Employee; onClose: () =
           <Section title="Absences" empty="No absences recorded.">
             {absences.map(a => (
               <Row key={a.id} left={fmtDate(a.date)}
-                mid={`${titleCase(a.type)}${a.duration === 'half' ? ' · half day' : a.duration === 'hours' ? ` · ${a.hours ?? 0} h` : ''}`}
-                right={<Badge label={a.justified ? 'Justified' : 'Unjustified'} variant={a.justified ? 'green' : 'red'} />} />
+                mid={`${titleCase(a.type)}${a.duration === 'half' ? ' · half day' : a.duration === 'hours' ? ` · ${a.hours ?? 0} h` : ''}${a.reason ? ` — ${a.reason}` : ''}`}
+                right={<div className="flex items-center gap-1.5">
+                  <Badge label={a.justified ? 'Justified' : 'Unjustified'} variant={a.justified ? 'green' : 'red'} />
+                  <Badge label={isDeducted(a) ? 'Deducted' : 'Paid'} variant={isDeducted(a) ? 'red' : 'green'} />
+                </div>} />
             ))}
           </Section>
 
@@ -314,7 +317,7 @@ function Row({ left, mid, right }: { left: string; mid: string; right: ReactNode
   return (
     <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-3 py-2">
       <span className="text-sm font-semibold text-slate-700 w-40 shrink-0">{left}</span>
-      <span className="text-sm text-slate-500 flex-1">{mid}</span>
+      <span className="text-sm text-slate-500 flex-1 min-w-0 truncate">{mid}</span>
       {right}
     </div>
   );

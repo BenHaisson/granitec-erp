@@ -321,6 +321,12 @@ export interface Absence {
   hours?: number;            // when duration === 'hours' (lateness / part-day)
   justified: boolean;
   reason?: string;
+  /** Whether the day comes off the employee's pay. HR decides it from the
+   *  reason — a justified absence is normally not deducted, but the two are
+   *  recorded separately so an accepted reason can still be unpaid (and vice
+   *  versa). Absent on records written before this field existed; read it
+   *  through `isDeducted()`, which falls back to `!justified`. */
+  deductFromPay?: boolean;
   documentUrl?: string;          // legacy Firebase Storage download URL
   documentName?: string;
   documentKey?: string;          // Cloudflare R2 object key
