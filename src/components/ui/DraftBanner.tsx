@@ -1,3 +1,4 @@
+import { fmtDayMonth } from '@/utils/dates';
 import { FileEdit, RotateCcw } from 'lucide-react';
 
 interface Props {
@@ -13,7 +14,7 @@ function formatSavedAt(iso: string): string {
     const isToday = d.toDateString() === today.toDateString();
     const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     if (isToday) return `today at ${time}`;
-    return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} at ${time}`;
+    return `${fmtDayMonth(d)} at ${time}`;
   } catch {
     return 'previously';
   }

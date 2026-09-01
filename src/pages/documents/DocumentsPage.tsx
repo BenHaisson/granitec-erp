@@ -14,6 +14,7 @@ import { getMachines } from '@/services/library.service';
 import { getShippedSupplies, deleteShippedSupply } from '@/services/shippedSupply.service';
 import { openAttachment, deleteFileFromR2 } from '@/lib/r2Storage';
 import Modal from '@/components/ui/Modal';
+import { fmtDate } from '@/utils/dates';
 import { type BLRow, type ReceiptRow, extractBLRecords, buildSupplyRows } from './receipts';
 import {
   type ReportEntry, type ReportOptions, type ReportScope,
@@ -33,9 +34,6 @@ const toDate = (d: unknown): Date => {
   if (typeof d === 'object' && 'toDate' in (d as object)) return (d as { toDate: () => Date }).toDate();
   return new Date();
 };
-
-const fmtDate = (d: string) =>
-  new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 
 // ── Extract all BL numbers from a shipping order's receipts ───────
 function getOrderBLs(order: ShippingOrder): string[] {
@@ -875,7 +873,7 @@ function MachineDocCard({ mdoc, onEdit, onDelete }: { mdoc: MachineDoc; onEdit: 
       {/* Footer */}
       <div className="px-5 py-2.5 border-t border-slate-50 bg-slate-50/60">
         <p className="text-[10px] text-slate-400">
-          Updated {toDate(mdoc.updatedAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
+          Updated {fmtDate(mdoc.updatedAt)}
         </p>
       </div>
     </div>

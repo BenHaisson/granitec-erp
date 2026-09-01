@@ -8,6 +8,7 @@
 import type { Invoice } from '@/types';
 import type { ReceiptRow } from './receipts';
 import type { CellValue, SheetSpec } from '@/lib/xlsx';
+import { fmtDate } from '@/utils/dates';
 
 export type ReportScope = 'all' | 'invoiced' | 'uninvoiced';
 
@@ -95,11 +96,6 @@ const toDate = (iso: string): Date | null => {
   if (!iso) return null;
   const [y, m, d] = iso.split('-').map(Number);
   return Number.isFinite(y) ? new Date(y, (m ?? 1) - 1, d ?? 1) : null;
-};
-
-const fmtDate = (iso: string): string => {
-  const d = toDate(iso);
-  return d ? d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
 };
 
 const num = (n: number) => n.toLocaleString('fr-FR');
@@ -249,7 +245,7 @@ const esc = (v: unknown): string =>
 const cellText = (c: Column, e: ReportEntry): string => {
   const v = c.cell(e);
   if (v === null || v === undefined || v === '') return '—';
-  if (v instanceof Date) return v.toLocaleDateString('fr-FR');
+  if (v instanceof Date) return fmtDate(v);
   if (typeof v === 'number') return num(v);
   return esc(v);
 };
@@ -295,7 +291,7 @@ export function buildReceiptReportHtml(input: ReportInput): string {
   const { entries, options, filterSummary, generatedAt } = input;
   const cols = columns(options);
   const totals = reportTotals(entries);
-  const dateStr = generatedAt.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+  const dateStr = fmtDate(generatedAt);
 
   const head = cols.map(c => `<th${c.numeric ? ' class="r"' : ''}>${esc(c.header)}</th>`).join('');
 
