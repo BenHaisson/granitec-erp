@@ -19,7 +19,7 @@ import { getRecipes } from '@/services/production.service';
 import { getShippedSupplies, createShippedSupply, uploadShippedSupplyDocument, deleteShippedSupply } from '@/services/shippedSupply.service';
 import { openAttachment, resolveAttachmentHref, deleteAttachmentObject } from '@/lib/r2Storage';
 import type { Product, ShippingOrder, ShippingOrderLine, ShipmentReceipt, ShipmentReceiptLine, Recipe, Supplier, ShippedSupply, ShippedSupplyLine } from '@/types';
-import { todayISO } from '@/utils/dates';
+import { todayISO, fmtDate } from '@/utils/dates';
 import EntityPicker from '@/components/ui/EntityPicker';
 import ProductPickerDropdown from '@/components/ui/ProductPickerDropdown';
 import { SupplierModal } from '@/pages/suppliers/SuppliersPage';
@@ -71,7 +71,7 @@ function buildShippingReportHtml(rows: ShippingOrder[], title = '') {
   <div class="rm">
     <div class="title">Rapport Expéditions${title ? ` — ${title}` : ''}</div>
     <div class="sub">${rows.length} commande${rows.length!==1?'s':''} · ${totalQty.toLocaleString('fr-FR')} pcs</div>
-    <div class="sub">Généré le ${now.toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'})}</div>
+    <div class="sub">Généré le ${fmtDate(now)}</div>
   </div>
 </div>
 <table>
@@ -111,9 +111,7 @@ function exportShipping(rows: ShippingOrder[], format: ExportFormat, label = '')
   }
 }
 
-function fmtDate(d: string) {
-  return new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
-}
+
 
 const CAT_PREFIX: Record<string, string> = {
   'Aluminium Disc': 'DISC',
@@ -1081,7 +1079,7 @@ function ShipmentHistoryModal({ order, onAddReceipt, onEditReceipt, onDeleteRece
             <p className="text-sm text-slate-400 text-center py-4">No shipments recorded yet.</p>
           ) : receipts.map((r, idx) => {
             const rTotal = r.lines.reduce((s, l) => s + l.receivedQty, 0);
-            const rDate = new Date(r.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+            const rDate = fmtDate(r.date);
             return (
               <div key={r.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-b border-slate-100">
@@ -1698,7 +1696,7 @@ async function openBonDeReception(order: ShippingOrder, format: 'web' | 'pdf' = 
   // allow it; the signed document URL is resolved before writing the document.
   const w = window.open('', '_blank');
   const category = refToCategory(order.ref);
-  const dateStr = new Date(order.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+  const dateStr = fmtDate(order.date);
   const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
   const rows = order.lines.map((l, i) => `
     <tr>

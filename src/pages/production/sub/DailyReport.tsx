@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { FileDown, TrendingDown, CheckCircle2, AlertTriangle, Clock, X } from 'lucide-react';
 import { getTargets, getAllTargets, getEntries, getAllEntries } from '@/services/productionTargets.service';
 import type { ProductionTarget, ProductionEntry } from '@/types';
-import { todayISO } from '@/utils/dates';
+import { todayISO, fmtDate } from '@/utils/dates';
 import { pct } from '@/utils/math';
 
 const STATUS_ICON: Record<string, string> = {
@@ -55,7 +55,7 @@ export default function DailyReport() {
 
   // Download HTML report
   const downloadReport = () => {
-    const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    const dateLabel = fmtDate(date);
     const targetRows = targets.map(t => `
       <tr>
         <td>${STATUS_ICON[t.status] ?? '—'} ${t.type === 'stage' ? `${t.stage} — ${t.discType}` : `${t.recipeName} (Recipe)`}</td>

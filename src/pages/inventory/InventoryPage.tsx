@@ -14,7 +14,7 @@ type RawCategory = typeof RAW_CATEGORIES[number];
 const RAW_CATEGORY_ORDER = [...RAW_CATEGORIES];
 
 import { sortCategories } from '@/utils/categories';
-import { tsToDate, todayISO } from '@/utils/dates';
+import { tsToDate, todayISO, fmtDate } from '@/utils/dates';
 
 function stockBadge(p: Product) {
   if (p.stock_level <= 0) return <Badge label="Empty" variant="red" />;
@@ -129,7 +129,7 @@ function ShippingRow({ group }: { group: ShippingGroup }) {
       <tr className="border-b border-slate-50 hover:bg-slate-50 transition-colors cursor-pointer"
         onClick={() => setExpanded(e => !e)}>
         <td className="px-4 py-3 text-sm text-slate-500 tabular-nums whitespace-nowrap">
-          {group.date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
+          {fmtDate(group.date)}
         </td>
         <td className="px-4 py-3 text-sm font-medium text-slate-800 font-mono">{group.ref}</td>
         <td className="px-4 py-3 text-sm text-slate-500">{group.supplier ?? <span className="text-slate-300">—</span>}</td>
@@ -283,7 +283,7 @@ function downloadSupplyReport(shippingHistory: ShippingGroup[], format: 'web' | 
   <div class="rm">
     <div class="title">Supply Receipts Report</div>
     <div class="sub">Période : ${dateRange}</div>
-    <div class="sub">Généré le ${now.toLocaleDateString('fr-FR', { day:'2-digit', month:'long', year:'numeric' })}</div>
+    <div class="sub">Généré le ${fmtDate(now)}</div>
   </div>
 </div>
 <div class="kpi">

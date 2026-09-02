@@ -3,7 +3,7 @@ import {
   FileText, Plus, Trash2, Pencil, X, AlertCircle, Search,
   Upload, ExternalLink, ChevronDown, CheckCircle2, Receipt,
   Cpu, Wrench, BookOpen, Tag, ChevronRight, Eye, Package,
-  FileCheck, FileClock,
+  FileCheck, FileClock, FileDown, FileSpreadsheet, Printer,
 } from 'lucide-react';
 import {
   getInvoices, createInvoice, updateInvoice, deleteInvoice, uploadInvoiceDocument,
@@ -14,6 +14,14 @@ import { getMachines } from '@/services/library.service';
 import { getShippedSupplies, deleteShippedSupply } from '@/services/shippedSupply.service';
 import { openAttachment, deleteFileFromR2 } from '@/lib/r2Storage';
 import Modal from '@/components/ui/Modal';
+import { fmtDate } from '@/utils/dates';
+import { type BLRow, type ReceiptRow, extractBLRecords, buildSupplyRows } from './receipts';
+import {
+  type ReportEntry, type ReportOptions, type ReportScope,
+  DEFAULT_REPORT_OPTIONS, REPORT_PRESETS, SCOPE_LABEL,
+  applyScope, buildReceiptReportHtml, buildReceiptSheets, reportFileName, reportTotals,
+} from './receiptReport';
+import { downloadXlsx } from '@/lib/xlsx';
 import type { Invoice, MachineDoc, ShippingOrder, Machine, ShippedSupply } from '@/types';
 
 // Open an attachment — a fresh signed URL for R2-backed documents, or the
@@ -26,9 +34,6 @@ const toDate = (d: unknown): Date => {
   if (typeof d === 'object' && 'toDate' in (d as object)) return (d as { toDate: () => Date }).toDate();
   return new Date();
 };
-
-const fmtDate = (d: string) =>
-  new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 
 // ── Extract all BL numbers from a shipping order's receipts ───────
 function getOrderBLs(order: ShippingOrder): string[] {
@@ -868,7 +873,7 @@ function MachineDocCard({ mdoc, onEdit, onDelete }: { mdoc: MachineDoc; onEdit: 
       {/* Footer */}
       <div className="px-5 py-2.5 border-t border-slate-50 bg-slate-50/60">
         <p className="text-[10px] text-slate-400">
-          Updated {toDate(mdoc.updatedAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
+          Updated {fmtDate(mdoc.updatedAt)}
         </p>
       </div>
     </div>
@@ -1007,131 +1012,6 @@ function MachineDocsTab({ docs, machines, onReload }: MachineDocsTabProps) {
 const ROW_GRID =
   'grid grid-cols-[minmax(0,2.4fr)_minmax(0,1fr)_116px_92px_128px_104px] gap-4 items-center';
 
-/** One received article, normalised across BL receipts and shipped supply. */
-type ReceiptLine = { productName: string; sku: string; qty: number };
-
-type BLRow = {
-  kind: 'bl';
-  key: string;          // orderId + receipt/legacy discriminator
-  orderId: string;
-  orderRef: string;
-  supplier?: string;
-  blNumber: string;     // '' when the receipt carries no BL number
-  status?: string;      // parent order status (PARTIAL / RECEIVED)
-  date: string;
-  description?: string; // the receipt's remarks
-  lines: ReceiptLine[];
-  totalQty: number;
-  lineCount: number;
-  addedToInventory?: boolean;
-  documentUrl?: string;
-  documentName?: string;
-  documentKey?: string;
-  storageProvider?: 'r2';
-};
-
-type SupplyRow = {
-  kind: 'supply';
-  key: string;
-  ref: string;
-  supplier?: string;
-  date: string;
-  description?: string;
-  lines: ReceiptLine[];
-  totalQty: number;
-  lineCount: number;
-  addedToInventory: boolean;
-  documentUrl?: string;
-  documentName?: string;
-  documentKey?: string;
-  storageProvider?: 'r2';
-  supply: ShippedSupply;
-};
-
-type ReceiptRow = BLRow | SupplyRow;
-
-// Surface EVERY recorded shipment receipt in the document trail — including
-// those without a BL number or an attached document (they show up flagged as
-// "No BL" / "without document" so nothing recorded on the Shipping page is lost).
-function extractBLRecords(orders: ShippingOrder[]): BLRow[] {
-  const records: BLRow[] = [];
-  for (const order of orders) {
-    const receipts = order.receipts ?? [];
-    if (receipts.length > 0) {
-      // New flow — one row per recorded shipment receipt.
-      for (const r of receipts) {
-        const lines: ReceiptLine[] = (r.lines ?? []).map(l => ({
-          productName: l.productName, sku: l.sku, qty: l.receivedQty,
-        }));
-        records.push({
-          kind: 'bl',
-          key: `${order.id}__rcpt__${r.id}`,
-          orderId: order.id,
-          orderRef: order.ref,
-          supplier: order.supplier,
-          blNumber: r.blNumber ?? '',
-          status: order.status,
-          date: r.date,
-          description: r.remarks,
-          lines,
-          totalQty: lines.reduce((sum, l) => sum + l.qty, 0),
-          lineCount: lines.length,
-          addedToInventory: r.addedToInventory,
-          documentUrl: r.documentUrl,
-          documentName: r.documentName,
-          documentKey: r.documentKey,
-          storageProvider: r.storageProvider,
-        });
-      }
-    } else if (order.status === 'RECEIVED') {
-      // Legacy flow — received order marked done without a receipts array.
-      // Its ordered lines are the best record of what came in.
-      const lines: ReceiptLine[] = (order.lines ?? []).map(l => ({
-        productName: l.productName, sku: l.sku, qty: l.qty,
-      }));
-      records.push({
-        kind: 'bl',
-        key: `${order.id}__legacy`,
-        orderId: order.id,
-        orderRef: order.ref,
-        supplier: order.supplier,
-        blNumber: order.blNumber ?? '',
-        status: order.status,
-        date: order.receivedAt ? new Date(order.receivedAt as unknown as string).toISOString().split('T')[0] : order.date,
-        description: order.remarks,
-        lines,
-        totalQty: lines.reduce((sum, l) => sum + l.qty, 0),
-        lineCount: lines.length,
-        addedToInventory: order.addedToInventory,
-        documentUrl: order.documentUrl,
-        documentName: order.documentName,
-        documentKey: order.documentKey,
-        storageProvider: order.storageProvider,
-      });
-    }
-  }
-  return records.sort((a, b) => b.date.localeCompare(a.date));
-}
-
-function buildSupplyRows(supplies: ShippedSupply[]): SupplyRow[] {
-  return supplies.map(s => ({
-    kind: 'supply',
-    key: `supply__${s.id}`,
-    ref: s.ref,
-    supplier: s.supplier,
-    date: s.date,
-    description: s.description,
-    lines: s.lines.map(l => ({ productName: l.productName, sku: l.sku, qty: l.qty })),
-    totalQty: s.lines.reduce((sum, l) => sum + l.qty, 0),
-    lineCount: s.lines.length,
-    addedToInventory: s.addedToInventory,
-    documentUrl: s.documentUrl,
-    documentName: s.documentName,
-    documentKey: s.documentKey,
-    storageProvider: s.storageProvider,
-    supply: s,
-  }));
-}
 
 // ── Receipt detail ────────────────────────────────────────────────
 // Everything recorded about one receipt: what came in, the remarks the
@@ -1314,6 +1194,151 @@ function ReceiptDetailModal({ row, invoices, onClose, onAddInvoice, onDelete }: 
   );
 }
 
+// ── Report dialog ─────────────────────────────────────────────────
+// Builds an accounting-grade export of the receipts currently on screen. What
+// goes in is entirely the user's choice, from "N° BL et dates seuls" up to the
+// full article detail.
+function ReceiptReportModal({ entries, filterSummary, onClose }: {
+  entries: ReportEntry[];
+  filterSummary: string;
+  onClose: () => void;
+}) {
+  const [options, setOptions] = useState<ReportOptions>(DEFAULT_REPORT_OPTIONS);
+  const [notice, setNotice] = useState('');
+
+  const set = (patch: Partial<ReportOptions>) => setOptions(o => ({ ...o, ...patch }));
+
+  const scoped = applyScope(entries, options.scope);
+  const totals = reportTotals(scoped);
+  const lineCount = scoped.reduce((s, e) => s + e.row.lines.length, 0);
+
+  const input = () => ({ entries: scoped, options, filterSummary, generatedAt: new Date() });
+
+  const exportExcel = () => {
+    downloadXlsx(reportFileName(options.scope, new Date()), buildReceiptSheets(input()));
+    onClose();
+  };
+
+  const openReport = (print: boolean) => {
+    const w = window.open('', '_blank');
+    if (!w) {
+      // The other reports in the app fail silently here; say what happened.
+      setNotice("Le navigateur a bloqué la fenêtre du rapport. Autorisez les pop-ups pour ce site, puis réessayez.");
+      return;
+    }
+    w.document.write(buildReceiptReportHtml(input()));
+    w.document.close();
+    if (print) setTimeout(() => w.print(), 500);
+    onClose();
+  };
+
+  const TOGGLES: { key: keyof ReportOptions; label: string; hint: string }[] = [
+    { key: 'supplier',       label: 'Fournisseur',           hint: 'Nom du fournisseur' },
+    { key: 'quantities',     label: 'Quantités',             hint: 'Pièces et nombre de références' },
+    { key: 'invoiceStatus',  label: 'Statut facture',        hint: 'Facturée / Non facturée' },
+    { key: 'invoiceDetails', label: 'Détails facture',       hint: 'N°, date, montant, devise' },
+    { key: 'document',       label: 'Document BL',           hint: 'Disponible / manquant et nom du fichier' },
+    { key: 'description',    label: 'Description',           hint: 'Remarques saisies à la réception' },
+    { key: 'lines',          label: 'Détail des articles',   hint: `Désignation, référence, quantité — ${lineCount} ligne${lineCount !== 1 ? 's' : ''}` },
+  ];
+
+  return (
+    <Modal title="Rapport des réceptions" onClose={onClose} className="max-w-2xl">
+      <div className="space-y-5">
+        {/* Scope */}
+        <div>
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Périmètre</h3>
+          <div className="inline-flex rounded-xl border border-slate-200 overflow-hidden">
+            {(['all', 'invoiced', 'uninvoiced'] as ReportScope[]).map(sc => (
+              <button key={sc} onClick={() => set({ scope: sc })}
+                className={`px-3 py-2 text-xs font-semibold transition-colors ${
+                  options.scope === sc ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
+                }`}>
+                {sc === 'all' ? 'Toutes' : sc === 'invoiced' ? 'Facturées' : 'Non facturées'}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-slate-400 mt-2">
+            <strong className="text-slate-600">{scoped.length}</strong> réception{scoped.length !== 1 ? 's' : ''}
+            {' · '}{filterSummary}
+          </p>
+        </div>
+
+        {/* Presets */}
+        <div>
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Modèles</h3>
+          <div className="flex flex-wrap gap-2">
+            {REPORT_PRESETS.map(p => (
+              <button key={p.id} onClick={() => set(p.options)}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/50 transition-colors">
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Content toggles */}
+        <div>
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
+            Contenu <span className="font-normal normal-case tracking-normal text-slate-300">— N° BL, référence et date toujours inclus</span>
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+            {TOGGLES.map(t => (
+              <label key={t.key}
+                className={`flex items-start gap-2.5 px-3 py-2 rounded-xl border cursor-pointer transition-colors ${
+                  options[t.key] ? 'border-indigo-200 bg-indigo-50/50' : 'border-slate-200 hover:bg-slate-50'
+                }`}>
+                <input type="checkbox" checked={!!options[t.key]}
+                  onChange={e => set({ [t.key]: e.target.checked } as Partial<ReportOptions>)}
+                  className="w-4 h-4 mt-0.5 accent-indigo-600 shrink-0" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-slate-700">{t.label}</span>
+                  <span className="block text-[11px] text-slate-400">{t.hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* What the file will contain */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500">
+          <span><strong className="text-slate-700">{totals.receipts}</strong> réceptions</span>
+          <span><strong className="text-slate-700">{totals.pieces.toLocaleString('fr-FR')}</strong> pièces</span>
+          <span><strong className="text-slate-700">{totals.invoiced}</strong> facturées · {totals.uninvoiced} non</span>
+          {totals.amount > 0 && (
+            <span><strong className="text-slate-700">{totals.amount.toLocaleString('fr-FR')}</strong> {totals.currency}</span>
+          )}
+          {options.lines && <span className="text-indigo-600 font-semibold">feuille « Articles » incluse</span>}
+        </div>
+
+        {notice && (
+          <div className="px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">{notice}</div>
+        )}
+
+        {/* Formats */}
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-1 border-t border-slate-100">
+          <button onClick={onClose}
+            className="mr-auto mt-3 px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-100 transition-colors">
+            Annuler
+          </button>
+          <button onClick={() => openReport(false)} disabled={scoped.length === 0}
+            className="mt-3 flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-40">
+            <Eye size={14} /> Aperçu
+          </button>
+          <button onClick={() => openReport(true)} disabled={scoped.length === 0}
+            className="mt-3 flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-40">
+            <Printer size={14} /> PDF
+          </button>
+          <button onClick={exportExcel} disabled={scoped.length === 0}
+            className="mt-3 flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-200 disabled:opacity-40">
+            <FileSpreadsheet size={14} /> Excel (.xlsx)
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 interface BLReceiptsTabProps {
   orders: ShippingOrder[];
   supplies: ShippedSupply[];
@@ -1335,6 +1360,7 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [detail, setDetail] = useState<ReceiptRow | null>(null);
+  const [showReport, setShowReport] = useState(false);
 
   const blRows = extractBLRecords(orders);
   const supplyRows = buildSupplyRows(supplies);
@@ -1395,6 +1421,17 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
     return true;
   });
 
+  const filterParts: string[] = [];
+  if (filterType !== 'all') filterParts.push(filterType === 'bl' ? 'Commandes' : 'Approvisionnements');
+  if (filterOrder) filterParts.push(`Commande ${orderMap.get(filterOrder)?.ref ?? filterOrder}`);
+  if (filterDoc !== 'all') filterParts.push(filterDoc === 'has' ? 'Avec document' : 'Sans document');
+  if (filterInvoice !== 'all') filterParts.push(filterInvoice === 'has' ? 'Avec facture' : 'Sans facture');
+  if (dateFrom || dateTo) filterParts.push(`Du ${dateFrom || '…'} au ${dateTo || '…'}`);
+  if (search) filterParts.push(`Recherche « ${search} »`);
+  const filterSummary = filterParts.length
+    ? `Filtres de l'écran : ${filterParts.join(' · ')}`
+    : 'Toutes les réceptions enregistrées';
+
   const docMissingCount = allRows.filter(r => !rowHasDoc(r)).length;
   const invMissingCount = allRows.filter(r => !rowHasInvoice(r)).length;
   const hasActiveFilters = filterType !== 'all' || filterDoc !== 'all' || filterInvoice !== 'all'
@@ -1430,6 +1467,12 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
               })}
             </select>
           )}
+          <button onClick={() => setShowReport(true)} disabled={allRows.length === 0}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-200 disabled:opacity-40"
+            title="Excel ou PDF des réceptions affichées">
+            <FileDown size={13} /> Rapport
+          </button>
+
           <div className="ml-auto flex items-center gap-3 text-xs text-slate-400">
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" /> Doc available</span>
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-200 inline-block" /> Missing</span>
@@ -1667,6 +1710,17 @@ function BLReceiptsTab({ orders, supplies, invoices, onReload, onAddInvoice, onA
           </div>
          </div>
         </div>
+      )}
+
+      {showReport && (
+        <ReceiptReportModal
+          entries={filtered.map(r => ({
+            row: r,
+            invoices: r.kind === 'bl' ? invoicesForBLRow(r) : (blInvoiceMap.get(r.ref) ?? []),
+          }))}
+          filterSummary={filterSummary}
+          onClose={() => setShowReport(false)}
+        />
       )}
 
       {detail && (

@@ -33,6 +33,7 @@ import { SEED_RECIPES } from '@/data/seedRecipes';
 import { MACHINES } from '@/data/seedMachines';
 import { LIBRARY_ITEMS } from '@/data/seedLibrary';
 import type { Product } from '@/types';
+import { fmtDate } from '@/utils/dates';
 
 type OpState = { running: boolean; status: 'idle' | 'done' | 'error'; msg: string };
 const $idle: OpState = { running: false, status: 'idle', msg: '' };
@@ -44,11 +45,6 @@ const ALL_CATALOG_SKUS = new Set([
   ...PACKAGING.map(p => p.sku),
 ]);
 
-function fmtDate(iso?: string) {
-  if (!iso) return '—';
-  try { return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); }
-  catch { return iso; }
-}
 
 interface Stats {
   finished: number; discs: number; accessories: number; packaging: number;

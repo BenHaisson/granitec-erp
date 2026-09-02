@@ -7,6 +7,7 @@ import {
   collection, addDoc, getDocs, updateDoc, deleteDoc, doc, Timestamp, orderBy, query,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
+import { fmtDayMonth } from '@/utils/dates';
 
 // ── Types ─────────────────────────────────────────────────────────
 type Priority = 'high' | 'medium' | 'low' | 'none';
@@ -112,7 +113,7 @@ function NoteCard({ note, onEdit, onDelete, onToggleStatus, onTogglePin }: NoteC
             </span>
           )}
           <span className="text-[10px] text-slate-400">
-            {toDate(note.updatedAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}
+            {fmtDayMonth(note.updatedAt)}
           </span>
         </div>
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">

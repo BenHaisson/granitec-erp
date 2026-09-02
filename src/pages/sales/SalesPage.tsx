@@ -10,7 +10,7 @@ import Modal from '@/components/ui/Modal';
 import EntityPicker from '@/components/ui/EntityPicker';
 import { ClientModal } from '@/pages/clients/ClientsPage';
 import type { SalesOrder, SalesOrderLine, Product, Recipe, Client } from '@/types';
-import { todayISO } from '@/utils/dates';
+import { todayISO, fmtDate } from '@/utils/dates';
 import { useDraft, getLastEntryDate, saveLastEntryDate } from '@/hooks/useDraft';
 import DraftBanner from '@/components/ui/DraftBanner';
 
@@ -306,7 +306,7 @@ function downloadSalesReport(orders: SalesOrder[], products: Product[]) {
   <div class="rm">
     <div class="title">Sales Activity Report</div>
     <div class="sub">Période : ${dateRange}</div>
-    <div class="sub">Généré le ${now.toLocaleDateString('fr-FR', { day:'2-digit', month:'long', year:'numeric' })}</div>
+    <div class="sub">Généré le ${fmtDate(now)}</div>
   </div>
 </div>
 <div class="kpi">
