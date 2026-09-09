@@ -655,7 +655,7 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
       await createOrder({ ref: orderRef, client, date: new Date(date), lines: validLines as SalesOrderLine[], reduceStock: reduceFromStock });
       clearSalesDraft();
       onSaved(); onClose();
-    } catch { setError('Failed to save order.'); }
+    } catch (e) { setError(e instanceof Error && e.message ? e.message : 'Failed to save order.'); }
     finally { setSaving(false); }
   };
 
@@ -1063,7 +1063,12 @@ function EditOrderModal({ order, products, onClose, onSaved }: {
   const [client, setClient] = useState(order.client);
   const [date, setDate] = useState(toDateStr(order.date));
   const [lines, setLines] = useState<DraftLine[]>(
-    order.lines.map(l => ({ ...l, uid: newUid(), search: l.productName, showSuggestions: false, highlightIdx: -1 }))
+    order.lines.map(l => ({
+      ...l,
+      productName: l.productName ?? '', sku: l.sku ?? '',
+      boxes: Number(l.boxes) || 0, qtyPerBox: Number(l.qtyPerBox) || 0, totalQty: Number(l.totalQty) || 0,
+      uid: newUid(), search: l.productName ?? '', showSuggestions: false, highlightIdx: -1,
+    }))
   );
   const [openPicker, setOpenPicker] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1103,8 +1108,10 @@ function EditOrderModal({ order, products, onClose, onSaved }: {
       await updateOrder({ ...order, ref, client, date: new Date(date), lines: lines as SalesOrderLine[] });
       onSaved();
       onClose();
-    } catch {
-      setError('Failed to save changes');
+    } catch (e) {
+      // Surface the real reason (missing product, insufficient stock, permissions…) —
+      // a bare "failed to save" leaves nothing to act on
+      setError(e instanceof Error && e.message ? e.message : 'Failed to save changes');
     } finally {
       setSaving(false);
     }
