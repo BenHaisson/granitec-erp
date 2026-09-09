@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, type FormEvent } from 'react';
+import { useEffect, useState, useRef, useMemo, type FormEvent } from 'react';
 import { Plus, X, ShoppingBag, Download, Eye, Pencil, FileDown, Search, Trash2, CalendarCheck, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getOrders, createOrder, updateOrder, deleteOrder, generateOrderRef } from '@/services/orders.service';
@@ -10,7 +10,7 @@ import Modal from '@/components/ui/Modal';
 import EntityPicker from '@/components/ui/EntityPicker';
 import { ClientModal } from '@/pages/clients/ClientsPage';
 import type { SalesOrder, SalesOrderLine, Product, Recipe, Client } from '@/types';
-import { todayISO, fmtDate } from '@/utils/dates';
+import { todayISO, fmtDate, tsToDate } from '@/utils/dates';
 import { useDraft, getLastEntryDate, saveLastEntryDate } from '@/hooks/useDraft';
 import DraftBanner from '@/components/ui/DraftBanner';
 
@@ -59,6 +59,26 @@ function buildGroupStats(orders: SalesOrder[]): GroupStats[] {
 
   return Array.from(map.values());
 }
+
+// ── History filters ───────────────────────────────────────────────
+/** Sortable month key for an order date, e.g. 2026-09 */
+const monthKey = (value: unknown) => {
+  const d = tsToDate(value);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+/** mm/yyyy — month names stay out of the UI, same as fmtDate */
+const monthLabel = (key: string) => {
+  const [y, m] = key.split('-');
+  return `${m}/${y}`;
+};
+/** Clients are matched case/space-insensitively, the same key mergeByDateClient uses */
+const clientKey = (name: string) => name.trim().toLowerCase();
+
+/** The product family a line belongs to — "Marmite 30cm" for both its colours */
+const lineBase = (productName: string) => {
+  const parsed = extractColor(productName);
+  return parsed ? parsed.base : productName;
+};
 
 // ── Merge orders with same date + client ─────────────────────────
 function mergeByDateClient(orders: SalesOrder[]): SalesOrder[] {
@@ -1207,7 +1227,10 @@ export default function SalesPage() {
   const [detail, setDetail] = useState<SalesOrder | null>(null);
   const [editing, setEditing] = useState<SalesOrder | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [filterBase, setFilterBase] = useState<string | null>(null);
+  const [filterBase, setFilterBase] = useState<string | null>(null);   // product family, set by the summary cards
+  const [filterMonth, setFilterMonth] = useState('');                  // YYYY-MM
+  const [filterClient, setFilterClient] = useState('');                // clientKey()
+  const [filterSku, setFilterSku] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -1233,17 +1256,67 @@ export default function SalesPage() {
     }
   };
 
-  const groupStats = buildGroupStats(orders);
+  // Dropdown options come from the orders themselves, so they only ever offer
+  // months, clients and products that actually have history behind them.
+  const monthOptions = useMemo(
+    () => [...new Set(orders.map(o => monthKey(o.date)))].sort().reverse(),
+    [orders]);
 
-  const filteredOrders = filterBase
-    ? orders.filter(o => o.lines.some(l => {
-        const parsed = extractColor(l.productName);
-        const base = parsed ? parsed.base : l.productName;
-        return base === filterBase;
-      }))
-    : mergeByDateClient(orders);
+  const clientOptions = useMemo(() => {
+    const byKey = new Map<string, string>();
+    for (const o of orders) {
+      const key = clientKey(o.client);
+      if (key && !byKey.has(key)) byKey.set(key, o.client.trim());
+    }
+    return [...byKey.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [orders]);
 
-  const totalPcs = filteredOrders.reduce((s, o) => s + o.lines.reduce((ls, l) => ls + l.totalQty, 0), 0);
+  const productOptions = useMemo(() => {
+    const bySku = new Map<string, { sku: string; name: string }>();
+    for (const o of orders) {
+      for (const l of o.lines) {
+        if (l.sku && !bySku.has(l.sku)) bySku.set(l.sku, { sku: l.sku, name: l.productName });
+      }
+    }
+    return [...bySku.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [orders]);
+
+  // Month + client narrow the whole page, the summary cards included, so the card
+  // totals answer "what did this client buy in September" rather than always all-time.
+  const scopedOrders = useMemo(() => orders.filter(o => {
+    if (filterMonth && monthKey(o.date) !== filterMonth) return false;
+    if (filterClient && clientKey(o.client) !== filterClient) return false;
+    return true;
+  }), [orders, filterMonth, filterClient]);
+
+  const groupStats = buildGroupStats(scopedOrders);
+
+  // The product filters are applied after the cards are built — otherwise picking a
+  // product would hide the very cards you switch between.
+  const hasProductFilter = Boolean(filterSku || filterBase);
+  const visibleOrders = useMemo(() => {
+    if (!hasProductFilter) return scopedOrders;
+    return scopedOrders.filter(o => o.lines.some(l =>
+      (!filterSku || l.sku === filterSku) &&
+      (!filterBase || lineBase(l.productName) === filterBase)
+    ));
+  }, [scopedOrders, hasProductFilter, filterSku, filterBase]);
+
+  // Same-day orders for one client are shown as a single row, except when a product
+  // filter is on — then each order stays separate so the match stays visible.
+  const filteredOrders = hasProductFilter ? visibleOrders : mergeByDateClient(visibleOrders);
+
+  const totalPcs = visibleOrders.reduce((s, o) => s + o.lines.reduce((ls, l) => ls + l.totalQty, 0), 0);
+
+  const activeFilters = [
+    filterMonth ? monthLabel(filterMonth) : null,
+    filterClient ? (clientOptions.find(([k]) => k === filterClient)?.[1] ?? filterClient) : null,
+    filterSku || null,
+    filterBase,
+  ].filter(Boolean) as string[];
+  const clearFilters = () => { setFilterMonth(''); setFilterClient(''); setFilterSku(''); setFilterBase(null); };
+
+  const selectCls = 'px-3 py-1.5 border border-slate-200 rounded-lg text-sm text-slate-700 bg-white max-w-[240px] focus:outline-none focus:ring-2 focus:ring-blue-300';
 
   return (
     <div className="space-y-6">
@@ -1252,7 +1325,9 @@ export default function SalesPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Sales Orders</h1>
           <p className="text-slate-500 text-sm mt-1">
-            {orders.length} orders · {totalPcs.toLocaleString('fr-FR')} pcs total
+            {activeFilters.length > 0
+              ? `${visibleOrders.length} of ${orders.length} orders · ${totalPcs.toLocaleString('fr-FR')} pcs in view`
+              : `${orders.length} orders · ${totalPcs.toLocaleString('fr-FR')} pcs total`}
           </p>
         </div>
         <button onClick={() => setShowNew(true)}
@@ -1260,6 +1335,44 @@ export default function SalesPage() {
           <Plus size={16} /> New Order
         </button>
       </div>
+
+      {/* Filters */}
+      {!loading && orders.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4 py-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">Filter</span>
+
+          <select value={filterMonth} onChange={e => setFilterMonth(e.target.value)} className={selectCls} title="Month">
+            <option value="">All months</option>
+            {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
+
+          <select value={filterClient} onChange={e => setFilterClient(e.target.value)} className={selectCls} title="Client">
+            <option value="">All clients</option>
+            {clientOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+
+          <select value={filterSku} onChange={e => setFilterSku(e.target.value)} className={selectCls} title="Product">
+            <option value="">All products</option>
+            {productOptions.map(p => <option key={p.sku} value={p.sku}>{p.name} — {p.sku}</option>)}
+          </select>
+
+          {filterBase && (
+            <span className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+              {filterBase}
+              <button type="button" onClick={() => setFilterBase(null)} className="text-blue-400 hover:text-blue-700 transition-colors" title="Clear product family">
+                <X size={13} />
+              </button>
+            </span>
+          )}
+
+          {activeFilters.length > 0 && (
+            <button type="button" onClick={clearFilters}
+              className="ml-auto flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800 transition-colors">
+              <X size={14} /> Clear all
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Summary cards */}
       {!loading && groupStats.length > 0 && (
@@ -1302,33 +1415,31 @@ export default function SalesPage() {
         </div>
       )}
 
-      {/* Active filter banner */}
-      {filterBase && (
-        <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg text-sm">
-          <span className="text-blue-700 font-medium">Showing: {filterBase}</span>
-          <button onClick={() => setFilterBase(null)} className="ml-auto flex items-center gap-1 text-blue-500 hover:text-blue-700 transition-colors">
-            <X size={14} /> Clear filter
-          </button>
-        </div>
-      )}
-
       {/* Orders table */}
       {loading ? (
         <div className="text-center text-slate-400 py-20 text-sm">Loading…</div>
       ) : filteredOrders.length === 0 ? (
         <div className="text-center py-20">
           <ShoppingBag size={44} className="mx-auto mb-3 text-slate-200" />
-          <p className="text-slate-400 text-sm">No orders yet.</p>
+          <p className="text-slate-400 text-sm">
+            {activeFilters.length > 0 ? 'No orders match these filters.' : 'No orders yet.'}
+          </p>
+          {activeFilters.length > 0 && (
+            <button type="button" onClick={clearFilters}
+              className="mt-3 text-sm text-blue-600 hover:text-blue-700 font-medium">
+              Clear all filters
+            </button>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
               {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}
-              {filterBase ? ` · filtered by "${filterBase}"` : ''}
+              {activeFilters.length > 0 ? ` · ${activeFilters.join(' · ')}` : ''}
             </span>
             <button
-              onClick={() => downloadSalesReport(orders, products)}
+              onClick={() => downloadSalesReport(visibleOrders, products)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-medium hover:bg-slate-700 transition-colors"
             >
               <FileDown size={13} /> Download Report
