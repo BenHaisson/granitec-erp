@@ -827,8 +827,10 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
         </div>
 
         {/* Main table */}
-        <div className="flex-1 flex flex-col overflow-hidden overflow-x-auto">
-          <div className="min-w-[720px]">
+        <div className="flex-1 min-w-0 flex flex-col overflow-x-auto overflow-y-hidden">
+          {/* min-h-0 + flex chain: without it the row list can't own the leftover
+              height, so it grows past the viewport and gets clipped unscrollable */}
+          <div className="min-w-[720px] flex-1 min-h-0 flex flex-col">
           <div className="shrink-0 bg-white border-b border-slate-100 px-4 py-2">
             <div className="grid grid-cols-[40px_1fr_140px_90px_110px_110px_90px_44px] gap-2">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-center">#</span>
@@ -841,7 +843,7 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
               <span />
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1.5">
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-2 pb-6 space-y-1.5">
             {lines.map((line, i) => (
               <SalesOrderRow
                 key={line.uid} line={line} rowNum={i + 1} products={products}
