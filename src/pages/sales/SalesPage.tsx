@@ -655,7 +655,7 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
       await createOrder({ ref: orderRef, client, date: new Date(date), lines: validLines as SalesOrderLine[], reduceStock: reduceFromStock });
       clearSalesDraft();
       onSaved(); onClose();
-    } catch { setError('Failed to save order.'); }
+    } catch (e) { setError(e instanceof Error && e.message ? e.message : 'Failed to save order.'); }
     finally { setSaving(false); }
   };
 
@@ -827,8 +827,10 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
         </div>
 
         {/* Main table */}
-        <div className="flex-1 flex flex-col overflow-hidden overflow-x-auto">
-          <div className="min-w-[720px]">
+        <div className="flex-1 min-w-0 flex flex-col overflow-x-auto overflow-y-hidden">
+          {/* min-h-0 + flex chain: without it the row list can't own the leftover
+              height, so it grows past the viewport and gets clipped unscrollable */}
+          <div className="min-w-[720px] flex-1 min-h-0 flex flex-col">
           <div className="shrink-0 bg-white border-b border-slate-100 px-4 py-2">
             <div className="grid grid-cols-[40px_1fr_140px_90px_110px_110px_90px_44px] gap-2">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide text-center">#</span>
@@ -841,7 +843,7 @@ function NewOrderModal({ products, recipes, onClose, onSaved }: {
               <span />
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1.5">
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-2 pb-6 space-y-1.5">
             {lines.map((line, i) => (
               <SalesOrderRow
                 key={line.uid} line={line} rowNum={i + 1} products={products}
@@ -1063,7 +1065,12 @@ function EditOrderModal({ order, products, onClose, onSaved }: {
   const [client, setClient] = useState(order.client);
   const [date, setDate] = useState(toDateStr(order.date));
   const [lines, setLines] = useState<DraftLine[]>(
-    order.lines.map(l => ({ ...l, uid: newUid(), search: l.productName, showSuggestions: false, highlightIdx: -1 }))
+    order.lines.map(l => ({
+      ...l,
+      productName: l.productName ?? '', sku: l.sku ?? '',
+      boxes: Number(l.boxes) || 0, qtyPerBox: Number(l.qtyPerBox) || 0, totalQty: Number(l.totalQty) || 0,
+      uid: newUid(), search: l.productName ?? '', showSuggestions: false, highlightIdx: -1,
+    }))
   );
   const [openPicker, setOpenPicker] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1103,8 +1110,10 @@ function EditOrderModal({ order, products, onClose, onSaved }: {
       await updateOrder({ ...order, ref, client, date: new Date(date), lines: lines as SalesOrderLine[] });
       onSaved();
       onClose();
-    } catch {
-      setError('Failed to save changes');
+    } catch (e) {
+      // Surface the real reason (missing product, insufficient stock, permissions…) —
+      // a bare "failed to save" leaves nothing to act on
+      setError(e instanceof Error && e.message ? e.message : 'Failed to save changes');
     } finally {
       setSaving(false);
     }

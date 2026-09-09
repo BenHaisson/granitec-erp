@@ -5,6 +5,21 @@ import {
 import { db } from '@/firebase/config';
 import type { SalesOrder, SalesOrderLine } from '@/types';
 
+/** Strip UI-only draft fields and coerce numbers so nothing `undefined` reaches Firestore */
+const toLine = (l: SalesOrderLine): SalesOrderLine => {
+  const boxes = Number(l?.boxes) || 0;
+  const qtyPerBox = Number(l?.qtyPerBox) || 0;
+  const totalQty = Number(l?.totalQty);
+  return {
+    productId: l?.productId ?? '',
+    productName: l?.productName ?? '',
+    sku: l?.sku ?? '',
+    boxes,
+    qtyPerBox,
+    totalQty: Number.isFinite(totalQty) ? totalQty : boxes * qtyPerBox,
+  };
+};
+
 const toOrder = (id: string, data: Record<string, unknown>): SalesOrder => {
   const ts = data.date as Timestamp | undefined;
   return {
@@ -12,7 +27,11 @@ const toOrder = (id: string, data: Record<string, unknown>): SalesOrder => {
     ref: (data.ref as string) ?? '',
     client: (data.client as string) ?? '',
     date: ts?.toDate?.() ?? new Date(),   // null-guard: missing date falls back to now
-    lines: (data.lines as SalesOrderLine[]) ?? [],
+    lines: ((data.lines as SalesOrderLine[]) ?? []).map(toLine),
+    // Keep the stock/status flags so an edit round-trips them instead of wiping them
+    ...(data.paymentStatus !== undefined ? { paymentStatus: data.paymentStatus as SalesOrder['paymentStatus'] } : {}),
+    ...(data.deliveryStatus !== undefined ? { deliveryStatus: data.deliveryStatus as SalesOrder['deliveryStatus'] } : {}),
+    ...(data.reduceStock !== undefined ? { reduceStock: data.reduceStock as boolean } : {}),
   };
 };
 
@@ -41,17 +60,25 @@ export const generateOrderRef = async (year?: number): Promise<string> => {
 
 export const createOrder = async (order: Omit<SalesOrder, 'id'>): Promise<string> => {
   const orderRef = doc(collection(db, 'sales_orders'));
-  const validLines = order.lines.filter(l => l.totalQty > 0);
+  const lines = order.lines.map(toLine);
+  const validLines = lines.filter(l => l.totalQty > 0);
   const shouldReduceStock = order.reduceStock !== false;
+
+  const orderPayload: Record<string, unknown> = {
+    ref: order.ref,
+    client: order.client,
+    lines,
+    date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
+  };
+  if (order.paymentStatus !== undefined) orderPayload.paymentStatus = order.paymentStatus;
+  if (order.deliveryStatus !== undefined) orderPayload.deliveryStatus = order.deliveryStatus;
+  if (order.reduceStock !== undefined) orderPayload.reduceStock = order.reduceStock;
 
   await runTransaction(db, async (tx) => {
     const prodSnaps = shouldReduceStock
       ? await Promise.all(validLines.map(l => tx.get(doc(db, 'products', l.productId))))
       : [];
-    tx.set(orderRef, {
-      ...order,
-      date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
-    });
+    tx.set(orderRef, orderPayload);
     if (shouldReduceStock) {
       for (let i = 0; i < validLines.length; i++) {
         const line = validLines[i];
@@ -112,65 +139,97 @@ async function reverseSaleMovements(orderRef: string): Promise<void> {
 }
 
 export const updateOrder = async (order: SalesOrder): Promise<void> => {
+  const orderDocRef = doc(db, 'sales_orders', order.id);
+  const lines = order.lines.map(toLine);
+  const validLines = lines.filter(l => l.totalQty > 0);
+
+  // Merge-write so fields the edit form never loaded (payment/delivery status, reduceStock)
+  // survive the save instead of being wiped by a full overwrite.
+  const orderPayload: Record<string, unknown> = {
+    ref: order.ref,
+    client: order.client,
+    lines,
+    date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
+  };
+  if (order.paymentStatus !== undefined) orderPayload.paymentStatus = order.paymentStatus;
+  if (order.deliveryStatus !== undefined) orderPayload.deliveryStatus = order.deliveryStatus;
+  if (order.reduceStock !== undefined) orderPayload.reduceStock = order.reduceStock;
+
   // Fetch existing SALE movements outside the transaction (queries can't run inside)
   const movSnap = await getDocs(
     query(collection(db, 'inventory_movements'), where('note', '==', order.ref))
   );
   const saleMoves = movSnap.docs.filter(d => d.data().reason === 'SALE');
-  const validLines = order.lines.filter(l => l.totalQty > 0);
+
+  // An edit only re-syncs inventory for orders that actually took stock. Historical /
+  // imported orders and orders saved with reduceStock: false carry no SALE movements —
+  // deducting their quantities now would charge inventory twice (and fail on low stock).
+  const tracksStock = order.reduceStock !== false && saleMoves.length > 0;
+
+  if (!tracksStock) {
+    await setDoc(orderDocRef, orderPayload, { merge: true });
+    return;
+  }
 
   // Single atomic transaction: reverse old movements + apply new lines + update order doc
   await runTransaction(db, async (tx) => {
-    // Re-read movements inside transaction for fresh data
+    // ── All reads first: Firestore forbids a read after a write in a transaction ──
     const movSnapsInTx = await Promise.all(saleMoves.map(m => tx.get(m.ref)));
 
     // Collect all unique product IDs (from old movements + new lines)
     const oldProductIds = [...new Set(saleMoves.map(m => m.data().productId as string))];
     const newProductIds = [...new Set(validLines.map(l => l.productId))];
-    const allProductIds = [...new Set([...oldProductIds, ...newProductIds])];
+    const allProductIds = [...new Set([...oldProductIds, ...newProductIds])].filter(Boolean);
 
-    const prodRefs = allProductIds.map(id => doc(db, 'products', id));
-    const prodSnaps = await Promise.all(prodRefs.map(r => tx.get(r)));
+    const prodRefs = new Map(allProductIds.map(id => [id, doc(db, 'products', id)]));
+    const prodSnaps = await Promise.all(allProductIds.map(id => tx.get(prodRefs.get(id)!)));
 
-    // Build a mutable stock map from current Firestore values
-    const stockMap = new Map(
-      allProductIds.map((id, i) => [id, (prodSnaps[i].data()?.stock_level as number) ?? 0])
-    );
+    // Build a mutable stock map — products deleted from the catalogue are left out so we
+    // never issue an update against a missing doc (Firestore rejects the whole transaction)
+    const stockMap = new Map<string, number>();
+    allProductIds.forEach((id, i) => {
+      if (prodSnaps[i].exists()) stockMap.set(id, Number(prodSnaps[i].data()?.stock_level) || 0);
+    });
+    const startingStock = new Map(stockMap);
 
-    // Step 1: reverse old movements (restore stock)
-    for (const movSnap of movSnapsInTx) {
-      if (!movSnap.exists()) continue;
-      const productId = movSnap.data().productId as string;
-      const qty = movSnap.data().quantity as number; // stored negative
-      stockMap.set(productId, (stockMap.get(productId) ?? 0) - qty); // restore: -(-qty)
-      tx.delete(movSnap.ref);
+    const missing = validLines.find(l => !stockMap.has(l.productId));
+    if (missing) {
+      throw new Error(`"${missing.productName || missing.productId}" is no longer in the product catalogue — restore it or remove that line.`);
     }
 
-    // Step 2: apply new lines (check stock, deduct, create movements) — only if reduceStock
-    if (order.reduceStock !== false) {
-      for (const line of validLines) {
-        const current = stockMap.get(line.productId) ?? 0;
-        if (current < line.totalQty) {
-          throw new Error(`Insufficient stock for ${line.productName ?? line.productId}: need ${line.totalQty}, have ${current}`);
-        }
-        stockMap.set(line.productId, current - line.totalQty);
-        tx.set(doc(collection(db, 'inventory_movements')), {
-          productId: line.productId, quantity: -line.totalQty, reason: 'SALE',
-          note: order.ref, createdAt: Timestamp.now(),
-        });
+    // Step 1: reverse old movements (restore stock)
+    for (const mov of movSnapsInTx) {
+      if (!mov.exists()) continue;
+      const productId = mov.data().productId as string;
+      const qty = mov.data().quantity as number; // stored negative
+      // A movement whose product was deleted has no stock to restore — drop it anyway,
+      // otherwise it would be reversed again on the next edit.
+      if (stockMap.has(productId)) stockMap.set(productId, stockMap.get(productId)! - qty); // restore: -(-qty)
+      tx.delete(mov.ref);
+    }
+
+    // Step 2: apply new lines (check stock, deduct, create movements)
+    for (const line of validLines) {
+      const current = stockMap.get(line.productId) ?? 0;
+      if (current < line.totalQty) {
+        throw new Error(`Insufficient stock for ${line.productName || line.productId}: need ${line.totalQty}, have ${current}`);
+      }
+      stockMap.set(line.productId, current - line.totalQty);
+      tx.set(doc(collection(db, 'inventory_movements')), {
+        productId: line.productId, quantity: -line.totalQty, reason: 'SALE',
+        note: order.ref, createdAt: Timestamp.now(),
+      });
+    }
+
+    // Step 3: write back only the stock levels that actually moved
+    for (const [productId, newStock] of stockMap.entries()) {
+      if (newStock !== startingStock.get(productId)) {
+        tx.update(prodRefs.get(productId)!, { stock_level: newStock });
       }
     }
 
-    // Step 3: write all updated stock levels
-    for (const [productId, newStock] of stockMap.entries()) {
-      tx.update(prodRefs[allProductIds.indexOf(productId)], { stock_level: newStock });
-    }
-
     // Step 4: update the order document
-    tx.set(doc(db, 'sales_orders', order.id), {
-      ref: order.ref, client: order.client, lines: order.lines,
-      date: Timestamp.fromDate(order.date instanceof Date ? order.date : new Date(order.date)),
-    });
+    tx.set(orderDocRef, orderPayload, { merge: true });
   });
 };
 
