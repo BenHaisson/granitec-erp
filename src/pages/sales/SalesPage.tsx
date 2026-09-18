@@ -71,7 +71,7 @@ const monthLabel = (key: string) => {
   const [y, m] = key.split('-');
   return `${m}/${y}`;
 };
-/** Clients are matched case/space-insensitively, the same key mergeByDateClient uses */
+/** Clients are matched case/space-insensitively, so "Delta store" finds "Delta Store" */
 const clientKey = (name: string) => name.trim().toLowerCase();
 
 /** The product family a line belongs to — "Marmite 30cm" for both its colours */
@@ -79,21 +79,6 @@ const lineBase = (productName: string) => {
   const parsed = extractColor(productName);
   return parsed ? parsed.base : productName;
 };
-
-// ── Merge orders with same date + client ─────────────────────────
-function mergeByDateClient(orders: SalesOrder[]): SalesOrder[] {
-  const map = new Map<string, SalesOrder>();
-  for (const order of orders) {
-    const d = order.date instanceof Date ? order.date : new Date(order.date);
-    const key = `${d.toISOString().slice(0, 10)}__${order.client.toLowerCase().trim()}`;
-    if (!map.has(key)) {
-      map.set(key, { ...order, lines: [...order.lines] });
-    } else {
-      map.get(key)!.lines.push(...order.lines);
-    }
-  }
-  return Array.from(map.values());
-}
 
 // ── Invoice download ──────────────────────────────────────────────
 function downloadInvoice(order: SalesOrder) {
@@ -1302,9 +1287,9 @@ export default function SalesPage() {
     ));
   }, [scopedOrders, hasProductFilter, filterSku, filterBase]);
 
-  // Same-day orders for one client are shown as a single row, except when a product
-  // filter is on — then each order stays separate so the match stays visible.
-  const filteredOrders = hasProductFilter ? visibleOrders : mergeByDateClient(visibleOrders);
+  // One row per order, always. Same date, same client, same SKU — they are still
+  // separate orders with their own refs, and collapsing them hid real documents.
+  const filteredOrders = visibleOrders;
 
   const totalPcs = visibleOrders.reduce((s, o) => s + o.lines.reduce((ls, l) => ls + l.totalQty, 0), 0);
 
